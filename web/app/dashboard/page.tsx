@@ -5,13 +5,13 @@ import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
 
 const NAV = [
-  { label: "Overview", icon: "◆" },
-  { label: "Customers", icon: "○" },
-  { label: "Loans", icon: "▢" },
-  { label: "Savings", icon: "▣" },
-  { label: "Branches", icon: "▤" },
-  { label: "Roles & Permissions", icon: "◈" },
-  { label: "Audit Log", icon: "▥" },
+  { label: "Overview", icon: "◆", href: "/dashboard" },
+  { label: "Customers", icon: "○", href: "/customers" },
+  { label: "Loans", icon: "▢", href: "#" },
+  { label: "Savings", icon: "▣", href: "#" },
+  { label: "Branches", icon: "▤", href: "#" },
+  { label: "Roles & Permissions", icon: "◈", href: "#" },
+  { label: "Audit Log", icon: "▥", href: "#" },
 ];
 
 export default function DashboardPage() {
@@ -44,6 +44,7 @@ export default function DashboardPage() {
           {NAV.map((item, i) => (
             <button
               key={item.label}
+              onClick={() => item.href !== "#" && router.push(item.href)}
               className={`w-full flex items-center gap-2.5 text-left px-3 py-2.5 rounded-md text-[13px] transition ${
                 i === 0 ? "bg-ink-800 text-gold-300 shadow-[inset_2px_0_0_#E8B563]" : "text-violet-500 hover:bg-ink-800 hover:text-paper-50"
               }`}

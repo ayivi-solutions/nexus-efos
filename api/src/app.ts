@@ -3,6 +3,7 @@ import cors from "cors";
 import { authRouter } from "./routes/auth.routes";
 import { institutionRouter } from "./routes/institution.routes";
 import { roleRouter } from "./routes/role.routes";
+import { customerRouter } from "./routes/customer.routes";
 
 export const app = express();
 
@@ -14,6 +15,7 @@ app.get("/health", (_req, res) => res.json({ status: "ok", service: "nexus-efos-
 app.use("/auth", authRouter);
 app.use("/institutions", institutionRouter);
 app.use("/roles", roleRouter);
+app.use("/customers", customerRouter);
 
 app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   console.error(err);

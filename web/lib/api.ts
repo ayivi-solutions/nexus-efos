@@ -47,6 +47,11 @@ export const api = {
     request("/institutions/onboarding/staff", { method: "POST", body: JSON.stringify(data) }),
 
   goLive: () => request("/institutions/onboarding/go-live", { method: "POST" }),
+
+  listCustomers: () => request("/customers"),
+
+  createCustomer: (data: { fullName: string; phone: string; email?: string; segment: string }) =>
+    request("/customers", { method: "POST", body: JSON.stringify(data) }),
 };
 
 // NOTE: sessionStorage is used here (client-only, in-memory-per-tab) rather

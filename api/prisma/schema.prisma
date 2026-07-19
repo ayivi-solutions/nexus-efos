@@ -55,6 +55,7 @@ model Institution {
   branches      Branch[]
   users         User[]
   roles         Role[]
+  customers     Customer[]
   auditLogs     AuditLog[]
 
   createdAt     DateTime          @default(now())
@@ -74,6 +75,7 @@ model Branch {
   isHeadOffice  Boolean      @default(false)
 
   userRoles     UserRole[]
+  customers     Customer[]
 
   createdAt     DateTime     @default(now())
   updatedAt     DateTime     @updatedAt
@@ -234,6 +236,67 @@ model UserRole {
 
   @@unique([userId, roleId, branchId])
   @@map("user_roles")
+  @@schema("nexusos")
+}
+
+// ---------------------------------------------------------------------------
+// CUSTOMER LIFECYCLE MANAGEMENT (doc §33)
+// ---------------------------------------------------------------------------
+
+enum CustomerSegment {
+  INDIVIDUAL
+  BUSINESS
+  FARMER_GROUP
+  WOMENS_GROUP
+  YOUTH
+  CORPORATE
+
+  @@schema("nexusos")
+}
+
+enum LifecycleStage {
+  AWARENESS
+  ACQUISITION
+  ONBOARDING
+  ACTIVATION
+  GROWTH
+  RETENTION
+  ADVOCACY
+  RE_ENGAGEMENT
+
+  @@schema("nexusos")
+}
+
+enum KycStatus {
+  PENDING
+  VERIFIED
+  REJECTED
+
+  @@schema("nexusos")
+}
+
+model Customer {
+  id            String          @id @default(cuid())
+  institution   Institution     @relation(fields: [institutionId], references: [id], onDelete: Cascade)
+  institutionId String
+  branch        Branch?         @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  branchId      String?
+
+  fullName      String
+  phone         String
+  email         String?
+  idType        String?
+  idNumber      String?
+
+  segment       CustomerSegment @default(INDIVIDUAL)
+  lifecycleStage LifecycleStage @default(ONBOARDING)
+  kycStatus     KycStatus       @default(PENDING)
+
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+
+  @@unique([institutionId, phone])
+  @@map("customers")
   @@schema("nexusos")
 }
 
