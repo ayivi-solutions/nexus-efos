@@ -1,0 +1,275 @@
+// Nexus EFOS — Core Platform schema
+// Maps to doc §21 (Layer 1: Core Platform — Enterprise Identity, Security),
+// §38 (User Role Architecture), §39 (Permission and Access Control Framework)
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["multiSchema"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+  schemas  = ["nexusos"]
+}
+
+// ---------------------------------------------------------------------------
+// INSTITUTIONS  (doc §14.3 — Financial Institutions)
+// ---------------------------------------------------------------------------
+
+enum InstitutionType {
+  INDIVIDUAL_SUSU_OPERATOR
+  MICROFINANCE_INSTITUTION
+  SAVINGS_AND_LOANS_COMPANY
+  CREDIT_UNION
+  COOPERATIVE_SOCIETY
+  RURAL_COMMUNITY_BANK
+  AGENCY_BANKING_NETWORK
+  DIGITAL_LENDING_INSTITUTION
+
+  @@schema("nexusos")
+}
+
+enum InstitutionStatus {
+  PENDING_ONBOARDING
+  ACTIVE
+  SUSPENDED
+  DEACTIVATED
+
+  @@schema("nexusos")
+}
+
+model Institution {
+  id            String            @id @default(cuid())
+  legalName     String
+  tradingName   String?
+  type          InstitutionType
+  status        InstitutionStatus @default(PENDING_ONBOARDING)
+  regulatorId   String?           // e.g. BoG license / registration number
+  country       String            @default("GH")
+  region        String?
+  phone         String?
+  email         String?
+  onboardingStep Int              @default(1) // 1..5, drives onboarding wizard
+
+  branches      Branch[]
+  users         User[]
+  roles         Role[]
+  auditLogs     AuditLog[]
+
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+
+  @@map("institutions")
+  @@schema("nexusos")
+}
+
+model Branch {
+  id            String       @id @default(cuid())
+  institution   Institution  @relation(fields: [institutionId], references: [id], onDelete: Cascade)
+  institutionId String
+  name          String
+  code          String
+  region        String?
+  isHeadOffice  Boolean      @default(false)
+
+  userRoles     UserRole[]
+
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  @@unique([institutionId, code])
+  @@map("branches")
+  @@schema("nexusos")
+}
+
+// ---------------------------------------------------------------------------
+// USERS  (doc §38.5 — Internal / External user categories)
+// ---------------------------------------------------------------------------
+
+enum UserCategory {
+  INTERNAL // employees
+  EXTERNAL // customers, agents, partners, regulators, developers
+
+  @@schema("nexusos")
+}
+
+enum UserStatus {
+  INVITED
+  ACTIVE
+  SUSPENDED
+  DEACTIVATED
+
+  @@schema("nexusos")
+}
+
+model User {
+  id            String        @id @default(cuid())
+  institution   Institution   @relation(fields: [institutionId], references: [id], onDelete: Cascade)
+  institutionId String
+
+  fullName      String
+  email         String
+  phone         String?
+  passwordHash  String
+  category      UserCategory  @default(INTERNAL)
+  status        UserStatus    @default(INVITED)
+  mfaEnabled    Boolean       @default(false)
+
+  userRoles     UserRole[]
+  refreshTokens RefreshToken[]
+  auditLogs     AuditLog[]
+
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  @@unique([institutionId, email])
+  @@map("users")
+  @@schema("nexusos")
+}
+
+// ---------------------------------------------------------------------------
+// RBAC  (doc §38 User Role Architecture, §39 Permission and Access Control)
+// ---------------------------------------------------------------------------
+
+enum RoleCategory {
+  EXECUTIVE
+  OPERATIONAL
+  GOVERNANCE
+  TECHNICAL
+  CUSTOMER
+
+  @@schema("nexusos")
+}
+
+model Role {
+  id            String        @id @default(cuid())
+  institution   Institution?  @relation(fields: [institutionId], references: [id], onDelete: Cascade)
+  institutionId String?       // null = system/global template role
+  name          String
+  category      RoleCategory
+  description   String?
+  isSystem      Boolean       @default(false) // seeded template vs institution-defined
+
+  rolePermissions RolePermission[]
+  userRoles       UserRole[]
+
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  @@unique([institutionId, name])
+  @@map("roles")
+  @@schema("nexusos")
+}
+
+// doc §39.6 — Data / Transaction / Administrative / Reporting / Integration
+enum PermissionCategory {
+  DATA
+  TRANSACTION
+  ADMINISTRATIVE
+  REPORTING
+  INTEGRATION
+
+  @@schema("nexusos")
+}
+
+// doc §38.9 — View, Create, Update, Delete, Approve, Reject, Export, Configure, Administer, Audit
+enum PermissionAction {
+  VIEW
+  CREATE
+  UPDATE
+  DELETE
+  APPROVE
+  REJECT
+  EXPORT
+  CONFIGURE
+  ADMINISTER
+  AUDIT
+
+  @@schema("nexusos")
+}
+
+model Permission {
+  id        String              @id @default(cuid())
+  code      String              @unique // e.g. "loans.approve", "users.administer"
+  category  PermissionCategory
+  action    PermissionAction
+  resource  String              // e.g. "loans", "savings", "users", "reports"
+  description String?
+
+  rolePermissions RolePermission[]
+
+  @@map("permissions")
+  @@schema("nexusos")
+}
+
+model RolePermission {
+  id           String     @id @default(cuid())
+  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  roleId       String
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+  permissionId String
+
+  @@unique([roleId, permissionId])
+  @@map("role_permissions")
+  @@schema("nexusos")
+}
+
+// doc §38.12 — Temporary Delegation: time-limited, auto-expiring role assignment
+model UserRole {
+  id            String    @id @default(cuid())
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId        String
+  role          Role      @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  roleId        String
+  branch        Branch?   @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  branchId      String?   // resource-level scoping (doc §39.8)
+
+  isDelegated   Boolean   @default(false)
+  delegatedFromUserId String?
+  startsAt      DateTime  @default(now())
+  expiresAt     DateTime? // null = permanent
+
+  createdAt     DateTime  @default(now())
+
+  @@unique([userId, roleId, branchId])
+  @@map("user_roles")
+  @@schema("nexusos")
+}
+
+// ---------------------------------------------------------------------------
+// AUTH SUPPORT
+// ---------------------------------------------------------------------------
+
+model RefreshToken {
+  id          String   @id @default(cuid())
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId      String
+  tokenHash   String   @unique
+  userAgent   String?
+  ipAddress   String?
+  expiresAt   DateTime
+  revokedAt   DateTime?
+  createdAt   DateTime @default(now())
+
+  @@map("refresh_tokens")
+  @@schema("nexusos")
+}
+
+// doc §39.13 — Access Monitoring: every access event should be monitored
+model AuditLog {
+  id            String      @id @default(cuid())
+  institution   Institution @relation(fields: [institutionId], references: [id], onDelete: Cascade)
+  institutionId String
+  user          User?       @relation(fields: [userId], references: [id], onDelete: SetNull)
+  userId        String?
+  action        String      // e.g. "auth.login", "role.assign", "loan.approve"
+  resource      String?
+  resourceId    String?
+  metadata      Json?
+  ipAddress     String?
+  createdAt     DateTime    @default(now())
+
+  @@map("audit_logs")
+  @@schema("nexusos")
+}
