@@ -51,7 +51,7 @@ cd api
 cp .env.example .env
 ```
 Open `.env` and set `DATABASE_URL` to your Postgres connection string,
-keeping `?schema=nexusos` on the end (the project uses a dedicated schema so
+keeping `?schema=nexus` on the end (the project uses a dedicated schema so
 it doesn't collide with your other Ayivi products in the same database).
 Then:
 ```bash
@@ -98,7 +98,7 @@ already seeded and ready to assign to staff via the `/roles/assign` API.
   Loans, Collections
 - MFA (doc §39.10 privileged access controls)
 - Nexus multi-schema wiring into the shared `ayivi-dev` Supabase project once
-  you confirm the `nexusos` schema name
+  you confirm the `nexus` schema name
 
 ## Design decisions worth flagging
 

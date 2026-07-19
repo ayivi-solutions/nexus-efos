@@ -10,7 +10,7 @@ generator client {
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
-  schemas  = ["nexusos"]
+  schemas  = ["nexus"]
 }
 
 // ---------------------------------------------------------------------------
@@ -27,7 +27,7 @@ enum InstitutionType {
   AGENCY_BANKING_NETWORK
   DIGITAL_LENDING_INSTITUTION
 
-  @@schema("nexusos")
+  @@schema("nexus")
 }
 
 enum InstitutionStatus {
@@ -36,7 +36,7 @@ enum InstitutionStatus {
   SUSPENDED
   DEACTIVATED
 
-  @@schema("nexusos")
+  @@schema("nexus")
 }
 
 model Institution {
@@ -62,7 +62,7 @@ model Institution {
   updatedAt     DateTime          @updatedAt
 
   @@map("institutions")
-  @@schema("nexusos")
+  @@schema("nexus")
 }
 
 model Branch {
@@ -82,7 +82,7 @@ model Branch {
 
   @@unique([institutionId, code])
   @@map("branches")
-  @@schema("nexusos")
+  @@schema("nexus")
 }
 
 // ---------------------------------------------------------------------------
@@ -93,7 +93,7 @@ enum UserCategory {
   INTERNAL // employees
   EXTERNAL // customers, agents, partners, regulators, developers
 
-  @@schema("nexusos")
+  @@schema("nexus")
 }
 
 enum UserStatus {
@@ -102,7 +102,7 @@ enum UserStatus {
   SUSPENDED
   DEACTIVATED
 
-  @@schema("nexusos")
+  @@schema("nexus")
 }
 
 model User {
@@ -127,7 +127,7 @@ model User {
 
   @@unique([institutionId, email])
   @@map("users")
-  @@schema("nexusos")
+  @@schema("nexus")
 }
 
 // ---------------------------------------------------------------------------
@@ -141,7 +141,7 @@ enum RoleCategory {
   TECHNICAL
   CUSTOMER
 
-  @@schema("nexusos")
+  @@schema("nexus")
 }
 
 model Role {
@@ -161,7 +161,7 @@ model Role {
 
   @@unique([institutionId, name])
   @@map("roles")
-  @@schema("nexusos")
+  @@schema("nexus")
 }
 
 // doc §39.6 — Data / Transaction / Administrative / Reporting / Integration
@@ -172,7 +172,7 @@ enum PermissionCategory {
   REPORTING
   INTEGRATION
 
-  @@schema("nexusos")
+  @@schema("nexus")
 }
 
 // doc §38.9 — View, Create, Update, Delete, Approve, Reject, Export, Configure, Administer, Audit
@@ -188,7 +188,7 @@ enum PermissionAction {
   ADMINISTER
   AUDIT
 
-  @@schema("nexusos")
+  @@schema("nexus")
 }
 
 model Permission {
@@ -202,7 +202,7 @@ model Permission {
   rolePermissions RolePermission[]
 
   @@map("permissions")
-  @@schema("nexusos")
+  @@schema("nexus")
 }
 
 model RolePermission {
@@ -214,7 +214,7 @@ model RolePermission {
 
   @@unique([roleId, permissionId])
   @@map("role_permissions")
-  @@schema("nexusos")
+  @@schema("nexus")
 }
 
 // doc §38.12 — Temporary Delegation: time-limited, auto-expiring role assignment
@@ -236,7 +236,7 @@ model UserRole {
 
   @@unique([userId, roleId, branchId])
   @@map("user_roles")
-  @@schema("nexusos")
+  @@schema("nexus")
 }
 
 // ---------------------------------------------------------------------------
@@ -251,7 +251,7 @@ enum CustomerSegment {
   YOUTH
   CORPORATE
 
-  @@schema("nexusos")
+  @@schema("nexus")
 }
 
 enum LifecycleStage {
@@ -264,7 +264,7 @@ enum LifecycleStage {
   ADVOCACY
   RE_ENGAGEMENT
 
-  @@schema("nexusos")
+  @@schema("nexus")
 }
 
 enum KycStatus {
@@ -272,7 +272,7 @@ enum KycStatus {
   VERIFIED
   REJECTED
 
-  @@schema("nexusos")
+  @@schema("nexus")
 }
 
 model Customer {
@@ -297,7 +297,7 @@ model Customer {
 
   @@unique([institutionId, phone])
   @@map("customers")
-  @@schema("nexusos")
+  @@schema("nexus")
 }
 
 // ---------------------------------------------------------------------------
@@ -316,7 +316,7 @@ model RefreshToken {
   createdAt   DateTime @default(now())
 
   @@map("refresh_tokens")
-  @@schema("nexusos")
+  @@schema("nexus")
 }
 
 // doc §39.13 — Access Monitoring: every access event should be monitored
@@ -334,5 +334,5 @@ model AuditLog {
   createdAt     DateTime    @default(now())
 
   @@map("audit_logs")
-  @@schema("nexusos")
+  @@schema("nexus")
 }
