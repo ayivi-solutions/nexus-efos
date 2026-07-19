@@ -69,6 +69,21 @@ export default function DashboardPage() {
             </div>
             <h1 className="font-display font-semibold text-4xl text-ink-900 mb-8">{institution.legalName}</h1>
 
+            {institution.onboardingStep < 5 && (
+              <button
+                onClick={() =>
+                  router.push(
+                    ["", "onboarding", "onboarding/details", "onboarding/branches", "onboarding/staff", "onboarding/go-live"][
+                      institution.onboardingStep
+                    ]
+                  )
+                }
+                className="mb-8 w-full text-left px-4 py-3 rounded-md bg-gold-300/30 border border-gold-500/40 text-ink-900 text-sm hover:bg-gold-300/50 transition"
+              >
+                Onboarding is at step {institution.onboardingStep} of 5 — continue setup →
+              </button>
+            )}
+
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-10">
               <Stat label="Onboarding step" value={`${institution.onboardingStep} / 5`} />
               <Stat label="Status" value={institution.status.replaceAll("_", " ")} />

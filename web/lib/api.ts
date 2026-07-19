@@ -34,6 +34,19 @@ export const api = {
     request("/auth/login", { method: "POST", body: JSON.stringify(data) }),
 
   me: () => request("/institutions/me"),
+
+  updateDetails: (data: { regulatorId?: string; region?: string; phone?: string; email?: string }) =>
+    request("/institutions/onboarding/details", { method: "PATCH", body: JSON.stringify(data) }),
+
+  addBranch: (data: { name: string; code: string; region?: string }) =>
+    request("/institutions/onboarding/branches", { method: "POST", body: JSON.stringify(data) }),
+
+  listRoles: () => request("/roles"),
+
+  inviteStaff: (data: { fullName: string; email: string; roleId: string; branchId?: string }) =>
+    request("/institutions/onboarding/staff", { method: "POST", body: JSON.stringify(data) }),
+
+  goLive: () => request("/institutions/onboarding/go-live", { method: "POST" }),
 };
 
 // NOTE: sessionStorage is used here (client-only, in-memory-per-tab) rather

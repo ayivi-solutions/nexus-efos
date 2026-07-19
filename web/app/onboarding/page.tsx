@@ -40,7 +40,7 @@ export default function OnboardingPage() {
       await api.registerInstitution(form);
       const session = await api.login({ email: form.adminEmail, password: form.adminPassword });
       persistSession(session.accessToken, session.refreshToken);
-      router.push("/dashboard");
+      router.push("/onboarding/details");
     } catch (err: any) {
       setError(err.message || "Registration failed");
     } finally {
