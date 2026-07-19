@@ -68,15 +68,21 @@ authRouter.post("/register-institution", async (req, res) => {
       )
     );
 
-    // Grant every permission whose code appears in the template's permission list
+    // Fetch every permission ONCE, not per-role (avoids N sequential queries
+    // inside the transaction against the pooled connection).
+    const allPermissions = await tx.permission.findMany();
+    const permIdByCode: Record<string, string> = {};
+    for (const p of allPermissions) permIdByCode[p.code] = p.id;
+
+    const rolePermissionRows: { roleId: string; permissionId: string }[] = [];
     for (const tmpl of SYSTEM_ROLE_TEMPLATES) {
       const roleRecord = roleRecords.find((r) => r.name === tmpl.name)!;
-      const perms = await tx.permission.findMany({ where: { code: { in: tmpl.permissionCodes } } });
-      await tx.rolePermission.createMany({
-        data: perms.map((p: { id: string }) => ({ roleId: roleRecord.id, permissionId: p.id })),
-        skipDuplicates: true,
-      });
+      for (const code of tmpl.permissionCodes) {
+        const permissionId = permIdByCode[code];
+        if (permissionId) rolePermissionRows.push({ roleId: roleRecord.id, permissionId });
+      }
     }
+    await tx.rolePermission.createMany({ data: rolePermissionRows, skipDuplicates: true });
 
     const adminRole = roleRecords.find((r) => r.name === "Chief Executive Officer")!;
 
@@ -106,7 +112,8 @@ authRouter.post("/register-institution", async (req, res) => {
     });
 
     return inst;
-  });
+  },
+  { timeout: 15000 });
 
   res.status(201).json({ institution, nextStep: "onboarding-details" });
 });
