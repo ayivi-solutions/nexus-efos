@@ -7,13 +7,27 @@ import { Sidebar } from "@/components/Sidebar";
 
 const SEGMENTS = ["INDIVIDUAL", "BUSINESS", "FARMER_GROUP", "WOMENS_GROUP", "YOUTH", "CORPORATE"];
 
+const STAGES = [
+  "AWARENESS", "ACQUISITION", "ONBOARDING", "ACTIVATION", "GROWTH", "RETENTION", "ADVOCACY", "RE_ENGAGEMENT",
+];
+
+const KYC_STATUSES = ["PENDING", "VERIFIED", "REJECTED"];
+
 const STAGE_COLOR: Record<string, string> = {
+  AWARENESS: "bg-violet-500/15 text-violet-500",
+  ACQUISITION: "bg-violet-500/15 text-violet-500",
   ONBOARDING: "bg-violet-500/15 text-violet-500",
   ACTIVATION: "bg-gold-500/15 text-gold-600",
   GROWTH: "bg-green-100 text-green-600",
   RETENTION: "bg-green-100 text-green-600",
   ADVOCACY: "bg-green-100 text-green-600",
   RE_ENGAGEMENT: "bg-rose-100 text-rose-600",
+};
+
+const KYC_COLOR: Record<string, string> = {
+  PENDING: "bg-violet-500/15 text-violet-500",
+  VERIFIED: "bg-green-100 text-green-600",
+  REJECTED: "bg-rose-100 text-rose-600",
 };
 
 export default function CustomersPage() {
@@ -23,6 +37,7 @@ export default function CustomersPage() {
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ fullName: "", phone: "", email: "", segment: "INDIVIDUAL" });
   const [saving, setSaving] = useState(false);
+  const [updatingId, setUpdatingId] = useState<string | null>(null);
 
   function load() {
     api
@@ -52,6 +67,32 @@ export default function CustomersPage() {
       setError(err.message || "Could not create customer");
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function handleStageChange(id: string, lifecycleStage: string) {
+    setUpdatingId(id);
+    setError(null);
+    try {
+      await api.updateCustomerStage(id, lifecycleStage);
+      load();
+    } catch (err: any) {
+      setError(err.message || "Could not update stage");
+    } finally {
+      setUpdatingId(null);
+    }
+  }
+
+  async function handleKycChange(id: string, kycStatus: string) {
+    setUpdatingId(id);
+    setError(null);
+    try {
+      await api.updateCustomerKyc(id, kycStatus);
+      load();
+    } catch (err: any) {
+      setError(err.message || "Could not update KYC status");
+    } finally {
+      setUpdatingId(null);
     }
   }
 
@@ -144,11 +185,33 @@ export default function CustomersPage() {
                   <td className="px-4 py-3 text-text-700">{c.phone}</td>
                   <td className="px-4 py-3 text-text-700">{c.segment.replaceAll("_", " ")}</td>
                   <td className="px-4 py-3">
-                    <span className={`text-[11px] px-2 py-0.5 rounded-full ${STAGE_COLOR[c.lifecycleStage] || ""}`}>
-                      {c.lifecycleStage.replaceAll("_", " ")}
-                    </span>
+                    <select
+                      disabled={updatingId === c.id}
+                      value={c.lifecycleStage}
+                      onChange={(e) => handleStageChange(c.id, e.target.value)}
+                      className={`text-[11px] px-2 py-1 rounded-full border-0 cursor-pointer disabled:opacity-50 ${STAGE_COLOR[c.lifecycleStage] || ""}`}
+                    >
+                      {STAGES.map((s) => (
+                        <option key={s} value={s}>
+                          {s.replaceAll("_", " ")}
+                        </option>
+                      ))}
+                    </select>
                   </td>
-                  <td className="px-4 py-3 text-text-500">{c.kycStatus}</td>
+                  <td className="px-4 py-3">
+                    <select
+                      disabled={updatingId === c.id}
+                      value={c.kycStatus}
+                      onChange={(e) => handleKycChange(c.id, e.target.value)}
+                      className={`text-[11px] px-2 py-1 rounded-full border-0 cursor-pointer disabled:opacity-50 ${KYC_COLOR[c.kycStatus] || ""}`}
+                    >
+                      {KYC_STATUSES.map((s) => (
+                        <option key={s} value={s}>
+                          {s}
+                        </option>
+                      ))}
+                    </select>
+                  </td>
                 </tr>
               ))}
               {customers.length === 0 && (

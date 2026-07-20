@@ -53,6 +53,12 @@ export const api = {
   createCustomer: (data: { fullName: string; phone: string; email?: string; segment: string }) =>
     request("/customers", { method: "POST", body: JSON.stringify(data) }),
 
+  updateCustomerStage: (id: string, lifecycleStage: string) =>
+    request(`/customers/${id}/stage`, { method: "PATCH", body: JSON.stringify({ lifecycleStage }) }),
+
+  updateCustomerKyc: (id: string, kycStatus: string) =>
+    request(`/customers/${id}/kyc`, { method: "PATCH", body: JSON.stringify({ kycStatus }) }),
+
   listLoans: () => request("/loans"),
   createLoan: (data: { customerId: string; principal: number; interestRate: number; termMonths: number }) =>
     request("/loans", { method: "POST", body: JSON.stringify(data) }),
