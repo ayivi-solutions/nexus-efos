@@ -82,6 +82,11 @@ export const api = {
     request(`/savings/${id}/withdraw`, { method: "POST", body: JSON.stringify({ amount }) }),
 
   listAuditLog: () => request("/audit-log"),
+
+  logout: () => {
+    const refreshToken = typeof window !== "undefined" ? sessionStorage.getItem("nexus_refresh_token") : null;
+    return request("/auth/logout", { method: "POST", body: JSON.stringify({ refreshToken }) }).catch(() => {});
+  },
 };
 
 // NOTE: sessionStorage is used here (client-only, in-memory-per-tab) rather

@@ -2,15 +2,16 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { api } from "@/lib/api";
 
 const NAV = [
   { label: "Overview", icon: "◆", href: "/dashboard" },
   { label: "Customers", icon: "○", href: "/customers" },
   { label: "Loans", icon: "▢", href: "/loans" },
   { label: "Savings", icon: "▣", href: "/savings" },
-  { label: "Branches", icon: "▤", href: "#" },
-  { label: "Roles & Permissions", icon: "◈", href: "#" },
-  { label: "Audit Log", icon: "▥", href: "#" },
+  { label: "Branches", icon: "▤", href: "/branches" },
+  { label: "Roles & Permissions", icon: "◈", href: "/roles" },
+  { label: "Audit Log", icon: "▥", href: "/audit-log" },
 ];
 
 export function Sidebar({ active }: { active: string }) {
@@ -18,9 +19,16 @@ export function Sidebar({ active }: { active: string }) {
   const [open, setOpen] = useState(false);
 
   function go(href: string) {
-    if (href === "#") return;
     setOpen(false);
     router.push(href);
+  }
+
+  async function handleLogout() {
+    setOpen(false);
+    await api.logout();
+    sessionStorage.removeItem("nexus_access_token");
+    sessionStorage.removeItem("nexus_refresh_token");
+    router.push("/login");
   }
 
   const navList = (
@@ -52,8 +60,14 @@ export function Sidebar({ active }: { active: string }) {
   );
 
   const footer = (
-    <div className="p-4 border-t text-[11px] text-violet-500" style={{ borderColor: "rgba(232,181,99,0.14)" }}>
-      Core Platform · Working Draft v0.1
+    <div className="border-t" style={{ borderColor: "rgba(232,181,99,0.14)" }}>
+      <button
+        onClick={handleLogout}
+        className="w-full flex items-center gap-2.5 text-left px-5 py-3 text-[13px] text-rose-400 hover:bg-ink-800 transition"
+      >
+        <span>⏻</span> Log out
+      </button>
+      <div className="px-4 pb-4 text-[11px] text-violet-500">Core Platform · Working Draft v0.1</div>
     </div>
   );
 
