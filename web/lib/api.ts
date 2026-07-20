@@ -52,6 +52,21 @@ export const api = {
 
   createCustomer: (data: { fullName: string; phone: string; email?: string; segment: string }) =>
     request("/customers", { method: "POST", body: JSON.stringify(data) }),
+
+  listLoans: () => request("/loans"),
+  createLoan: (data: { customerId: string; principal: number; interestRate: number; termMonths: number }) =>
+    request("/loans", { method: "POST", body: JSON.stringify(data) }),
+  approveLoan: (id: string) => request(`/loans/${id}/approve`, { method: "POST" }),
+  rejectLoan: (id: string) => request(`/loans/${id}/reject`, { method: "POST" }),
+  disburseLoan: (id: string) => request(`/loans/${id}/disburse`, { method: "POST" }),
+
+  listSavingsAccounts: () => request("/savings"),
+  openSavingsAccount: (data: { customerId: string }) =>
+    request("/savings", { method: "POST", body: JSON.stringify(data) }),
+  depositSavings: (id: string, amount: number) =>
+    request(`/savings/${id}/deposit`, { method: "POST", body: JSON.stringify({ amount }) }),
+  withdrawSavings: (id: string, amount: number) =>
+    request(`/savings/${id}/withdraw`, { method: "POST", body: JSON.stringify({ amount }) }),
 };
 
 // NOTE: sessionStorage is used here (client-only, in-memory-per-tab) rather

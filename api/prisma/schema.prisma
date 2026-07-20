@@ -57,6 +57,8 @@ model Institution {
   users         User[]
   roles         Role[]
   customers     Customer[]
+  loans         Loan[]
+  savingsAccounts SavingsAccount[]
   auditLogs     AuditLog[]
 
   createdAt     DateTime          @default(now())
@@ -77,6 +79,8 @@ model Branch {
 
   userRoles     UserRole[]
   customers     Customer[]
+  loans         Loan[]
+  savingsAccounts SavingsAccount[]
 
   createdAt     DateTime     @default(now())
   updatedAt     DateTime     @updatedAt
@@ -296,8 +300,121 @@ model Customer {
   createdAt     DateTime        @default(now())
   updatedAt     DateTime        @updatedAt
 
+  loans         Loan[]
+  savingsAccounts SavingsAccount[]
+
   @@unique([institutionId, phone])
   @@map("customers")
+  @@schema("nexus")
+}
+
+// ---------------------------------------------------------------------------
+// LOANS (doc §34 Loan Management Service)
+// ---------------------------------------------------------------------------
+
+enum LoanStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  DISBURSED
+  ACTIVE
+  CLOSED
+  DEFAULTED
+
+  @@schema("nexus")
+}
+
+model Loan {
+  id            String      @id @default(cuid())
+  institution   Institution @relation(fields: [institutionId], references: [id], onDelete: Cascade)
+  institutionId String
+  customer      Customer    @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  customerId    String
+  branch        Branch?     @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  branchId      String?
+
+  principal     Decimal     @db.Decimal(14, 2)
+  interestRate  Decimal     @db.Decimal(5, 2)
+  termMonths    Int
+  status        LoanStatus  @default(PENDING)
+
+  initiatedById String?
+  approvedById  String?
+  disbursedAt   DateTime?
+
+  repayments    LoanRepayment[]
+
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  @@map("loans")
+  @@schema("nexus")
+}
+
+model LoanRepayment {
+  id           String   @id @default(cuid())
+  loan         Loan     @relation(fields: [loanId], references: [id], onDelete: Cascade)
+  loanId       String
+  amount       Decimal  @db.Decimal(14, 2)
+  paidAt       DateTime @default(now())
+  recordedById String?
+
+  @@map("loan_repayments")
+  @@schema("nexus")
+}
+
+// ---------------------------------------------------------------------------
+// SAVINGS (doc §34 Savings Account Service, Deposit Processing Service)
+// ---------------------------------------------------------------------------
+
+enum SavingsAccountStatus {
+  ACTIVE
+  DORMANT
+  CLOSED
+
+  @@schema("nexus")
+}
+
+enum SavingsTxnType {
+  DEPOSIT
+  WITHDRAWAL
+
+  @@schema("nexus")
+}
+
+model SavingsAccount {
+  id            String               @id @default(cuid())
+  institution   Institution          @relation(fields: [institutionId], references: [id], onDelete: Cascade)
+  institutionId String
+  customer      Customer             @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  customerId    String
+  branch        Branch?              @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  branchId      String?
+
+  accountNumber String               @unique
+  balance       Decimal              @default(0) @db.Decimal(14, 2)
+  status        SavingsAccountStatus @default(ACTIVE)
+
+  transactions  SavingsTransaction[]
+
+  createdAt     DateTime             @default(now())
+  updatedAt     DateTime             @updatedAt
+
+  @@map("savings_accounts")
+  @@schema("nexus")
+}
+
+model SavingsTransaction {
+  id           String         @id @default(cuid())
+  account      SavingsAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  accountId    String
+  type         SavingsTxnType
+  amount       Decimal        @db.Decimal(14, 2)
+  balanceAfter Decimal        @db.Decimal(14, 2)
+  recordedById String?
+  createdAt    DateTime       @default(now())
+
+  @@map("savings_transactions")
   @@schema("nexus")
 }
 
