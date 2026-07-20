@@ -1,0 +1,65 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+import { api } from "@/lib/api";
+import { Sidebar } from "@/components/Sidebar";
+
+export default function AuditLogPage() {
+  const router = useRouter();
+  const [logs, setLogs] = useState<any[]>([]);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!sessionStorage.getItem("nexus_access_token")) {
+      router.push("/login");
+      return;
+    }
+    api
+      .listAuditLog()
+      .then((res) => setLogs(res.logs))
+      .catch((err) => setError(err.message));
+  }, [router]);
+
+  return (
+    <div className="min-h-screen flex flex-col md:flex-row bg-paper-0">
+      <Sidebar active="Audit Log" />
+      <main className="flex-1 p-5 md:p-10 overflow-x-auto">
+        <h1 className="font-display font-semibold text-3xl text-ink-900 mb-2">Audit Log</h1>
+        <p className="text-text-muted text-sm mb-8">Read-only. Most recent 200 events, newest first.</p>
+
+        {error && <p className="text-rose-600 text-sm mb-4">{error}</p>}
+
+        <div className="border border-paper-100 rounded-lg overflow-hidden">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="bg-paper-50 text-left text-[11px] uppercase tracking-wide text-text-muted">
+                <th className="px-4 py-3">Time</th>
+                <th className="px-4 py-3">User</th>
+                <th className="px-4 py-3">Action</th>
+                <th className="px-4 py-3">Resource</th>
+              </tr>
+            </thead>
+            <tbody>
+              {logs.map((l) => (
+                <tr key={l.id} className="border-t border-paper-100">
+                  <td className="px-4 py-3 text-text-700 whitespace-nowrap">{new Date(l.createdAt).toLocaleString()}</td>
+                  <td className="px-4 py-3 text-text-900">{l.user?.fullName || "System"}</td>
+                  <td className="px-4 py-3 font-mono text-[12.5px] text-text-700">{l.action}</td>
+                  <td className="px-4 py-3 text-text-700">{l.resource || "—"}{l.resourceId ? ` (${l.resourceId.slice(0, 8)})` : ""}</td>
+                </tr>
+              ))}
+              {logs.length === 0 && (
+                <tr>
+                  <td colSpan={4} className="px-4 py-8 text-center text-text-muted text-sm">
+                    No audit events yet.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </main>
+    </div>
+  );
+}

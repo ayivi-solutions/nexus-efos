@@ -42,20 +42,27 @@ export const api = {
     request("/institutions/onboarding/branches", { method: "POST", body: JSON.stringify(data) }),
 
   listRoles: () => request("/roles"),
+  listPermissions: () => request("/roles/permissions"),
+  assignRole: (data: { userId: string; roleId: string; branchId?: string; expiresAt?: string; isDelegated?: boolean }) =>
+    request("/roles/assign", { method: "POST", body: JSON.stringify(data) }),
+  revokeRole: (userRoleId: string) => request(`/roles/assign/${userRoleId}`, { method: "DELETE" }),
 
   inviteStaff: (data: { fullName: string; email: string; roleId: string; branchId?: string }) =>
     request("/institutions/onboarding/staff", { method: "POST", body: JSON.stringify(data) }),
 
   goLive: () => request("/institutions/onboarding/go-live", { method: "POST" }),
 
-  listCustomers: () => request("/customers"),
+  listUsers: () => request("/institutions/users"),
 
+  listBranches: () => request("/institutions/branches"),
+  createBranch: (data: { name: string; code: string; region?: string }) =>
+    request("/institutions/branches", { method: "POST", body: JSON.stringify(data) }),
+
+  listCustomers: () => request("/customers"),
   createCustomer: (data: { fullName: string; phone: string; email?: string; segment: string }) =>
     request("/customers", { method: "POST", body: JSON.stringify(data) }),
-
   updateCustomerStage: (id: string, lifecycleStage: string) =>
     request(`/customers/${id}/stage`, { method: "PATCH", body: JSON.stringify({ lifecycleStage }) }),
-
   updateCustomerKyc: (id: string, kycStatus: string) =>
     request(`/customers/${id}/kyc`, { method: "PATCH", body: JSON.stringify({ kycStatus }) }),
 
@@ -73,6 +80,8 @@ export const api = {
     request(`/savings/${id}/deposit`, { method: "POST", body: JSON.stringify({ amount }) }),
   withdrawSavings: (id: string, amount: number) =>
     request(`/savings/${id}/withdraw`, { method: "POST", body: JSON.stringify({ amount }) }),
+
+  listAuditLog: () => request("/audit-log"),
 };
 
 // NOTE: sessionStorage is used here (client-only, in-memory-per-tab) rather

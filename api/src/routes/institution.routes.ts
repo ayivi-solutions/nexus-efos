@@ -15,6 +15,52 @@ institutionRouter.get("/me", async (req: AuthedRequest, res) => {
   res.json({ institution });
 });
 
+// Branch directory (post-onboarding management, doc §36)
+institutionRouter.get("/branches", requirePermission("branches.administer"), async (req: AuthedRequest, res) => {
+  const branches = await prisma.branch.findMany({
+    where: { institutionId: req.auth!.institutionId },
+    orderBy: { name: "asc" },
+  });
+  res.json({ branches });
+});
+
+const newBranchSchema = z.object({ name: z.string().min(1), code: z.string().min(1), region: z.string().optional() });
+
+institutionRouter.post("/branches", requirePermission("branches.administer"), async (req: AuthedRequest, res) => {
+  const parsed = newBranchSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+  const branch = await prisma.branch.create({
+    data: { institutionId: req.auth!.institutionId, ...parsed.data },
+  });
+  await prisma.auditLog.create({
+    data: {
+      institutionId: req.auth!.institutionId,
+      userId: req.auth!.userId,
+      action: "branch.create",
+      resource: "branch",
+      resourceId: branch.id,
+    },
+  });
+  res.status(201).json({ branch });
+});
+
+// Staff directory (doc §38 — needed to see who can be assigned roles)
+institutionRouter.get("/users", requirePermission("users.administer"), async (req: AuthedRequest, res) => {
+  const users = await prisma.user.findMany({
+    where: { institutionId: req.auth!.institutionId },
+    select: {
+      id: true,
+      fullName: true,
+      email: true,
+      status: true,
+      userRoles: { include: { role: true, branch: true } },
+    },
+    orderBy: { fullName: "asc" },
+  });
+  res.json({ users });
+});
+
 // Step 2 — institutional details (regulator ID, region, contact)
 const detailsSchema = z.object({
   regulatorId: z.string().optional(),

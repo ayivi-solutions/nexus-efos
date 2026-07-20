@@ -6,6 +6,7 @@ import { roleRouter } from "./routes/role.routes";
 import { customerRouter } from "./routes/customer.routes";
 import { loanRouter } from "./routes/loan.routes";
 import { savingsRouter } from "./routes/savings.routes";
+import { auditRouter } from "./routes/audit.routes";
 
 export const app = express();
 
@@ -20,6 +21,7 @@ app.use("/roles", roleRouter);
 app.use("/customers", customerRouter);
 app.use("/loans", loanRouter);
 app.use("/savings", savingsRouter);
+app.use("/audit-log", auditRouter);
 
 app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   console.error(err);
