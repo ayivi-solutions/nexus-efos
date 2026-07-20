@@ -23,10 +23,10 @@ export default function DashboardPage() {
   }, [router]);
 
   return (
-    <div className="min-h-screen flex bg-paper-0">
+    <div className="min-h-screen flex flex-col md:flex-row bg-paper-0">
       <Sidebar active="Overview" />
 
-      <main className="flex-1 p-10">
+      <main className="flex-1 p-5 md:p-10 overflow-x-auto">
         {error && <p className="text-rose-600 text-sm mb-4">{error}</p>}
         {!institution && !error && <p className="text-text-muted text-sm">Loading institution…</p>}
 

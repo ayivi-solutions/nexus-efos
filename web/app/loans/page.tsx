@@ -71,9 +71,9 @@ export default function LoansPage() {
   }
 
   return (
-    <div className="min-h-screen flex bg-paper-0">
+    <div className="min-h-screen flex flex-col md:flex-row bg-paper-0">
       <Sidebar active="Loans" />
-      <main className="flex-1 p-10">
+      <main className="flex-1 p-5 md:p-10 overflow-x-auto">
         <div className="flex items-center justify-between mb-8">
           <h1 className="font-display font-semibold text-3xl text-ink-900">Loans</h1>
           <button
