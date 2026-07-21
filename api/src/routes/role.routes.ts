@@ -72,3 +72,47 @@ roleRouter.delete("/assign/:userRoleId", requirePermission("roles.assign"), asyn
   });
   res.status(204).send();
 });
+
+// CRUAA — Update. Replaces the role's permission set atomically. System
+// (seeded) role templates can still be edited per-institution — this
+// customises the institution's own copy, not the global template.
+const updateRoleSchema = z.object({
+  description: z.string().optional(),
+  permissionCodes: z.array(z.string()).optional(),
+});
+
+roleRouter.patch("/:id", requirePermission("roles.configure"), async (req: AuthedRequest, res) => {
+  const parsed = updateRoleSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+  const role = await prisma.role.findFirst({ where: { id: req.params.id, institutionId: req.auth!.institutionId } });
+  if (!role) return res.status(404).json({ error: "Role not found" });
+
+  await prisma.$transaction(async (tx) => {
+    if (parsed.data.description !== undefined) {
+      await tx.role.update({ where: { id: role.id }, data: { description: parsed.data.description } });
+    }
+    if (parsed.data.permissionCodes) {
+      const permissions = await tx.permission.findMany({ where: { code: { in: parsed.data.permissionCodes } } });
+      await tx.rolePermission.deleteMany({ where: { roleId: role.id } });
+      await tx.rolePermission.createMany({
+        data: permissions.map((p) => ({ roleId: role.id, permissionId: p.id })),
+        skipDuplicates: true,
+      });
+    }
+  });
+
+  await prisma.auditLog.create({
+    data: {
+      institutionId: req.auth!.institutionId,
+      userId: req.auth!.userId,
+      action: "role.update",
+      resource: "role",
+      resourceId: role.id,
+      metadata: { permissionCodes: parsed.data.permissionCodes || null },
+    },
+  });
+
+  const updated = await prisma.role.findUnique({ where: { id: role.id }, include: { rolePermissions: { include: { permission: true } } } });
+  res.json({ role: updated });
+});

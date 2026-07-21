@@ -29,6 +29,33 @@ savingsRouter.get("/:id", requirePermission("reports.view"), async (req: AuthedR
   res.json({ account });
 });
 
+// CRUAA — Archive equivalent for a savings account: CLOSED. Standard
+// banking rule — balance must be zero first (withdraw everything, then close).
+savingsRouter.post("/:id/close", requirePermission("savings.approve"), async (req: AuthedRequest, res) => {
+  const account = await prisma.savingsAccount.findFirst({ where: { id: req.params.id, institutionId: req.auth!.institutionId } });
+  if (!account) return res.status(404).json({ error: "Account not found" });
+  if (Number(account.balance) !== 0) return res.status(400).json({ error: "Account balance must be zero before closing" });
+
+  await prisma.savingsAccount.update({ where: { id: account.id }, data: { status: "CLOSED" } });
+  await prisma.auditLog.create({
+    data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "savings.close", resource: "savings_account", resourceId: account.id },
+  });
+  res.json({ ok: true });
+});
+
+savingsRouter.post("/:id/reactivate", requirePermission("savings.approve"), async (req: AuthedRequest, res) => {
+  const account = await prisma.savingsAccount.updateMany({
+    where: { id: req.params.id, institutionId: req.auth!.institutionId },
+    data: { status: "ACTIVE" },
+  });
+  if (account.count === 0) return res.status(404).json({ error: "Account not found" });
+
+  await prisma.auditLog.create({
+    data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "savings.reactivate", resource: "savings_account", resourceId: req.params.id },
+  });
+  res.json({ ok: true });
+});
+
 function generateAccountNumber() {
   return "SA" + Date.now().toString().slice(-10);
 }
