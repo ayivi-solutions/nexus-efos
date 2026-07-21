@@ -306,6 +306,23 @@ enum CustomerSegment {
 }
 
 enum LifecycleStage {
+  AWARENESS
+  ACQUISITION
+  ONBOARDING
+  ACTIVATION
+  GROWTH
+  RETENTION
+  ADVOCACY
+  RE_ENGAGEMENT
+
+  @@schema("nexus")
+}
+
+// Banking-operational status — distinct axis from LifecycleStage (CRM/
+// marketing journey). Gates whether a customer can actually transact
+// (Technical Spec sections 26.4, 57.6, 59.6). A customer can be in
+// "Retention" from a marketing standpoint while operationally "Dormant".
+enum AccountStatus {
   REGISTERED
   PENDING_VERIFICATION
   VERIFIED
@@ -341,7 +358,8 @@ model Customer {
   idNumber      String?
 
   segment       CustomerSegment @default(INDIVIDUAL)
-  lifecycleStage LifecycleStage @default(REGISTERED)
+  lifecycleStage LifecycleStage @default(ONBOARDING)
+  status         AccountStatus  @default(REGISTERED)
   kycStatus     KycStatus       @default(PENDING)
 
   archived      Boolean         @default(false)
