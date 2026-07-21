@@ -12,9 +12,9 @@ export default function RolesPage() {
   const [branches, setBranches] = useState<any[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [inviting, setInviting] = useState(false);
   const [form, setForm] = useState({ userId: "", roleId: "", branchId: "", expiresAt: "", isDelegated: false });
   const [inviteForm, setInviteForm] = useState({ fullName: "", email: "", roleId: "", branchId: "" });
-  const [inviting, setInviting] = useState(false);
 
   function load() {
     Promise.all([api.listRoles(), api.listUsers(), api.listBranches()])
@@ -33,6 +33,26 @@ export default function RolesPage() {
     }
     load();
   }, [router]);
+
+  async function handleInvite(e: React.FormEvent) {
+    e.preventDefault();
+    setInviting(true);
+    setError(null);
+    try {
+      await api.inviteStaff({
+        fullName: inviteForm.fullName,
+        email: inviteForm.email,
+        roleId: inviteForm.roleId,
+        branchId: inviteForm.branchId || undefined,
+      });
+      setInviteForm({ fullName: "", email: "", roleId: "", branchId: "" });
+      load();
+    } catch (err: any) {
+      setError(err.message || "Could not invite staff");
+    } finally {
+      setInviting(false);
+    }
+  }
 
   async function handleAssign(e: React.FormEvent) {
     e.preventDefault();
@@ -55,26 +75,6 @@ export default function RolesPage() {
     }
   }
 
-  async function handleInvite(e: React.FormEvent) {
-    e.preventDefault();
-    setInviting(true);
-    setError(null);
-    try {
-      await api.inviteStaff({
-        fullName: inviteForm.fullName,
-        email: inviteForm.email,
-        roleId: inviteForm.roleId,
-        branchId: inviteForm.branchId || undefined,
-      });
-      setInviteForm({ fullName: "", email: "", roleId: "", branchId: "" });
-      load();
-    } catch (err: any) {
-      setError(err.message || "Could not invite staff");
-    } finally {
-      setInviting(false);
-    }
-  }
-
   async function handleRevoke(userRoleId: string) {
     setError(null);
     try {
@@ -89,7 +89,7 @@ export default function RolesPage() {
     <div className="min-h-screen flex flex-col md:flex-row bg-paper-0">
       <Sidebar active="Roles & Permissions" />
       <main className="flex-1 p-5 md:p-10 overflow-x-auto">
-        <h1 className="font-display font-semibold text-3xl text-ink-900 mb-8">Roles &amp; Permissions</h1>
+        <h1 className="font-display font-semibold text-3xl text-ink-900 mb-8">Roles and Permissions</h1>
 
         {error && <p className="text-rose-600 text-sm mb-4">{error}</p>}
 
@@ -124,7 +124,7 @@ export default function RolesPage() {
             <label className="block">
               <span className="block text-[13px] text-text-500 mb-1.5">Role</span>
               <select required className="input" value={inviteForm.roleId} onChange={(e) => setInviteForm((f) => ({ ...f, roleId: e.target.value }))}>
-                <option value="">Select�</option>
+                <option value="">Select...</option>
                 {roles.map((r) => (
                   <option key={r.id} value={r.id}>{r.name}</option>
                 ))}
@@ -145,7 +145,7 @@ export default function RolesPage() {
             disabled={inviting}
             className="px-4 py-2 rounded-md bg-ink-900 text-gold-400 font-semibold text-sm hover:bg-ink-800 transition disabled:opacity-60"
           >
-            {inviting ? "Inviting�" : "Send invite"}
+            {inviting ? "Inviting..." : "Send invite"}
           </button>
           <p className="text-text-muted text-xs mt-2">
             The invited user sets their own password at /accept-invite using this email.
@@ -158,7 +158,7 @@ export default function RolesPage() {
             <label className="block sm:col-span-1">
               <span className="block text-[13px] text-text-500 mb-1.5">User</span>
               <select required className="input" value={form.userId} onChange={(e) => setForm((f) => ({ ...f, userId: e.target.value }))}>
-                <option value="">Select…</option>
+                <option value="">Select...</option>
                 {users.map((u) => (
                   <option key={u.id} value={u.id}>{u.fullName}</option>
                 ))}
@@ -167,7 +167,7 @@ export default function RolesPage() {
             <label className="block sm:col-span-1">
               <span className="block text-[13px] text-text-500 mb-1.5">Role</span>
               <select required className="input" value={form.roleId} onChange={(e) => setForm((f) => ({ ...f, roleId: e.target.value }))}>
-                <option value="">Select…</option>
+                <option value="">Select...</option>
                 {roles.map((r) => (
                   <option key={r.id} value={r.id}>{r.name}</option>
                 ))}
@@ -196,11 +196,11 @@ export default function RolesPage() {
             disabled={saving}
             className="px-4 py-2 rounded-md bg-gold-500 text-ink-900 font-semibold text-sm hover:bg-gold-400 transition disabled:opacity-60"
           >
-            {saving ? "Assigning…" : "Assign role"}
+            {saving ? "Assigning..." : "Assign role"}
           </button>
         </form>
 
-        <h2 className="font-display font-semibold text-lg text-ink-900 mb-3">Staff &amp; assignments</h2>
+        <h2 className="font-display font-semibold text-lg text-ink-900 mb-3">Staff and assignments</h2>
         <div className="border border-paper-100 rounded-lg overflow-hidden">
           <table className="w-full text-sm">
             <thead>
@@ -222,9 +222,9 @@ export default function RolesPage() {
                       {u.userRoles.map((ur: any) => (
                         <span key={ur.id} className="text-[10.5px] px-2 py-0.5 rounded-full bg-violet-500/15 text-violet-500 flex items-center gap-1">
                           {ur.role.name}
-                          {ur.branch ? ` · ${ur.branch.name}` : ""}
-                          {ur.expiresAt ? ` · exp ${new Date(ur.expiresAt).toLocaleDateString()}` : ""}
-                          <button onClick={() => handleRevoke(ur.id)} className="text-rose-600 font-bold ml-1">×</button>
+                          {ur.branch ? ` - ${ur.branch.name}` : ""}
+                          {ur.expiresAt ? ` - exp ${new Date(ur.expiresAt).toLocaleDateString()}` : ""}
+                          <button onClick={() => handleRevoke(ur.id)} className="text-rose-600 font-bold ml-1">x</button>
                         </span>
                       ))}
                       {u.userRoles.length === 0 && <span className="text-text-muted text-xs">No roles assigned</span>}
