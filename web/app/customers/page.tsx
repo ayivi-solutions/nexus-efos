@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { api } from "@/lib/api";
 import { AppShell } from "@/components/AppShell";
 
@@ -144,7 +145,11 @@ export default function CustomersPage() {
             <tbody>
               {customers.map((c) => (
                 <tr key={c.id} className="border-t border-paper-100">
-                  <td className="px-4 py-3 text-text-900">{c.fullName}</td>
+                  <td className="px-4 py-3 text-text-900">
+                    <Link href={`/customers/${c.id}`} className="font-medium hover:text-gold-600 hover:underline">
+                      {c.fullName}
+                    </Link>
+                  </td>
                   <td className="px-4 py-3 text-text-700">{c.phone}</td>
                   <td className="px-4 py-3 text-text-700">{c.segment.replaceAll("_", " ")}</td>
                   <td className="px-4 py-3">

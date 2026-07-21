@@ -8,41 +8,62 @@ export default function RolesPage() {
   const [roles, setRoles] = useState<any[]>([]);
   const [users, setUsers] = useState<any[]>([]);
   const [branches, setBranches] = useState<any[]>([]);
+  const [employees, setEmployees] = useState<any[]>([]);
   const [error, setError] = useState<string | null>(null);
+
   const [saving, setSaving] = useState(false);
-  const [inviting, setInviting] = useState(false);
+  const [addingEmployee, setAddingEmployee] = useState(false);
+  const [granting, setGranting] = useState(false);
+
   const [form, setForm] = useState({ userId: "", roleId: "", branchId: "", expiresAt: "", isDelegated: false });
-  const [inviteForm, setInviteForm] = useState({ fullName: "", email: "", roleId: "", branchId: "" });
+  const [employeeForm, setEmployeeForm] = useState({ fullName: "", email: "", branchId: "" });
+  const [grantForm, setGrantForm] = useState({ employeeId: "", roleId: "", branchId: "" });
 
   function load() {
-    Promise.all([api.listRoles(), api.listUsers(), api.listBranches()])
-      .then(([r, u, b]) => {
+    Promise.all([api.listRoles(), api.listUsers(), api.listBranches(), api.listEmployees()])
+      .then(([r, u, b, e]) => {
         setRoles(r.roles);
         setUsers(u.users);
         setBranches(b.branches);
+        setEmployees(e.employees);
       })
       .catch((err) => setError(err.message));
   }
 
   useEffect(() => { load(); }, []);
 
-  async function handleInvite(e: React.FormEvent) {
+  const employeesWithoutAccess = employees.filter((e) => !e.userId);
+
+  async function handleAddEmployee(e: React.FormEvent) {
     e.preventDefault();
-    setInviting(true);
+    setAddingEmployee(true);
     setError(null);
     try {
-      await api.inviteStaff({
-        fullName: inviteForm.fullName,
-        email: inviteForm.email,
-        roleId: inviteForm.roleId,
-        branchId: inviteForm.branchId || undefined,
-      });
-      setInviteForm({ fullName: "", email: "", roleId: "", branchId: "" });
+      await api.createEmployee(employeeForm);
+      setEmployeeForm({ fullName: "", email: "", branchId: "" });
       load();
     } catch (err: any) {
-      setError(err.message || "Could not invite staff");
+      setError(err.message || "Could not add employee");
     } finally {
-      setInviting(false);
+      setAddingEmployee(false);
+    }
+  }
+
+  async function handleGrantAccess(e: React.FormEvent) {
+    e.preventDefault();
+    setGranting(true);
+    setError(null);
+    try {
+      await api.grantAccess(grantForm.employeeId, {
+        roleId: grantForm.roleId,
+        branchId: grantForm.branchId || undefined,
+      });
+      setGrantForm({ employeeId: "", roleId: "", branchId: "" });
+      load();
+    } catch (err: any) {
+      setError(err.message || "Could not grant access");
+    } finally {
+      setGranting(false);
     }
   }
 
@@ -99,52 +120,108 @@ export default function RolesPage() {
           {roles.length === 0 && <p className="text-text-muted text-sm">No roles seeded yet.</p>}
         </div>
 
-        <h2 className="font-display font-semibold text-lg text-ink-900 mb-3">Invite staff</h2>
-        <form onSubmit={handleInvite} className="card p-6 mb-10">
-          <div className="grid grid-cols-1 sm:grid-cols-4 gap-4 mb-4">
+        {/* Employee Master — doc §50.5. This is the authoritative directory;
+            people must exist here before they can be granted system access. */}
+        <h2 className="font-display font-semibold text-lg text-ink-900 mb-3">Employee directory</h2>
+        <form onSubmit={handleAddEmployee} className="card p-6 mb-6">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
             <label className="block">
               <span className="block text-[13px] text-text-500 mb-1.5">Full name</span>
-              <input required autoComplete="name" className="input" value={inviteForm.fullName} onChange={(e) => setInviteForm((f) => ({ ...f, fullName: e.target.value }))} />
+              <input required autoComplete="name" className="input" value={employeeForm.fullName} onChange={(e) => setEmployeeForm((f) => ({ ...f, fullName: e.target.value }))} />
             </label>
             <label className="block">
               <span className="block text-[13px] text-text-500 mb-1.5">Email</span>
-              <input required type="email" autoComplete="email" className="input" value={inviteForm.email} onChange={(e) => setInviteForm((f) => ({ ...f, email: e.target.value }))} />
-            </label>
-            <label className="block">
-              <span className="block text-[13px] text-text-500 mb-1.5">Role</span>
-              <select required className="input" value={inviteForm.roleId} onChange={(e) => setInviteForm((f) => ({ ...f, roleId: e.target.value }))}>
-                <option value="">Select...</option>
-                {roles.map((r) => (<option key={r.id} value={r.id}>{r.name}</option>))}
-              </select>
+              <input required type="email" autoComplete="email" className="input" value={employeeForm.email} onChange={(e) => setEmployeeForm((f) => ({ ...f, email: e.target.value }))} />
             </label>
             <label className="block">
               <span className="block text-[13px] text-text-500 mb-1.5">Branch (optional)</span>
-              <select className="input" value={inviteForm.branchId} onChange={(e) => setInviteForm((f) => ({ ...f, branchId: e.target.value }))}>
+              <select className="input" value={employeeForm.branchId} onChange={(e) => setEmployeeForm((f) => ({ ...f, branchId: e.target.value }))}>
                 <option value="">Unassigned</option>
                 {branches.map((b) => (<option key={b.id} value={b.id}>{b.name}</option>))}
               </select>
             </label>
           </div>
-          <button type="submit" disabled={inviting} className="btn-dark">
-            {inviting ? "Inviting..." : "Send invite"}
+          <button type="submit" disabled={addingEmployee} className="btn-dark">
+            {addingEmployee ? "Adding…" : "+ Add employee"}
           </button>
-          <p className="text-text-muted text-xs mt-2">The invited user sets their own password at /accept-invite using this email.</p>
         </form>
 
-        <h2 className="font-display font-semibold text-lg text-ink-900 mb-3">Assign a role</h2>
+        <div className="card overflow-x-auto mb-10">
+          <table className="w-full min-w-[600px] text-sm table-modern">
+            <thead>
+              <tr><th>Name</th><th>Email</th><th>Branch</th><th>System access</th></tr>
+            </thead>
+            <tbody>
+              {employees.map((e) => (
+                <tr key={e.id}>
+                  <td className="text-text-900">{e.fullName}</td>
+                  <td className="text-text-700">{e.email}</td>
+                  <td className="text-text-700">{e.branch?.name || "—"}</td>
+                  <td>
+                    {e.user ? (
+                      <span className="badge bg-green-100 text-green-600">{e.user.status}</span>
+                    ) : (
+                      <span className="badge bg-violet-500/15 text-violet-500">No access</span>
+                    )}
+                  </td>
+                </tr>
+              ))}
+              {employees.length === 0 && (
+                <tr><td colSpan={4} className="text-center text-text-muted text-sm py-8">No employees yet.</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        {/* Grant access — select an EXISTING employee, never a typed name/email */}
+        <h2 className="font-display font-semibold text-lg text-ink-900 mb-3">Grant system access</h2>
+        <form onSubmit={handleGrantAccess} className="card p-6 mb-10">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
+            <label className="block">
+              <span className="block text-[13px] text-text-500 mb-1.5">Employee</span>
+              <select required className="input" value={grantForm.employeeId} onChange={(e) => setGrantForm((f) => ({ ...f, employeeId: e.target.value }))}>
+                <option value="">Select…</option>
+                {employeesWithoutAccess.map((emp) => (<option key={emp.id} value={emp.id}>{emp.fullName}</option>))}
+              </select>
+            </label>
+            <label className="block">
+              <span className="block text-[13px] text-text-500 mb-1.5">Role</span>
+              <select required className="input" value={grantForm.roleId} onChange={(e) => setGrantForm((f) => ({ ...f, roleId: e.target.value }))}>
+                <option value="">Select…</option>
+                {roles.map((r) => (<option key={r.id} value={r.id}>{r.name}</option>))}
+              </select>
+            </label>
+            <label className="block">
+              <span className="block text-[13px] text-text-500 mb-1.5">Branch (optional)</span>
+              <select className="input" value={grantForm.branchId} onChange={(e) => setGrantForm((f) => ({ ...f, branchId: e.target.value }))}>
+                <option value="">Unassigned</option>
+                {branches.map((b) => (<option key={b.id} value={b.id}>{b.name}</option>))}
+              </select>
+            </label>
+          </div>
+          <button type="submit" disabled={granting || employeesWithoutAccess.length === 0} className="btn-primary">
+            {granting ? "Granting…" : "Grant access"}
+          </button>
+          {employeesWithoutAccess.length === 0 && employees.length > 0 && (
+            <p className="text-text-muted text-xs mt-2">Every employee already has system access.</p>
+          )}
+          <p className="text-text-muted text-xs mt-2">The employee sets their own password at /accept-invite using their email.</p>
+        </form>
+
+        <h2 className="font-display font-semibold text-lg text-ink-900 mb-3">Assign an additional role</h2>
         <form onSubmit={handleAssign} className="card p-6 mb-10">
           <div className="grid grid-cols-1 sm:grid-cols-5 gap-4 mb-4">
             <label className="block sm:col-span-1">
               <span className="block text-[13px] text-text-500 mb-1.5">User</span>
               <select required className="input" value={form.userId} onChange={(e) => setForm((f) => ({ ...f, userId: e.target.value }))}>
-                <option value="">Select...</option>
+                <option value="">Select…</option>
                 {users.map((u) => (<option key={u.id} value={u.id}>{u.fullName}</option>))}
               </select>
             </label>
             <label className="block sm:col-span-1">
               <span className="block text-[13px] text-text-500 mb-1.5">Role</span>
               <select required className="input" value={form.roleId} onChange={(e) => setForm((f) => ({ ...f, roleId: e.target.value }))}>
-                <option value="">Select...</option>
+                <option value="">Select…</option>
                 {roles.map((r) => (<option key={r.id} value={r.id}>{r.name}</option>))}
               </select>
             </label>
@@ -165,7 +242,7 @@ export default function RolesPage() {
             </label>
           </div>
           <button type="submit" disabled={saving} className="btn-primary">
-            {saving ? "Assigning..." : "Assign role"}
+            {saving ? "Assigning…" : "Assign role"}
           </button>
         </form>
 
@@ -173,20 +250,15 @@ export default function RolesPage() {
         <div className="card overflow-x-auto">
           <table className="w-full min-w-[640px] text-sm table-modern">
             <thead>
-              <tr className="bg-paper-50 text-left text-[11px] uppercase tracking-wide text-text-muted">
-                <th className="px-4 py-3">Name</th>
-                <th className="px-4 py-3">Email</th>
-                <th className="px-4 py-3">Status</th>
-                <th className="px-4 py-3">Roles</th>
-              </tr>
+              <tr><th>Name</th><th>Email</th><th>Status</th><th>Roles</th></tr>
             </thead>
             <tbody>
               {users.map((u) => (
-                <tr key={u.id} className="border-t border-paper-100 align-top">
-                  <td className="px-4 py-3 text-text-900">{u.fullName}</td>
-                  <td className="px-4 py-3 text-text-700">{u.email}</td>
-                  <td className="px-4 py-3 text-text-700">{u.status}</td>
-                  <td className="px-4 py-3">
+                <tr key={u.id} className="align-top">
+                  <td className="text-text-900">{u.fullName}</td>
+                  <td className="text-text-700">{u.email}</td>
+                  <td className="text-text-700">{u.status}</td>
+                  <td>
                     <div className="flex flex-wrap gap-1.5">
                       {u.userRoles.map((ur: any) => (
                         <span key={ur.id} className="text-[10.5px] px-2 py-0.5 rounded-full bg-violet-500/15 text-violet-500 flex items-center gap-1">
@@ -202,7 +274,7 @@ export default function RolesPage() {
                 </tr>
               ))}
               {users.length === 0 && (
-                <tr><td colSpan={4} className="px-4 py-8 text-center text-text-muted text-sm">No staff yet.</td></tr>
+                <tr><td colSpan={4} className="text-center text-text-muted text-sm py-8">No staff yet.</td></tr>
               )}
             </tbody>
           </table>
