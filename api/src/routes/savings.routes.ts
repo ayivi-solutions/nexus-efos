@@ -66,6 +66,14 @@ savingsRouter.post("/", requirePermission("savings.initiate"), async (req: Authe
   const parsed = openSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
+  const customer = await prisma.customer.findFirst({
+    where: { id: parsed.data.customerId, institutionId: req.auth!.institutionId },
+  });
+  if (!customer) return res.status(404).json({ error: "Customer not found" });
+  if (customer.status !== "ACTIVE") {
+    return res.status(400).json({ error: `Customer must be ACTIVE to open a savings account (currently ${customer.status})` });
+  }
+
   const account = await prisma.savingsAccount.create({
     data: {
       institutionId: req.auth!.institutionId,

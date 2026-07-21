@@ -120,6 +120,8 @@ export const api = {
     request(`/customers/${id}/stage`, { method: "PATCH", body: JSON.stringify({ lifecycleStage }) }),
   updateCustomerKyc: (id: string, kycStatus: string) =>
     request(`/customers/${id}/kyc`, { method: "PATCH", body: JSON.stringify({ kycStatus }) }),
+  updateCustomerStatus: (id: string, status: string) =>
+    request(`/customers/${id}/status`, { method: "PATCH", body: JSON.stringify({ status }) }),
 
   listLoans: () => request("/loans"),
   getLoan: (id: string) => request(`/loans/${id}`),

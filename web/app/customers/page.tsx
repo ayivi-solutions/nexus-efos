@@ -8,6 +8,17 @@ import { AppShell } from "@/components/AppShell";
 const SEGMENTS = ["INDIVIDUAL", "BUSINESS", "FARMER_GROUP", "WOMENS_GROUP", "YOUTH", "CORPORATE"];
 
 const STAGE_COLOR: Record<string, string> = {
+  AWARENESS: "bg-violet-500/15 text-violet-500",
+  ACQUISITION: "bg-violet-500/15 text-violet-500",
+  ONBOARDING: "bg-violet-500/15 text-violet-500",
+  ACTIVATION: "bg-gold-500/15 text-gold-600",
+  GROWTH: "bg-green-100 text-green-600",
+  RETENTION: "bg-green-100 text-green-600",
+  ADVOCACY: "bg-green-100 text-green-600",
+  RE_ENGAGEMENT: "bg-rose-100 text-rose-600",
+};
+
+const STATUS_COLOR: Record<string, string> = {
   REGISTERED: "bg-violet-500/15 text-violet-500",
   PENDING_VERIFICATION: "bg-violet-500/15 text-violet-500",
   VERIFIED: "bg-gold-500/15 text-gold-600",
@@ -98,7 +109,7 @@ export default function CustomersPage() {
         <div className="card overflow-x-auto">
           <table className="w-full min-w-[600px] text-sm table-modern">
             <thead>
-              <tr><th>Name</th><th>Phone</th><th>Segment</th><th>Stage</th><th>KYC</th></tr>
+              <tr><th>Name</th><th>Phone</th><th>Segment</th><th>Status</th><th>Stage</th><th>KYC</th></tr>
             </thead>
             <tbody>
               {customers.map((c) => (
@@ -106,12 +117,13 @@ export default function CustomersPage() {
                   <td className="text-text-900 font-medium hover:text-gold-600">{c.fullName}</td>
                   <td className="text-text-700">{c.phone}</td>
                   <td className="text-text-700">{c.segment.replaceAll("_", " ")}</td>
+                  <td><span className={`badge ${STATUS_COLOR[c.status] || ""}`}>{c.status.replaceAll("_", " ")}</span></td>
                   <td><span className={`badge ${STAGE_COLOR[c.lifecycleStage] || ""}`}>{c.lifecycleStage.replaceAll("_", " ")}</span></td>
                   <td><span className={`badge ${KYC_COLOR[c.kycStatus] || ""}`}>{c.kycStatus}</span></td>
                 </tr>
               ))}
               {customers.length === 0 && (
-                <tr><td colSpan={5} className="text-center text-text-muted text-sm py-8">No customers yet.</td></tr>
+                <tr><td colSpan={6} className="text-center text-text-muted text-sm py-8">No customers yet.</td></tr>
               )}
             </tbody>
           </table>

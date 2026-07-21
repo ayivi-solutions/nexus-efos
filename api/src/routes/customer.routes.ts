@@ -86,7 +86,7 @@ customerRouter.patch("/:id", requirePermission("customers.update"), async (req: 
 });
 
 const stageSchema = z.object({
-  lifecycleStage: z.enum(["REGISTERED", "PENDING_VERIFICATION", "VERIFIED", "ACTIVE", "DORMANT", "RESTRICTED", "SUSPENDED", "CLOSED", "ARCHIVED"]),
+  lifecycleStage: z.enum(["AWARENESS", "ACQUISITION", "ONBOARDING", "ACTIVATION", "GROWTH", "RETENTION", "ADVOCACY", "RE_ENGAGEMENT"]),
 });
 
 customerRouter.patch("/:id/stage", requirePermission("customers.update"), async (req: AuthedRequest, res) => {
@@ -101,6 +101,30 @@ customerRouter.patch("/:id/stage", requirePermission("customers.update"), async 
 
   await prisma.auditLog.create({
     data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "customer.stage_change", resource: "customer", resourceId: req.params.id, metadata: { lifecycleStage: parsed.data.lifecycleStage } },
+  });
+
+  res.json({ ok: true });
+});
+
+// AccountStatus — separate axis from lifecycleStage. Gates transactability
+// (Technical Spec §26.4 / §57.6 / §59.6): "Customers cannot transact before
+// activation... Closed customers cannot initiate new transactions."
+const statusSchema = z.object({
+  status: z.enum(["REGISTERED", "PENDING_VERIFICATION", "VERIFIED", "ACTIVE", "DORMANT", "RESTRICTED", "SUSPENDED", "CLOSED", "ARCHIVED"]),
+});
+
+customerRouter.patch("/:id/status", requirePermission("customers.update"), async (req: AuthedRequest, res) => {
+  const parsed = statusSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+  const customer = await prisma.customer.updateMany({
+    where: { id: req.params.id, institutionId: req.auth!.institutionId },
+    data: { status: parsed.data.status },
+  });
+  if (customer.count === 0) return res.status(404).json({ error: "Customer not found" });
+
+  await prisma.auditLog.create({
+    data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "customer.status_change", resource: "customer", resourceId: req.params.id, metadata: { status: parsed.data.status } },
   });
 
   res.json({ ok: true });

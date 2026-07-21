@@ -5,7 +5,8 @@ import { useParams, useRouter } from "next/navigation";
 import { api } from "@/lib/api";
 import { AppShell } from "@/components/AppShell";
 
-const STAGES = ["REGISTERED", "PENDING_VERIFICATION", "VERIFIED", "ACTIVE", "DORMANT", "RESTRICTED", "SUSPENDED", "CLOSED", "ARCHIVED"];
+const STAGES = ["AWARENESS", "ACQUISITION", "ONBOARDING", "ACTIVATION", "GROWTH", "RETENTION", "ADVOCACY", "RE_ENGAGEMENT"];
+const STATUSES = ["REGISTERED", "PENDING_VERIFICATION", "VERIFIED", "ACTIVE", "DORMANT", "RESTRICTED", "SUSPENDED", "CLOSED", "ARCHIVED"];
 const KYC_STATUSES = ["PENDING", "VERIFIED", "REJECTED"];
 const SEGMENTS = ["INDIVIDUAL", "BUSINESS", "FARMER_GROUP", "WOMENS_GROUP", "YOUTH", "CORPORATE"];
 
@@ -34,6 +35,13 @@ export default function CustomerDetailPage() {
     setBusy(true); setError(null);
     try { await api.updateCustomerStage(id, lifecycleStage); load(); }
     catch (err: any) { setError(err.message || "Could not update stage"); }
+    finally { setBusy(false); }
+  }
+
+  async function handleStatusChange(status: string) {
+    setBusy(true); setError(null);
+    try { await api.updateCustomerStatus(id, status); load(); }
+    catch (err: any) { setError(err.message || "Could not update status"); }
     finally { setBusy(false); }
   }
 
@@ -144,9 +152,15 @@ export default function CustomerDetailPage() {
                   </label>
                 </div>
               ) : (
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                   <label className="block">
-                    <span className="block text-[13px] text-text-500 mb-1.5">Lifecycle stage</span>
+                    <span className="block text-[13px] text-text-500 mb-1.5">Account status <span className="text-text-muted normal-case">(gates transactions)</span></span>
+                    <select disabled={busy || customer.archived} className="input" value={customer.status} onChange={(e) => handleStatusChange(e.target.value)}>
+                      {STATUSES.map((s) => (<option key={s} value={s}>{s.replaceAll("_", " ")}</option>))}
+                    </select>
+                  </label>
+                  <label className="block">
+                    <span className="block text-[13px] text-text-500 mb-1.5">Lifecycle stage <span className="text-text-muted normal-case">(CRM journey)</span></span>
                     <select disabled={busy || customer.archived} className="input" value={customer.lifecycleStage} onChange={(e) => handleStageChange(e.target.value)}>
                       {STAGES.map((s) => (<option key={s} value={s}>{s.replaceAll("_", " ")}</option>))}
                     </select>
