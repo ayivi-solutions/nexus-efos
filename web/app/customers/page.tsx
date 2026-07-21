@@ -1,13 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
 import { AppShell } from "@/components/AppShell";
 
 const SEGMENTS = ["INDIVIDUAL", "BUSINESS", "FARMER_GROUP", "WOMENS_GROUP", "YOUTH", "CORPORATE"];
-const STAGES = ["AWARENESS", "ACQUISITION", "ONBOARDING", "ACTIVATION", "GROWTH", "RETENTION", "ADVOCACY", "RE_ENGAGEMENT"];
-const KYC_STATUSES = ["PENDING", "VERIFIED", "REJECTED"];
 
 const STAGE_COLOR: Record<string, string> = {
   AWARENESS: "bg-violet-500/15 text-violet-500",
@@ -27,12 +25,12 @@ const KYC_COLOR: Record<string, string> = {
 };
 
 export default function CustomersPage() {
+  const router = useRouter();
   const [customers, setCustomers] = useState<any[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ fullName: "", phone: "", email: "", segment: "INDIVIDUAL" });
   const [saving, setSaving] = useState(false);
-  const [updatingId, setUpdatingId] = useState<string | null>(null);
 
   function load() {
     api.listCustomers().then((res) => setCustomers(res.customers)).catch((err) => setError(err.message));
@@ -56,41 +54,12 @@ export default function CustomersPage() {
     }
   }
 
-  async function handleStageChange(id: string, lifecycleStage: string) {
-    setUpdatingId(id);
-    setError(null);
-    try {
-      await api.updateCustomerStage(id, lifecycleStage);
-      load();
-    } catch (err: any) {
-      setError(err.message || "Could not update stage");
-    } finally {
-      setUpdatingId(null);
-    }
-  }
-
-  async function handleKycChange(id: string, kycStatus: string) {
-    setUpdatingId(id);
-    setError(null);
-    try {
-      await api.updateCustomerKyc(id, kycStatus);
-      load();
-    } catch (err: any) {
-      setError(err.message || "Could not update KYC status");
-    } finally {
-      setUpdatingId(null);
-    }
-  }
-
   return (
     <AppShell active="Customers">
       <div className="p-5 dt:p-10 overflow-x-auto">
         <div className="flex items-center justify-between mb-8 gap-3">
           <h1 className="font-display font-semibold text-2xl dt:text-3xl text-ink-900">Customers</h1>
-          <button
-            onClick={() => setShowForm((s) => !s)}
-            className="btn-dark shrink-0"
-          >
+          <button onClick={() => setShowForm((s) => !s)} className="btn-dark shrink-0">
             {showForm ? "Cancel" : "+ New customer"}
           </button>
         </div>
@@ -115,73 +84,33 @@ export default function CustomersPage() {
               <label className="block">
                 <span className="block text-[13px] text-text-500 mb-1.5">Segment</span>
                 <select className="input" value={form.segment} onChange={(e) => setForm((f) => ({ ...f, segment: e.target.value }))}>
-                  {SEGMENTS.map((s) => (
-                    <option key={s} value={s}>{s.replaceAll("_", " ")}</option>
-                  ))}
+                  {SEGMENTS.map((s) => (<option key={s} value={s}>{s.replaceAll("_", " ")}</option>))}
                 </select>
               </label>
             </div>
-            <button
-              type="submit"
-              disabled={saving}
-              className="btn-primary"
-            >
+            <button type="submit" disabled={saving} className="btn-primary">
               {saving ? "Saving…" : "Create customer"}
             </button>
           </form>
         )}
 
         <div className="card overflow-x-auto">
-          <table className="w-full min-w-[640px] text-sm table-modern">
+          <table className="w-full min-w-[600px] text-sm table-modern">
             <thead>
-              <tr className="bg-paper-50 text-left text-[11px] uppercase tracking-wide text-text-muted">
-                <th className="px-4 py-3">Name</th>
-                <th className="px-4 py-3">Phone</th>
-                <th className="px-4 py-3">Segment</th>
-                <th className="px-4 py-3">Stage</th>
-                <th className="px-4 py-3">KYC</th>
-              </tr>
+              <tr><th>Name</th><th>Phone</th><th>Segment</th><th>Stage</th><th>KYC</th></tr>
             </thead>
             <tbody>
               {customers.map((c) => (
-                <tr key={c.id} className="border-t border-paper-100">
-                  <td className="px-4 py-3 text-text-900">
-                    <Link href={`/customers/${c.id}`} className="font-medium hover:text-gold-600 hover:underline">
-                      {c.fullName}
-                    </Link>
-                  </td>
-                  <td className="px-4 py-3 text-text-700">{c.phone}</td>
-                  <td className="px-4 py-3 text-text-700">{c.segment.replaceAll("_", " ")}</td>
-                  <td className="px-4 py-3">
-                    <select
-                      disabled={updatingId === c.id}
-                      value={c.lifecycleStage}
-                      onChange={(e) => handleStageChange(c.id, e.target.value)}
-                      className={`text-[11px] px-2 py-1 rounded-full border-0 cursor-pointer disabled:opacity-50 ${STAGE_COLOR[c.lifecycleStage] || ""}`}
-                    >
-                      {STAGES.map((s) => (
-                        <option key={s} value={s}>{s.replaceAll("_", " ")}</option>
-                      ))}
-                    </select>
-                  </td>
-                  <td className="px-4 py-3">
-                    <select
-                      disabled={updatingId === c.id}
-                      value={c.kycStatus}
-                      onChange={(e) => handleKycChange(c.id, e.target.value)}
-                      className={`text-[11px] px-2 py-1 rounded-full border-0 cursor-pointer disabled:opacity-50 ${KYC_COLOR[c.kycStatus] || ""}`}
-                    >
-                      {KYC_STATUSES.map((s) => (
-                        <option key={s} value={s}>{s}</option>
-                      ))}
-                    </select>
-                  </td>
+                <tr key={c.id} onClick={() => router.push(`/customers/${c.id}`)} className="cursor-pointer">
+                  <td className="text-text-900 font-medium hover:text-gold-600">{c.fullName}</td>
+                  <td className="text-text-700">{c.phone}</td>
+                  <td className="text-text-700">{c.segment.replaceAll("_", " ")}</td>
+                  <td><span className={`badge ${STAGE_COLOR[c.lifecycleStage] || ""}`}>{c.lifecycleStage.replaceAll("_", " ")}</span></td>
+                  <td><span className={`badge ${KYC_COLOR[c.kycStatus] || ""}`}>{c.kycStatus}</span></td>
                 </tr>
               ))}
               {customers.length === 0 && (
-                <tr>
-                  <td colSpan={5} className="px-4 py-8 text-center text-text-muted text-sm">No customers yet.</td>
-                </tr>
+                <tr><td colSpan={5} className="text-center text-text-muted text-sm py-8">No customers yet.</td></tr>
               )}
             </tbody>
           </table>

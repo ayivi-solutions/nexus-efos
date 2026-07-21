@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
 import { AppShell } from "@/components/AppShell";
 
@@ -16,13 +16,13 @@ const STATUS_COLOR: Record<string, string> = {
 };
 
 export default function LoansPage() {
+  const router = useRouter();
   const [loans, setLoans] = useState<any[]>([]);
   const [customers, setCustomers] = useState<any[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ customerId: "", principal: "", interestRate: "", termMonths: "" });
   const [saving, setSaving] = useState(false);
-  const [repayAmount, setRepayAmount] = useState<Record<string, string>>({});
 
   function load() {
     api.listLoans().then((res) => setLoans(res.loans)).catch((err) => setError(err.message));
@@ -52,40 +52,12 @@ export default function LoansPage() {
     }
   }
 
-  async function handleAction(id: string, action: "approve" | "reject" | "disburse") {
-    setError(null);
-    try {
-      if (action === "approve") await api.approveLoan(id);
-      if (action === "reject") await api.rejectLoan(id);
-      if (action === "disburse") await api.disburseLoan(id);
-      load();
-    } catch (err: any) {
-      setError(err.message || "Action failed");
-    }
-  }
-
-  async function handleRepayment(id: string) {
-    const amount = Number(repayAmount[id]);
-    if (!amount || amount <= 0) return;
-    setError(null);
-    try {
-      await api.recordRepayment(id, amount);
-      setRepayAmount((r) => ({ ...r, [id]: "" }));
-      load();
-    } catch (err: any) {
-      setError(err.message || "Could not record repayment");
-    }
-  }
-
   return (
     <AppShell active="Loans">
       <div className="p-5 dt:p-10 overflow-x-auto">
         <div className="flex items-center justify-between mb-8 gap-3">
           <h1 className="font-display font-semibold text-2xl dt:text-3xl text-ink-900">Loans</h1>
-          <button
-            onClick={() => setShowForm((s) => !s)}
-            className="btn-dark shrink-0"
-          >
+          <button onClick={() => setShowForm((s) => !s)} className="btn-dark shrink-0">
             {showForm ? "Cancel" : "+ New loan"}
           </button>
         </div>
@@ -132,59 +104,22 @@ export default function LoansPage() {
         )}
 
         <div className="card overflow-x-auto">
-          <table className="w-full min-w-[760px] text-sm table-modern">
+          <table className="w-full min-w-[600px] text-sm table-modern">
             <thead>
-              <tr className="bg-paper-50 text-left text-[11px] uppercase tracking-wide text-text-muted">
-                <th className="px-4 py-3">Customer</th>
-                <th className="px-4 py-3">Principal</th>
-                <th className="px-4 py-3">Rate</th>
-                <th className="px-4 py-3">Term</th>
-                <th className="px-4 py-3">Status</th>
-                <th className="px-4 py-3">Actions</th>
-              </tr>
+              <tr><th>Customer</th><th>Principal</th><th>Rate</th><th>Term</th><th>Status</th></tr>
             </thead>
             <tbody>
               {loans.map((l) => (
-                <tr key={l.id} className="border-t border-paper-100">
-                  <td className="px-4 py-3 text-text-900">{l.customer?.fullName}</td>
-                  <td className="px-4 py-3 text-text-700">GHS {Number(l.principal).toLocaleString()}</td>
-                  <td className="px-4 py-3 text-text-700">{l.interestRate}%</td>
-                  <td className="px-4 py-3 text-text-700">{l.termMonths}mo</td>
-                  <td className="px-4 py-3">
-                    <span className={`text-[11px] px-2 py-0.5 rounded-full ${STATUS_COLOR[l.status] || ""}`}>{l.status}</span>
-                  </td>
-                  <td className="px-4 py-3 space-x-2 whitespace-nowrap">
-                    {l.status === "PENDING" && (
-                      <>
-                        <button onClick={() => handleAction(l.id, "approve")} className="btn-text text-green-600">Approve</button>
-                        <button onClick={() => handleAction(l.id, "reject")} className="btn-text text-rose-600">Reject</button>
-                      </>
-                    )}
-                    {l.status === "APPROVED" && (
-                      <button onClick={() => handleAction(l.id, "disburse")} className="btn-text text-gold-600">Disburse</button>
-                    )}
-                    {(l.status === "DISBURSED" || l.status === "ACTIVE") && (
-                      <div className="inline-flex items-center gap-1.5">
-                        <div className="relative inline-block">
-                          <span className="absolute left-2 top-1/2 -translate-y-1/2 text-[10px] text-text-muted font-mono pointer-events-none">GHS</span>
-                          <input
-                            type="number" inputMode="decimal" min="0.01" step="0.01" placeholder="0.00"
-                            className="input !py-1 !w-24 !pl-8 text-[12px]"
-                            value={repayAmount[l.id] || ""}
-                            onChange={(e) => setRepayAmount((r) => ({ ...r, [l.id]: e.target.value }))}
-                          />
-                        </div>
-                        <button onClick={() => handleRepayment(l.id)} className="btn-text text-green-600">Record repayment</button>
-                      </div>
-                    )}
-                    {l.customerId && (
-                      <Link href={`/customers/${l.customerId}`} className="btn-text text-violet-500">History</Link>
-                    )}
-                  </td>
+                <tr key={l.id} onClick={() => router.push(`/loans/${l.id}`)} className="cursor-pointer">
+                  <td className="text-text-900 font-medium hover:text-gold-600">{l.customer?.fullName}</td>
+                  <td className="text-text-700">GHS {Number(l.principal).toLocaleString()}</td>
+                  <td className="text-text-700">{l.interestRate}%</td>
+                  <td className="text-text-700">{l.termMonths}mo</td>
+                  <td><span className={`badge ${STATUS_COLOR[l.status] || ""}`}>{l.status}</span></td>
                 </tr>
               ))}
               {loans.length === 0 && (
-                <tr><td colSpan={6} className="px-4 py-8 text-center text-text-muted text-sm">No loans yet.</td></tr>
+                <tr><td colSpan={5} className="text-center text-text-muted text-sm py-8">No loans yet.</td></tr>
               )}
             </tbody>
           </table>

@@ -111,6 +111,7 @@ export const api = {
     request(`/customers/${id}/kyc`, { method: "PATCH", body: JSON.stringify({ kycStatus }) }),
 
   listLoans: () => request("/loans"),
+  getLoan: (id: string) => request(`/loans/${id}`),
   createLoan: (data: { customerId: string; principal: number; interestRate: number; termMonths: number }) =>
     request("/loans", { method: "POST", body: JSON.stringify(data) }),
   approveLoan: (id: string) => request(`/loans/${id}/approve`, { method: "POST" }),
@@ -119,6 +120,7 @@ export const api = {
   recordRepayment: (id: string, amount: number) => request(`/loans/${id}/repayments`, { method: "POST", body: JSON.stringify({ amount }) }),
 
   listSavingsAccounts: () => request("/savings"),
+  getSavingsAccount: (id: string) => request(`/savings/${id}`),
   openSavingsAccount: (data: { customerId: string }) =>
     request("/savings", { method: "POST", body: JSON.stringify(data) }),
   depositSavings: (id: string, amount: number) =>

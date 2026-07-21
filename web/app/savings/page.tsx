@@ -1,17 +1,18 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
 import { AppShell } from "@/components/AppShell";
 
 export default function SavingsPage() {
+  const router = useRouter();
   const [accounts, setAccounts] = useState<any[]>([]);
   const [customers, setCustomers] = useState<any[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [newCustomerId, setNewCustomerId] = useState("");
   const [saving, setSaving] = useState(false);
-  const [txnAmount, setTxnAmount] = useState<Record<string, string>>({});
 
   function load() {
     api.listSavingsAccounts().then((res) => setAccounts(res.accounts)).catch((err) => setError(err.message));
@@ -33,20 +34,6 @@ export default function SavingsPage() {
       setError(err.message || "Could not open account");
     } finally {
       setSaving(false);
-    }
-  }
-
-  async function handleTxn(id: string, kind: "deposit" | "withdraw") {
-    const amount = Number(txnAmount[id]);
-    if (!amount || amount <= 0) return;
-    setError(null);
-    try {
-      if (kind === "deposit") await api.depositSavings(id, amount);
-      else await api.withdrawSavings(id, amount);
-      setTxnAmount((t) => ({ ...t, [id]: "" }));
-      load();
-    } catch (err: any) {
-      setError(err.message || "Transaction failed");
     }
   }
 
@@ -81,37 +68,19 @@ export default function SavingsPage() {
         )}
 
         <div className="card overflow-x-auto">
-          <table className="w-full min-w-[760px] text-sm table-modern">
-            <thead>
-              <tr className="bg-paper-50 text-left text-[11px] uppercase tracking-wide text-text-muted">
-                <th className="px-4 py-3">Account</th>
-                <th className="px-4 py-3">Customer</th>
-                <th className="px-4 py-3">Balance</th>
-                <th className="px-4 py-3">Status</th>
-                <th className="px-4 py-3">Transact</th>
-              </tr>
-            </thead>
+          <table className="w-full min-w-[540px] text-sm table-modern">
+            <thead><tr><th>Account</th><th>Customer</th><th>Balance</th><th>Status</th></tr></thead>
             <tbody>
               {accounts.map((a) => (
-                <tr key={a.id} className="border-t border-paper-100">
-                  <td className="px-4 py-3 font-mono text-[12px] text-text-700">{a.accountNumber}</td>
-                  <td className="px-4 py-3 text-text-900">{a.customer?.fullName}</td>
-                  <td className="px-4 py-3 text-text-700">GHS {Number(a.balance).toLocaleString()}</td>
-                  <td className="px-4 py-3 text-text-500">{a.status}</td>
-                  <td className="px-4 py-3">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <div className="relative">
-                        <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[10.5px] text-text-muted font-mono pointer-events-none">GHS</span>
-                        <input type="number" inputMode="decimal" min="0.01" step="0.01" placeholder="0.00" className="input !py-1 !w-28 !pl-9 text-[12px]" value={txnAmount[a.id] || ""} onChange={(e) => setTxnAmount((t) => ({ ...t, [a.id]: e.target.value }))} />
-                      </div>
-                      <button onClick={() => handleTxn(a.id, "deposit")} className="btn-text text-green-600">Deposit</button>
-                      <button onClick={() => handleTxn(a.id, "withdraw")} className="btn-text text-rose-600">Withdraw</button>
-                    </div>
-                  </td>
+                <tr key={a.id} onClick={() => router.push(`/savings/${a.id}`)} className="cursor-pointer">
+                  <td className="font-mono text-[12px] text-text-700">{a.accountNumber}</td>
+                  <td className="text-text-900 font-medium hover:text-gold-600">{a.customer?.fullName}</td>
+                  <td className="text-text-700">GHS {Number(a.balance).toLocaleString()}</td>
+                  <td className="text-text-500">{a.status}</td>
                 </tr>
               ))}
               {accounts.length === 0 && (
-                <tr><td colSpan={5} className="px-4 py-8 text-center text-text-muted text-sm">No savings accounts yet.</td></tr>
+                <tr><td colSpan={4} className="text-center text-text-muted text-sm py-8">No savings accounts yet.</td></tr>
               )}
             </tbody>
           </table>
