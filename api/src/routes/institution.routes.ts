@@ -121,6 +121,9 @@ institutionRouter.post(
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
     const { fullName, email, roleId, branchId } = parsed.data;
 
+    // Bootstrapping path (institution has no employees yet during setup) —
+    // creates the Employee master record and the System User together,
+    // rather than requiring an Employee to already exist (doc §50.5).
     const user = await prisma.user.create({
       data: {
         institutionId: req.auth!.institutionId,
@@ -131,6 +134,9 @@ institutionRouter.post(
       },
     });
     await prisma.userRole.create({ data: { userId: user.id, roleId, branchId } });
+    await prisma.employee.create({
+      data: { institutionId: req.auth!.institutionId, fullName, email, branchId, userId: user.id },
+    });
 
     res.status(201).json({ user });
   }

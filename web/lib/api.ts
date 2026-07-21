@@ -95,6 +95,14 @@ export const api = {
     request("/institutions/branches", { method: "POST", body: JSON.stringify(data) }),
 
   listCustomers: () => request("/customers"),
+  getCustomer: (id: string) => request(`/customers/${id}`),
+
+  listEmployees: () => request("/employees"),
+  createEmployee: (data: { fullName: string; email: string; branchId?: string }) =>
+    request("/employees", { method: "POST", body: JSON.stringify(data) }),
+  grantAccess: (employeeId: string, data: { roleId: string; branchId?: string }) =>
+    request(`/employees/${employeeId}/grant-access`, { method: "POST", body: JSON.stringify(data) }),
+
   createCustomer: (data: { fullName: string; phone: string; email?: string; segment: string }) =>
     request("/customers", { method: "POST", body: JSON.stringify(data) }),
   updateCustomerStage: (id: string, lifecycleStage: string) =>

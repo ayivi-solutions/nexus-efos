@@ -23,6 +23,16 @@ customerRouter.get("/", requirePermission("customers.view"), async (req: AuthedR
 customerRouter.get("/:id", requirePermission("customers.view"), async (req: AuthedRequest, res) => {
   const customer = await prisma.customer.findFirst({
     where: { id: req.params.id, institutionId: req.auth!.institutionId },
+    include: {
+      loans: {
+        include: { repayments: { orderBy: { paidAt: "desc" } } },
+        orderBy: { createdAt: "desc" },
+      },
+      savingsAccounts: {
+        include: { transactions: { orderBy: { createdAt: "desc" } } },
+        orderBy: { createdAt: "desc" },
+      },
+    },
   });
   if (!customer) return res.status(404).json({ error: "Customer not found" });
   res.json({ customer });
