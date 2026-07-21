@@ -84,6 +84,8 @@ export const api = {
   revokeRole: (userRoleId: string) => request(`/roles/assign/${userRoleId}`, { method: "DELETE" }),
   updateRole: (id: string, data: { description?: string; permissionCodes?: string[] }) =>
     request(`/roles/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
+  updateRole: (id: string, data: { description?: string; permissionCodes?: string[] }) =>
+    request(`/roles/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
 
   inviteStaff: (data: { fullName: string; email: string; roleId: string; branchId?: string }) =>
     request("/institutions/onboarding/staff", { method: "POST", body: JSON.stringify(data) }),
@@ -95,6 +97,11 @@ export const api = {
   listBranches: () => request("/institutions/branches"),
   createBranch: (data: { name: string; code: string; region?: string }) =>
     request("/institutions/branches", { method: "POST", body: JSON.stringify(data) }),
+  updateBranch: (id: string, data: any) => request(`/institutions/branches/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
+  archiveBranch: (id: string) => request(`/institutions/branches/${id}/archive`, { method: "POST" }),
+  unarchiveBranch: (id: string) => request(`/institutions/branches/${id}/unarchive`, { method: "POST" }),
+  suspendUser: (id: string) => request(`/institutions/users/${id}/suspend`, { method: "POST" }),
+  reinstateUser: (id: string) => request(`/institutions/users/${id}/reinstate`, { method: "POST" }),
   updateBranch: (id: string, data: any) => request(`/institutions/branches/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
   archiveBranch: (id: string) => request(`/institutions/branches/${id}/archive`, { method: "POST" }),
   unarchiveBranch: (id: string) => request(`/institutions/branches/${id}/unarchive`, { method: "POST" }),
@@ -112,6 +119,9 @@ export const api = {
   updateEmployee: (id: string, data: any) => request(`/employees/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
   archiveEmployee: (id: string) => request(`/employees/${id}/archive`, { method: "POST" }),
   unarchiveEmployee: (id: string) => request(`/employees/${id}/unarchive`, { method: "POST" }),
+  updateEmployee: (id: string, data: any) => request(`/employees/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
+  archiveEmployee: (id: string) => request(`/employees/${id}/archive`, { method: "POST" }),
+  unarchiveEmployee: (id: string) => request(`/employees/${id}/unarchive`, { method: "POST" }),
 
   createCustomer: (data: { fullName: string; phone: string; email?: string; segment: string }) =>
     request("/customers", { method: "POST", body: JSON.stringify(data) }),
@@ -119,6 +129,9 @@ export const api = {
     request(`/customers/${id}/stage`, { method: "PATCH", body: JSON.stringify({ lifecycleStage }) }),
   updateCustomerKyc: (id: string, kycStatus: string) =>
     request(`/customers/${id}/kyc`, { method: "PATCH", body: JSON.stringify({ kycStatus }) }),
+  updateCustomer: (id: string, data: any) => request(`/customers/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
+  archiveCustomer: (id: string) => request(`/customers/${id}/archive`, { method: "POST" }),
+  unarchiveCustomer: (id: string) => request(`/customers/${id}/unarchive`, { method: "POST" }),
   updateCustomer: (id: string, data: any) => request(`/customers/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
   archiveCustomer: (id: string) => request(`/customers/${id}/archive`, { method: "POST" }),
   unarchiveCustomer: (id: string) => request(`/customers/${id}/unarchive`, { method: "POST" }),
@@ -140,6 +153,8 @@ export const api = {
     request(`/savings/${id}/deposit`, { method: "POST", body: JSON.stringify({ amount }) }),
   withdrawSavings: (id: string, amount: number) =>
     request(`/savings/${id}/withdraw`, { method: "POST", body: JSON.stringify({ amount }) }),
+  closeSavingsAccount: (id: string) => request(`/savings/${id}/close`, { method: "POST" }),
+  reactivateSavingsAccount: (id: string) => request(`/savings/${id}/reactivate`, { method: "POST" }),
   closeSavingsAccount: (id: string) => request(`/savings/${id}/close`, { method: "POST" }),
   reactivateSavingsAccount: (id: string) => request(`/savings/${id}/reactivate`, { method: "POST" }),
 
