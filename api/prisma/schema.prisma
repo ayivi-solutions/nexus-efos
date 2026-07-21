@@ -398,9 +398,6 @@ model Product {
   createdAt     DateTime      @default(now())
   updatedAt     DateTime      @updatedAt
 
-  savingsAccounts SavingsAccount[]
-  loans           Loan[]
-
   @@unique([institutionId, code])
   @@map("products")
   @@schema("nexus")
