@@ -16,6 +16,19 @@ savingsRouter.get("/", requirePermission("reports.view"), async (req: AuthedRequ
   res.json({ accounts });
 });
 
+savingsRouter.get("/:id", requirePermission("reports.view"), async (req: AuthedRequest, res) => {
+  const account = await prisma.savingsAccount.findFirst({
+    where: { id: req.params.id, institutionId: req.auth!.institutionId },
+    include: {
+      customer: { select: { id: true, fullName: true, phone: true } },
+      branch: { select: { name: true } },
+      transactions: { orderBy: { createdAt: "desc" } },
+    },
+  });
+  if (!account) return res.status(404).json({ error: "Account not found" });
+  res.json({ account });
+});
+
 function generateAccountNumber() {
   return "SA" + Date.now().toString().slice(-10);
 }

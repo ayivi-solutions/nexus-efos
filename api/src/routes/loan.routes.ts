@@ -16,6 +16,19 @@ loanRouter.get("/", requirePermission("reports.view"), async (req: AuthedRequest
   res.json({ loans });
 });
 
+loanRouter.get("/:id", requirePermission("reports.view"), async (req: AuthedRequest, res) => {
+  const loan = await prisma.loan.findFirst({
+    where: { id: req.params.id, institutionId: req.auth!.institutionId },
+    include: {
+      customer: { select: { id: true, fullName: true, phone: true } },
+      branch: { select: { name: true } },
+      repayments: { orderBy: { paidAt: "desc" } },
+    },
+  });
+  if (!loan) return res.status(404).json({ error: "Loan not found" });
+  res.json({ loan });
+});
+
 const createSchema = z.object({
   customerId: z.string(),
   principal: z.number().positive(),
