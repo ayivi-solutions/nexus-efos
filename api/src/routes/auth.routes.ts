@@ -235,20 +235,23 @@ authRouter.get("/me", requireAuth, async (req: AuthedRequest, res) => {
 // testing; needs a real emailed token before inviting anyone outside the
 // org.
 // -----------------------------------------------------------------------
-const acceptInviteSchema = z.object({ email: z.string().email(), password: z.string().min(8) });
+const acceptInviteSchema = z.object({ token: z.string().min(10), password: z.string().min(8) });
 
 authRouter.post("/accept-invite", async (req, res) => {
   const parsed = acceptInviteSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
-  const { email, password } = parsed.data;
+  const { token, password } = parsed.data;
 
-  const user = await prisma.user.findFirst({ where: { email, status: "INVITED" } });
-  if (!user) return res.status(404).json({ error: "No pending invite found for this email" });
+  const user = await prisma.user.findFirst({ where: { inviteToken: token, status: "INVITED" } });
+  if (!user) return res.status(404).json({ error: "This invite link is invalid or has already been used" });
+  if (!user.inviteTokenExpiresAt || user.inviteTokenExpiresAt < new Date()) {
+    return res.status(410).json({ error: "This invite link has expired. Ask an administrator to grant access again." });
+  }
 
   const passwordHash = await bcrypt.hash(password, 12);
   await prisma.user.update({
     where: { id: user.id },
-    data: { passwordHash, status: "ACTIVE" },
+    data: { passwordHash, status: "ACTIVE", inviteToken: null, inviteTokenExpiresAt: null },
   });
 
   await prisma.auditLog.create({

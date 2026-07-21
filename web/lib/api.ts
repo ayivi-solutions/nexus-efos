@@ -61,7 +61,7 @@ export const api = {
 
   whoAmI: () => request("/auth/me"),
 
-  acceptInvite: (data: { email: string; password: string }) =>
+  acceptInvite: (data: { token: string; password: string }) =>
     request("/auth/accept-invite", { method: "POST", body: JSON.stringify(data) }),
 
   logout: () => {

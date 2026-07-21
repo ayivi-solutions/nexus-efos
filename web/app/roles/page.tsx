@@ -14,6 +14,8 @@ export default function RolesPage() {
   const [saving, setSaving] = useState(false);
   const [addingEmployee, setAddingEmployee] = useState(false);
   const [granting, setGranting] = useState(false);
+  const [lastInviteLink, setLastInviteLink] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
 
   const [form, setForm] = useState({ userId: "", roleId: "", branchId: "", expiresAt: "", isDelegated: false });
   const [employeeForm, setEmployeeForm] = useState({ fullName: "", email: "", branchId: "" });
@@ -53,11 +55,13 @@ export default function RolesPage() {
     e.preventDefault();
     setGranting(true);
     setError(null);
+    setLastInviteLink(null);
     try {
-      await api.grantAccess(grantForm.employeeId, {
+      const res = await api.grantAccess(grantForm.employeeId, {
         roleId: grantForm.roleId,
         branchId: grantForm.branchId || undefined,
       });
+      setLastInviteLink(res.inviteLink);
       setGrantForm({ employeeId: "", roleId: "", branchId: "" });
       load();
     } catch (err: any) {
@@ -65,6 +69,13 @@ export default function RolesPage() {
     } finally {
       setGranting(false);
     }
+  }
+
+  function copyInviteLink() {
+    if (!lastInviteLink) return;
+    navigator.clipboard.writeText(lastInviteLink);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
   }
 
   async function handleAssign(e: React.FormEvent) {
@@ -205,7 +216,17 @@ export default function RolesPage() {
           {employeesWithoutAccess.length === 0 && employees.length > 0 && (
             <p className="text-text-muted text-xs mt-2">Every employee already has system access.</p>
           )}
-          <p className="text-text-muted text-xs mt-2">The employee sets their own password at /accept-invite using their email.</p>
+          {lastInviteLink && (
+            <div className="mt-4 p-3 rounded-md bg-gold-300/10 border border-gold-500/25">
+              <p className="text-[12.5px] text-text-700 mb-2">Share this link with them (expires in 7 days):</p>
+              <div className="flex items-center gap-2 flex-wrap">
+                <code className="text-[11.5px] bg-white border border-paper-100 rounded px-2 py-1.5 break-all">{lastInviteLink}</code>
+                <button type="button" onClick={copyInviteLink} className="btn-dark shrink-0 !px-3 !py-1.5 !text-[12px]">
+                  {copied ? "Copied!" : "Copy"}
+                </button>
+              </div>
+            </div>
+          )}
         </form>
 
         <h2 className="font-display font-semibold text-lg text-ink-900 mb-3">Assign an additional role</h2>

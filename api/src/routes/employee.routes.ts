@@ -1,4 +1,5 @@
 import { Router } from "express";
+import crypto from "crypto";
 import { z } from "zod";
 import { prisma } from "../lib/prisma";
 import { requireAuth, AuthedRequest } from "../middleware/auth";
@@ -50,6 +51,7 @@ employeeRouter.post("/", requirePermission("users.administer"), async (req: Auth
 });
 
 const grantAccessSchema = z.object({ roleId: z.string(), branchId: z.string().optional() });
+const INVITE_TOKEN_TTL_DAYS = 7;
 
 employeeRouter.post("/:id/grant-access", requirePermission("users.administer"), async (req: AuthedRequest, res) => {
   const parsed = grantAccessSchema.safeParse(req.body);
@@ -61,6 +63,9 @@ employeeRouter.post("/:id/grant-access", requirePermission("users.administer"), 
   if (!employee) return res.status(404).json({ error: "Employee not found" });
   if (employee.userId) return res.status(409).json({ error: "This employee already has system access" });
 
+  const inviteToken = crypto.randomBytes(32).toString("hex");
+  const inviteTokenExpiresAt = new Date(Date.now() + INVITE_TOKEN_TTL_DAYS * 24 * 60 * 60 * 1000);
+
   const user = await prisma.user.create({
     data: {
       institutionId: req.auth!.institutionId,
@@ -68,6 +73,8 @@ employeeRouter.post("/:id/grant-access", requirePermission("users.administer"), 
       email: employee.email,
       passwordHash: "", // set on invite acceptance
       status: "INVITED",
+      inviteToken,
+      inviteTokenExpiresAt,
     },
   });
   await prisma.userRole.create({
@@ -85,5 +92,8 @@ employeeRouter.post("/:id/grant-access", requirePermission("users.administer"), 
     },
   });
 
-  res.status(201).json({ user });
+  const webOrigin = process.env.WEB_ORIGIN || "http://localhost:3100";
+  const inviteLink = `${webOrigin}/accept-invite?token=${inviteToken}`;
+
+  res.status(201).json({ user, inviteLink });
 });
