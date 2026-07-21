@@ -61,6 +61,7 @@ model Institution {
   savingsAccounts SavingsAccount[]
   auditLogs     AuditLog[]
   employees     Employee[]
+  products      Product[]
 
   createdAt     DateTime          @default(now())
   updatedAt     DateTime          @updatedAt
@@ -305,14 +306,15 @@ enum CustomerSegment {
 }
 
 enum LifecycleStage {
-  AWARENESS
-  ACQUISITION
-  ONBOARDING
-  ACTIVATION
-  GROWTH
-  RETENTION
-  ADVOCACY
-  RE_ENGAGEMENT
+  REGISTERED
+  PENDING_VERIFICATION
+  VERIFIED
+  ACTIVE
+  DORMANT
+  RESTRICTED
+  SUSPENDED
+  CLOSED
+  ARCHIVED
 
   @@schema("nexus")
 }
@@ -339,7 +341,7 @@ model Customer {
   idNumber      String?
 
   segment       CustomerSegment @default(INDIVIDUAL)
-  lifecycleStage LifecycleStage @default(ONBOARDING)
+  lifecycleStage LifecycleStage @default(REGISTERED)
   kycStatus     KycStatus       @default(PENDING)
 
   archived      Boolean         @default(false)
@@ -353,6 +355,93 @@ model Customer {
 
   @@unique([institutionId, phone])
   @@map("customers")
+  @@schema("nexus")
+}
+
+// ---------------------------------------------------------------------------
+// PRODUCTS (Technical Spec §84 — Product Entity Architecture). A Product is
+// versioned: every Loan/SavingsAccount locks in the exact ProductVersion it
+// was opened under, so revising a product later never silently changes the
+// terms of existing accounts. Pragmatic compression: the spec's 7-state
+// product lifecycle (Designed/Approved/Published/Active/Suspended/
+// Withdrawn/Archived) is collapsed to 4 for a first pass.
+// ---------------------------------------------------------------------------
+
+enum ProductType {
+  SAVINGS
+  LOAN
+
+  @@schema("nexus")
+}
+
+enum ProductStatus {
+  DRAFT
+  ACTIVE
+  WITHDRAWN
+  ARCHIVED
+
+  @@schema("nexus")
+}
+
+model Product {
+  id            String        @id @default(cuid())
+  institution   Institution   @relation(fields: [institutionId], references: [id], onDelete: Cascade)
+  institutionId String
+  code          String
+  type          ProductType
+  status        ProductStatus @default(DRAFT)
+
+  versions          ProductVersion[] @relation("AllVersions")
+  currentVersion    ProductVersion?  @relation("CurrentVersion", fields: [currentVersionId], references: [id])
+  currentVersionId  String?          @unique
+
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  savingsAccounts SavingsAccount[]
+  loans           Loan[]
+
+  @@unique([institutionId, code])
+  @@map("products")
+  @@schema("nexus")
+}
+
+model ProductVersion {
+  id            String   @id @default(cuid())
+  product       Product  @relation("AllVersions", fields: [productId], references: [id], onDelete: Cascade)
+  productId     String
+  versionNumber Int
+
+  name          String
+  description   String?
+  currency      String   @default("GHS")
+
+  // Savings-specific (null for LOAN products)
+  minOpeningBalance   Decimal? @db.Decimal(14, 2)
+  minOperatingBalance Decimal? @db.Decimal(14, 2)
+  maxBalance          Decimal? @db.Decimal(14, 2)
+  minDeposit          Decimal? @db.Decimal(14, 2)
+  maxDeposit          Decimal? @db.Decimal(14, 2)
+
+  // Loan-specific (null for SAVINGS products)
+  minLoanAmount   Decimal? @db.Decimal(14, 2)
+  maxLoanAmount   Decimal? @db.Decimal(14, 2)
+  minTenureMonths Int?
+  maxTenureMonths Int?
+
+  interestMethod String  @default("FLAT")
+  interestRate   Decimal @db.Decimal(5, 2)
+  feeStructure   Json?
+
+  effectiveDate  DateTime @default(now())
+  createdAt      DateTime @default(now())
+
+  currentForProduct Product? @relation("CurrentVersion")
+  loans             Loan[]
+  savingsAccounts   SavingsAccount[]
+
+  @@unique([productId, versionNumber])
+  @@map("product_versions")
   @@schema("nexus")
 }
 
@@ -380,6 +469,9 @@ model Loan {
   customerId    String
   branch        Branch?     @relation(fields: [branchId], references: [id], onDelete: SetNull)
   branchId      String?
+
+  productVersion   ProductVersion? @relation(fields: [productVersionId], references: [id])
+  productVersionId String?
 
   principal     Decimal     @db.Decimal(14, 2)
   interestRate  Decimal     @db.Decimal(5, 2)
@@ -439,8 +531,12 @@ model SavingsAccount {
   branch        Branch?              @relation(fields: [branchId], references: [id], onDelete: SetNull)
   branchId      String?
 
+  productVersion   ProductVersion? @relation(fields: [productVersionId], references: [id])
+  productVersionId String?
+
   accountNumber String               @unique
   balance       Decimal              @default(0) @db.Decimal(14, 2)
+  ledgerBalance Decimal              @default(0) @db.Decimal(14, 2)
   status        SavingsAccountStatus @default(ACTIVE)
 
   transactions  SavingsTransaction[]
