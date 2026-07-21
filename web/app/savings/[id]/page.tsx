@@ -76,10 +76,10 @@ export default function SavingsDetailPage() {
           <>
             <div className="flex items-center justify-between flex-wrap gap-3 mb-8">
               <div>
-                <Link href={`/customers/${account.customer.id}`} className="font-display font-semibold text-2xl dt:text-3xl text-ink-900 hover:text-gold-600">
+                <Link href={`/customers/${account.customer.id}`} className="font-display font-semibold text-2xl dt:text-3xl text-ink-900 hover:text-gold-600 selectable">
                   {account.customer.fullName}
                 </Link>
-                <div className="text-text-muted text-sm mt-1 font-mono">{account.accountNumber} · {account.branch?.name || "Unassigned branch"}</div>
+                <div className="text-text-muted text-sm mt-1 font-mono selectable">{account.accountNumber} · {account.branch?.name || "Unassigned branch"}</div>
               </div>
               <span className="badge bg-green-100 text-green-600">{account.status}</span>
             </div>
@@ -146,7 +146,7 @@ export default function SavingsDetailPage() {
 function Stat({ label, value }: { label: string; value: string }) {
   return (
     <div className="card p-3.5">
-      <div className="font-display font-semibold text-lg text-gold-600">{value}</div>
+      <div className="font-display font-semibold text-lg text-gold-600 selectable">{value}</div>
       <div className="text-[10.5px] text-text-muted uppercase tracking-wide">{label}</div>
     </div>
   );

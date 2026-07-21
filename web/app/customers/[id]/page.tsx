@@ -107,8 +107,8 @@ export default function CustomerDetailPage() {
               <div className="font-mono text-[11.5px] tracking-[0.1em] uppercase text-rose-600">{customer.segment.replaceAll("_", " ")}</div>
               {customer.archived && <span className="badge bg-rose-100 text-rose-600">Archived</span>}
             </div>
-            <h1 className="font-display font-semibold text-2xl dt:text-3xl text-ink-900 mb-1">{customer.fullName}</h1>
-            <div className="text-text-muted text-sm mb-6">{customer.phone}{customer.email ? ` · ${customer.email}` : ""}</div>
+            <h1 className="font-display font-semibold text-2xl dt:text-3xl text-ink-900 mb-1 selectable">{customer.fullName}</h1>
+            <div className="text-text-muted text-sm mb-6 selectable">{customer.phone}{customer.email ? ` · ${customer.email}` : ""}</div>
 
             <div className="card p-6 mb-8">
               <div className="flex items-center justify-between mb-4">
@@ -208,7 +208,7 @@ export default function CustomerDetailPage() {
 function Stat({ label, value }: { label: string; value: string }) {
   return (
     <div className="card p-3.5">
-      <div className="font-display font-semibold text-lg text-gold-600">{value}</div>
+      <div className="font-display font-semibold text-lg text-gold-600 selectable">{value}</div>
       <div className="text-[10.5px] text-text-muted uppercase tracking-wide">{label}</div>
     </div>
   );

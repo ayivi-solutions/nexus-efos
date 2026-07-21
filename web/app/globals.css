@@ -8,6 +8,24 @@ body {
   @apply bg-paper-0 text-text-900 font-body;
 }
 
+/* App-shell feel, not a webpage: UI chrome (nav, buttons, labels) is
+   non-selectable by default. Real data values stay selectable/copyable —
+   every table cell (account numbers, names, amounts) plus anything
+   explicitly marked .selectable (detail-page headers, KPI stat values). */
+body {
+  -webkit-user-select: none;
+  user-select: none;
+}
+td, td *,
+.selectable, .selectable * {
+  -webkit-user-select: text !important;
+  user-select: text !important;
+}
+input, textarea, select {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
 @layer components {
   /* Inputs, selects, textareas — soft elevation + signature gold focus glow */
   .input {

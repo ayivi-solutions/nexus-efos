@@ -125,7 +125,7 @@ export default function DashboardPage() {
 function Stat({ label, value }: { label: string; value: string }) {
   return (
     <div className="card p-3.5">
-      <div className="font-display font-semibold text-lg dt:text-xl text-gold-600">{value}</div>
+      <div className="font-display font-semibold text-lg dt:text-xl text-gold-600 selectable">{value}</div>
       <div className="text-[10.5px] text-text-muted uppercase tracking-wide">{label}</div>
     </div>
   );

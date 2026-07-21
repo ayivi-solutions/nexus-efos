@@ -74,10 +74,10 @@ export default function LoanDetailPage() {
           <>
             <div className="flex items-center justify-between flex-wrap gap-3 mb-8">
               <div>
-                <Link href={`/customers/${loan.customer.id}`} className="font-display font-semibold text-2xl dt:text-3xl text-ink-900 hover:text-gold-600">
+                <Link href={`/customers/${loan.customer.id}`} className="font-display font-semibold text-2xl dt:text-3xl text-ink-900 hover:text-gold-600 selectable">
                   {loan.customer.fullName}
                 </Link>
-                <div className="text-text-muted text-sm mt-1">{loan.customer.phone} · {loan.branch?.name || "Unassigned branch"}</div>
+                <div className="text-text-muted text-sm mt-1 selectable">{loan.customer.phone} · {loan.branch?.name || "Unassigned branch"}</div>
               </div>
               <span className={`badge ${STATUS_COLOR[loan.status] || ""}`}>{loan.status}</span>
             </div>
@@ -143,7 +143,7 @@ export default function LoanDetailPage() {
 function Stat({ label, value }: { label: string; value: string }) {
   return (
     <div className="card p-3.5">
-      <div className="font-display font-semibold text-lg text-gold-600">{value}</div>
+      <div className="font-display font-semibold text-lg text-gold-600 selectable">{value}</div>
       <div className="text-[10.5px] text-text-muted uppercase tracking-wide">{label}</div>
     </div>
   );
