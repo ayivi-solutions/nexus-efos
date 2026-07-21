@@ -13,6 +13,8 @@ export default function RolesPage() {
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState({ userId: "", roleId: "", branchId: "", expiresAt: "", isDelegated: false });
+  const [inviteForm, setInviteForm] = useState({ fullName: "", email: "", roleId: "", branchId: "" });
+  const [inviting, setInviting] = useState(false);
 
   function load() {
     Promise.all([api.listRoles(), api.listUsers(), api.listBranches()])
@@ -53,6 +55,26 @@ export default function RolesPage() {
     }
   }
 
+  async function handleInvite(e: React.FormEvent) {
+    e.preventDefault();
+    setInviting(true);
+    setError(null);
+    try {
+      await api.inviteStaff({
+        fullName: inviteForm.fullName,
+        email: inviteForm.email,
+        roleId: inviteForm.roleId,
+        branchId: inviteForm.branchId || undefined,
+      });
+      setInviteForm({ fullName: "", email: "", roleId: "", branchId: "" });
+      load();
+    } catch (err: any) {
+      setError(err.message || "Could not invite staff");
+    } finally {
+      setInviting(false);
+    }
+  }
+
   async function handleRevoke(userRoleId: string) {
     setError(null);
     try {
@@ -87,6 +109,48 @@ export default function RolesPage() {
           ))}
           {roles.length === 0 && <p className="text-text-muted text-sm">No roles seeded yet.</p>}
         </div>
+
+        <h2 className="font-display font-semibold text-lg text-ink-900 mb-3">Invite staff</h2>
+        <form onSubmit={handleInvite} className="border border-paper-100 rounded-lg p-6 mb-10 bg-paper-50">
+          <div className="grid grid-cols-1 sm:grid-cols-4 gap-4 mb-4">
+            <label className="block">
+              <span className="block text-[13px] text-text-500 mb-1.5">Full name</span>
+              <input required className="input" value={inviteForm.fullName} onChange={(e) => setInviteForm((f) => ({ ...f, fullName: e.target.value }))} />
+            </label>
+            <label className="block">
+              <span className="block text-[13px] text-text-500 mb-1.5">Email</span>
+              <input required type="email" className="input" value={inviteForm.email} onChange={(e) => setInviteForm((f) => ({ ...f, email: e.target.value }))} />
+            </label>
+            <label className="block">
+              <span className="block text-[13px] text-text-500 mb-1.5">Role</span>
+              <select required className="input" value={inviteForm.roleId} onChange={(e) => setInviteForm((f) => ({ ...f, roleId: e.target.value }))}>
+                <option value="">Select…</option>
+                {roles.map((r) => (
+                  <option key={r.id} value={r.id}>{r.name}</option>
+                ))}
+              </select>
+            </label>
+            <label className="block">
+              <span className="block text-[13px] text-text-500 mb-1.5">Branch (optional)</span>
+              <select className="input" value={inviteForm.branchId} onChange={(e) => setInviteForm((f) => ({ ...f, branchId: e.target.value }))}>
+                <option value="">Unassigned</option>
+                {branches.map((b) => (
+                  <option key={b.id} value={b.id}>{b.name}</option>
+                ))}
+              </select>
+            </label>
+          </div>
+          <button
+            type="submit"
+            disabled={inviting}
+            className="px-4 py-2 rounded-md bg-ink-900 text-gold-400 font-semibold text-sm hover:bg-ink-800 transition disabled:opacity-60"
+          >
+            {inviting ? "Inviting…" : "Send invite"}
+          </button>
+          <p className="text-text-muted text-xs mt-2">
+            The invited user sets their own password at /accept-invite using this email.
+          </p>
+        </form>
 
         <h2 className="font-display font-semibold text-lg text-ink-900 mb-3">Assign a role</h2>
         <form onSubmit={handleAssign} className="border border-paper-100 rounded-lg p-6 mb-10 bg-paper-50">

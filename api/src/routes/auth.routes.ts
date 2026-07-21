@@ -196,6 +196,35 @@ authRouter.post("/refresh", async (req, res) => {
 });
 
 // -----------------------------------------------------------------------
+// POST /auth/accept-invite
+// NOTE: no invite-token mechanism exists yet (doc §38 onboarding gap) —
+// this matches on email + INVITED status only. Fine for internal testing;
+// needs a real emailed token before inviting anyone outside the org.
+// -----------------------------------------------------------------------
+const acceptInviteSchema = z.object({ email: z.string().email(), password: z.string().min(8) });
+
+authRouter.post("/accept-invite", async (req, res) => {
+  const parsed = acceptInviteSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+  const { email, password } = parsed.data;
+
+  const user = await prisma.user.findFirst({ where: { email, status: "INVITED" } });
+  if (!user) return res.status(404).json({ error: "No pending invite found for this email" });
+
+  const passwordHash = await bcrypt.hash(password, 12);
+  await prisma.user.update({
+    where: { id: user.id },
+    data: { passwordHash, status: "ACTIVE" },
+  });
+
+  await prisma.auditLog.create({
+    data: { institutionId: user.institutionId, userId: user.id, action: "auth.accept_invite" },
+  });
+
+  res.status(204).send();
+});
+
+// -----------------------------------------------------------------------
 // POST /auth/logout
 // -----------------------------------------------------------------------
 authRouter.post("/logout", async (req, res) => {

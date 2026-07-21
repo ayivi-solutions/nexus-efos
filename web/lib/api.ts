@@ -83,7 +83,10 @@ export const api = {
 
   listAuditLog: () => request("/audit-log"),
 
-  logout: () => {
+  acceptInvite: (data: { email: string; password: string }) =>
+    request("/auth/accept-invite", { method: "POST", body: JSON.stringify(data) }),
+
+    logout: () => {
     const refreshToken = typeof window !== "undefined" ? sessionStorage.getItem("nexus_refresh_token") : null;
     return request("/auth/logout", { method: "POST", body: JSON.stringify({ refreshToken }) }).catch(() => {});
   },
