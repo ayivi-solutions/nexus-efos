@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import { ContextMenuGuard } from "@/components/ContextMenuGuard";
+import { ToastProvider } from "@/components/Toast";
 
 export const metadata: Metadata = {
   title: "Nexus EFOS",
@@ -17,7 +18,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en">
       <body>
         <ContextMenuGuard />
-        {children}
+        <ToastProvider>{children}</ToastProvider>
       </body>
     </html>
   );
