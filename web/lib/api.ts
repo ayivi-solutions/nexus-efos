@@ -1,9 +1,7 @@
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4100";
 
-async function request(path: string, options: RequestInit = {}) {
-  const accessToken = typeof window !== "undefined" ? sessionStorage.getItem("nexus_access_token") : null;
-
-  const res = await fetch(`${API_BASE}${path}`, {
+async function rawFetch(path: string, options: RequestInit, accessToken: string | null) {
+  return fetch(`${API_BASE}${path}`, {
     ...options,
     headers: {
       "Content-Type": "application/json",
@@ -11,6 +9,34 @@ async function request(path: string, options: RequestInit = {}) {
       ...options.headers,
     },
   });
+}
+
+async function request(path: string, options: RequestInit = {}, _retried = false): Promise<any> {
+  const accessToken = typeof window !== "undefined" ? sessionStorage.getItem("nexus_access_token") : null;
+  const res = await rawFetch(path, options, accessToken);
+
+  if (res.status === 401 && !_retried && typeof window !== "undefined" && path !== "/auth/refresh") {
+    const refreshToken = sessionStorage.getItem("nexus_refresh_token");
+    if (refreshToken) {
+      try {
+        const refreshRes = await rawFetch("/auth/refresh", { method: "POST", body: JSON.stringify({ refreshToken }) }, null);
+        if (refreshRes.ok) {
+          const { accessToken: newAccessToken } = await refreshRes.json();
+          sessionStorage.setItem("nexus_access_token", newAccessToken);
+          return request(path, options, true); // retry once, silently, with the new token
+        }
+      } catch {
+        // fall through to session-expired handling below
+      }
+    }
+    // Refresh token missing, invalid, or itself expired — the session is genuinely over.
+    sessionStorage.removeItem("nexus_access_token");
+    sessionStorage.removeItem("nexus_refresh_token");
+    if (!window.location.pathname.startsWith("/login")) {
+      window.location.href = "/login?expired=1";
+    }
+    throw new Error("Session expired");
+  }
 
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));

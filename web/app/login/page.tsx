@@ -1,11 +1,14 @@
 "use client";
 
-import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { Suspense, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { api, persistSession } from "@/lib/api";
 
-export default function LoginPage() {
+function LoginForm() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const expired = searchParams.get("expired") === "1";
+
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -30,7 +33,13 @@ export default function LoginPage() {
     <main className="min-h-screen bg-ink-950 flex items-center justify-center px-6">
       <form onSubmit={handleSubmit} className="w-full max-w-sm">
         <div className="font-mono text-xs tracking-[0.3em] text-gold-400 uppercase mb-6 text-center">NX</div>
-        <h1 className="font-display font-semibold text-2xl text-paper-50 mb-6 text-center">Sign in to Nexus EFOS</h1>
+        <h1 className="font-display font-semibold text-2xl text-paper-50 mb-2 text-center">Sign in to Nexus EFOS</h1>
+
+        {expired && (
+          <div className="mb-5 px-4 py-3 rounded-md bg-gold-400/10 border border-gold-500/30 text-gold-300 text-[13px] text-center">
+            Your session expired. Please sign in again.
+          </div>
+        )}
 
         <label className="block mb-3">
           <span className="block text-[13px] text-violet-500 mb-1.5">Email</span>
@@ -66,5 +75,13 @@ export default function LoginPage() {
         </button>
       </form>
     </main>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense fallback={null}>
+      <LoginForm />
+    </Suspense>
   );
 }

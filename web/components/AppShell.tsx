@@ -76,7 +76,7 @@ export function AppShell({ active, children }: { active: string; children: React
       <div className="flex pt-14 min-h-screen">
         {/* Drawer: overlay <dt, persistent sidebar >=dt */}
         <aside
-          className={`fixed top-14 bottom-0 left-0 w-[82vw] max-w-[320px] z-40 bg-ink-900 text-paper-0 flex flex-col border-r border-ink-700/40 transition-transform duration-300 ${
+          className={`fixed top-14 bottom-0 left-0 w-[82vw] max-w-[320px] z-50 bg-ink-900 text-paper-0 flex flex-col border-r border-ink-700/40 transition-transform duration-300 ${
             open ? "translate-x-0" : "-translate-x-full"
           } dt:sticky dt:top-14 dt:translate-x-0 dt:w-[280px] dt:max-w-none dt:h-[calc(100vh-56px)] dt:shrink-0`}
         >
@@ -110,7 +110,7 @@ export function AppShell({ active, children }: { active: string; children: React
         {/* Scrim, mobile only */}
         {open && (
           <div
-            className="dt:hidden fixed top-14 inset-x-0 bottom-0 bg-black/40 z-30"
+            className="dt:hidden fixed top-14 inset-x-0 bottom-0 bg-black/40 z-45"
             onClick={() => setOpen(false)}
           />
         )}
