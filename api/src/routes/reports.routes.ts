@@ -5,6 +5,7 @@ import { requirePermission } from "../middleware/rbac";
 
 export const reportsRouter = Router();
 reportsRouter.use(requireAuth);
+reportsRouter.use(requirePermission("reports.view"));
 
 function monthKey(d: Date) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
@@ -20,11 +21,28 @@ function lastNMonths(n: number) {
   return out;
 }
 
-// doc §80 — Reporting and Visualisation Architecture. Aggregated, in-memory
-// summary appropriate for current data volume; revisit with SQL-level
-// aggregation once transaction volume grows.
-reportsRouter.get("/overview", requirePermission("reports.view"), async (req: AuthedRequest, res) => {
+function parseRange(req: AuthedRequest) {
+  const { from, to } = req.query as { from?: string; to?: string };
+  return {
+    from: from ? new Date(from) : null,
+    to: to ? new Date(to) : null,
+  };
+}
+
+function inRange(date: Date, from: Date | null, to: Date | null) {
+  if (from && date < from) return false;
+  if (to && date > to) return false;
+  return true;
+}
+
+// doc §80 — Reporting and Visualisation Architecture (Operational, Customer
+// and Financial Reporting domains; AI-generated/scheduled-distribution/
+// regulatory-submission domains are explicitly out of scope until §61/§78
+// infrastructure exists).
+
+reportsRouter.get("/overview", async (req: AuthedRequest, res) => {
   const institutionId = req.auth!.institutionId;
+  const months = Math.min(Math.max(Number((req.query as any).months) || 6, 1), 24);
 
   const [customers, loans, savingsAccounts] = await Promise.all([
     prisma.customer.findMany({ where: { institutionId } }),
@@ -42,9 +60,7 @@ reportsRouter.get("/overview", requirePermission("reports.view"), async (req: Au
   }
 
   const byStatus: Record<string, number> = {};
-  let totalPrincipal = 0;
-  let totalDisbursed = 0;
-  let totalRepaid = 0;
+  let totalPrincipal = 0, totalDisbursed = 0, totalRepaid = 0;
   for (const l of loans) {
     byStatus[l.status] = (byStatus[l.status] || 0) + 1;
     totalPrincipal += Number(l.principal);
@@ -52,9 +68,7 @@ reportsRouter.get("/overview", requirePermission("reports.view"), async (req: Au
     for (const r of l.repayments) totalRepaid += Number(r.amount);
   }
 
-  let totalSavingsBalance = 0;
-  let totalDeposits = 0;
-  let totalWithdrawals = 0;
+  let totalSavingsBalance = 0, totalDeposits = 0, totalWithdrawals = 0;
   for (const a of savingsAccounts) {
     totalSavingsBalance += Number(a.balance);
     for (const t of a.transactions) {
@@ -63,9 +77,9 @@ reportsRouter.get("/overview", requirePermission("reports.view"), async (req: Au
     }
   }
 
-  const months = lastNMonths(6);
+  const monthList = lastNMonths(months);
   const trend: Record<string, { disbursed: number; deposits: number; withdrawals: number }> = {};
-  for (const m of months) trend[m] = { disbursed: 0, deposits: 0, withdrawals: 0 };
+  for (const m of monthList) trend[m] = { disbursed: 0, deposits: 0, withdrawals: 0 };
   for (const l of loans) {
     if (l.disbursedAt) {
       const k = monthKey(new Date(l.disbursedAt));
@@ -83,19 +97,155 @@ reportsRouter.get("/overview", requirePermission("reports.view"), async (req: Au
 
   res.json({
     customers: { total: customers.length, bySegment, byStage, byKyc },
-    loans: {
-      total: loans.length,
-      byStatus,
-      totalPrincipal,
-      totalDisbursed,
-      totalOutstanding: Math.max(totalDisbursed - totalRepaid, 0),
-    },
-    savings: {
-      totalAccounts: savingsAccounts.length,
-      totalBalance: totalSavingsBalance,
-      totalDeposits,
-      totalWithdrawals,
-    },
-    trend: months.map((m) => ({ month: m, ...trend[m] })),
+    loans: { total: loans.length, byStatus, totalPrincipal, totalDisbursed, totalOutstanding: Math.max(totalDisbursed - totalRepaid, 0) },
+    savings: { totalAccounts: savingsAccounts.length, totalBalance: totalSavingsBalance, totalDeposits, totalWithdrawals },
+    trend: monthList.map((m) => ({ month: m, ...trend[m] })),
+  });
+});
+
+// Loan Portfolio Report — doc §80.5 Financial + Customer Reporting
+reportsRouter.get("/loans", async (req: AuthedRequest, res) => {
+  const institutionId = req.auth!.institutionId;
+  const { from, to } = parseRange(req);
+
+  const loans = await prisma.loan.findMany({
+    where: { institutionId },
+    include: { customer: { select: { fullName: true, phone: true } }, branch: { select: { name: true } } },
+    orderBy: { createdAt: "desc" },
+  });
+
+  const filtered = loans.filter((l) => inRange(new Date(l.createdAt), from, to));
+
+  const byBranch: Record<string, { count: number; principal: number }> = {};
+  const byStatus: Record<string, number> = {};
+  const aging = { "0-30": 0, "31-60": 0, "61-90": 0, "90+": 0 };
+  const now = Date.now();
+
+  for (const l of filtered) {
+    const branchName = l.branch?.name || "Unassigned";
+    byBranch[branchName] = byBranch[branchName] || { count: 0, principal: 0 };
+    byBranch[branchName].count += 1;
+    byBranch[branchName].principal += Number(l.principal);
+    byStatus[l.status] = (byStatus[l.status] || 0) + 1;
+
+    if (["DISBURSED", "ACTIVE"].includes(l.status) && l.disbursedAt) {
+      const days = Math.floor((now - new Date(l.disbursedAt).getTime()) / (1000 * 60 * 60 * 24));
+      if (days <= 30) aging["0-30"]++;
+      else if (days <= 60) aging["31-60"]++;
+      else if (days <= 90) aging["61-90"]++;
+      else aging["90+"]++;
+    }
+  }
+
+  res.json({
+    loans: filtered.map((l) => ({
+      id: l.id,
+      customer: l.customer.fullName,
+      phone: l.customer.phone,
+      branch: l.branch?.name || "Unassigned",
+      principal: l.principal,
+      interestRate: l.interestRate,
+      termMonths: l.termMonths,
+      status: l.status,
+      createdAt: l.createdAt,
+      disbursedAt: l.disbursedAt,
+    })),
+    byBranch,
+    byStatus,
+    aging,
+  });
+});
+
+// Savings Report — doc §80.5 Financial + Customer Reporting
+reportsRouter.get("/savings", async (req: AuthedRequest, res) => {
+  const institutionId = req.auth!.institutionId;
+  const { from, to } = parseRange(req);
+
+  const accounts = await prisma.savingsAccount.findMany({
+    where: { institutionId },
+    include: { customer: { select: { fullName: true } }, branch: { select: { name: true } }, transactions: true },
+    orderBy: { balance: "desc" },
+  });
+
+  const byBranch: Record<string, { count: number; balance: number }> = {};
+  let netFlowDeposits = 0, netFlowWithdrawals = 0;
+
+  for (const a of accounts) {
+    const branchName = a.branch?.name || "Unassigned";
+    byBranch[branchName] = byBranch[branchName] || { count: 0, balance: 0 };
+    byBranch[branchName].count += 1;
+    byBranch[branchName].balance += Number(a.balance);
+
+    for (const t of a.transactions) {
+      if (!inRange(new Date(t.createdAt), from, to)) continue;
+      if (t.type === "DEPOSIT") netFlowDeposits += Number(t.amount);
+      else netFlowWithdrawals += Number(t.amount);
+    }
+  }
+
+  res.json({
+    accounts: accounts.map((a) => ({
+      id: a.id,
+      accountNumber: a.accountNumber,
+      customer: a.customer.fullName,
+      branch: a.branch?.name || "Unassigned",
+      balance: a.balance,
+      status: a.status,
+      createdAt: a.createdAt,
+    })),
+    byBranch,
+    netFlowDeposits,
+    netFlowWithdrawals,
+    topAccounts: accounts.slice(0, 10).map((a) => ({ accountNumber: a.accountNumber, customer: a.customer.fullName, balance: a.balance })),
+  });
+});
+
+// Customer Report — doc §80.5 Customer Reporting
+reportsRouter.get("/customers", async (req: AuthedRequest, res) => {
+  const institutionId = req.auth!.institutionId;
+  const { from, to } = parseRange(req);
+
+  const customers = await prisma.customer.findMany({
+    where: { institutionId },
+    include: { branch: { select: { name: true } } },
+    orderBy: { createdAt: "desc" },
+  });
+
+  const bySegment: Record<string, number> = {};
+  const byStage: Record<string, number> = {};
+  const byKyc: Record<string, number> = {};
+  const byBranch: Record<string, number> = {};
+  let newInRange = 0;
+
+  for (const c of customers) {
+    bySegment[c.segment] = (bySegment[c.segment] || 0) + 1;
+    byStage[c.lifecycleStage] = (byStage[c.lifecycleStage] || 0) + 1;
+    byKyc[c.kycStatus] = (byKyc[c.kycStatus] || 0) + 1;
+    const branchName = c.branch?.name || "Unassigned";
+    byBranch[branchName] = (byBranch[branchName] || 0) + 1;
+    if (inRange(new Date(c.createdAt), from, to)) newInRange++;
+  }
+
+  const verified = byKyc["VERIFIED"] || 0;
+  const kycComplianceRate = customers.length ? Math.round((verified / customers.length) * 1000) / 10 : 0;
+
+  res.json({
+    customers: customers.map((c) => ({
+      id: c.id,
+      fullName: c.fullName,
+      phone: c.phone,
+      branch: c.branch?.name || "Unassigned",
+      segment: c.segment,
+      lifecycleStage: c.lifecycleStage,
+      kycStatus: c.kycStatus,
+      createdAt: c.createdAt,
+    })),
+    total: customers.length,
+    newInRange,
+    kycComplianceRate,
+    bySegment,
+    byStage,
+    byKyc,
+    byBranch,
   });
 });
