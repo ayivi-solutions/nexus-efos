@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
+import { useErrorToast } from "@/components/Toast";
 import { OnboardingShell } from "@/components/OnboardingShell";
 import { GHANA_REGIONS } from "@/lib/ghana-regions";
 
@@ -11,6 +12,7 @@ export default function OnboardingBranchesPage() {
   const [form, setForm] = useState({ name: "", code: "", region: "" });
   const [added, setAdded] = useState<{ name: string; code: string }[]>([]);
   const [error, setError] = useState<string | null>(null);
+  useErrorToast(error);
   const [loading, setLoading] = useState(false);
 
   async function handleAdd(e: React.FormEvent) {
@@ -69,8 +71,7 @@ export default function OnboardingBranchesPage() {
           </label>
         </div>
 
-        {error && <p className="text-rose-600 text-sm mb-4">{error}</p>}
-
+        
         <button type="submit" disabled={loading} className="px-4 py-2 rounded-[10px] border border-ink-900 text-ink-900 font-semibold text-sm hover:bg-ink-900 hover:text-gold-400 transition disabled:opacity-55">
           {loading ? "Adding…" : "+ Add branch"}
         </button>

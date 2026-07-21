@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { api } from "@/lib/api";
+import { useErrorToast } from "@/components/Toast";
 import { AppShell } from "@/components/AppShell";
 
 const STATUS_COLOR: Record<string, string> = {
@@ -22,6 +23,7 @@ export default function LoanDetailPage() {
   const id = params.id as string;
   const [loan, setLoan] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
+  useErrorToast(error);
   const [busy, setBusy] = useState(false);
   const [repayAmount, setRepayAmount] = useState("");
 
@@ -67,8 +69,7 @@ export default function LoanDetailPage() {
       <div className="p-5 dt:p-10 overflow-x-auto">
         <button onClick={() => router.push("/loans")} className="text-[13px] text-text-muted hover:text-text-700 mb-4">← Back to Loans</button>
 
-        {error && <p className="text-rose-600 text-sm mb-4">{error}</p>}
-        {!loan && !error && <p className="text-text-muted text-sm">Loading…</p>}
+                {!loan && !error && <p className="text-text-muted text-sm">Loading…</p>}
 
         {loan && (
           <>

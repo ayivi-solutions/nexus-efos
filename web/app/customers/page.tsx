@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
+import { useErrorToast } from "@/components/Toast";
 import { AppShell } from "@/components/AppShell";
 
 const SEGMENTS = ["INDIVIDUAL", "BUSINESS", "FARMER_GROUP", "WOMENS_GROUP", "YOUTH", "CORPORATE"];
@@ -40,6 +41,7 @@ export default function CustomersPage() {
   const router = useRouter();
   const [customers, setCustomers] = useState<any[]>([]);
   const [error, setError] = useState<string | null>(null);
+  useErrorToast(error);
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ fullName: "", phone: "", email: "", segment: "INDIVIDUAL" });
   const [saving, setSaving] = useState(false);
@@ -76,8 +78,7 @@ export default function CustomersPage() {
           </button>
         </div>
 
-        {error && <p className="text-rose-600 text-sm mb-4">{error}</p>}
-
+        
         {showForm && (
           <form onSubmit={handleCreate} className="card p-6 mb-8">
             <div className="grid grid-cols-1 sm:grid-cols-4 gap-4 mb-4">

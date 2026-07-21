@@ -6,6 +6,7 @@ import {
   PieChart, Pie, Cell, Legend, AreaChart, Area,
 } from "recharts";
 import { api } from "@/lib/api";
+import { useErrorToast } from "@/components/Toast";
 import { AppShell } from "@/components/AppShell";
 
 const GOLD = "#C8A951";
@@ -23,6 +24,7 @@ export default function DashboardPage() {
   const [institution, setInstitution] = useState<any>(null);
   const [overview, setOverview] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
+  useErrorToast(error);
 
   useEffect(() => {
     api.me().then((res) => setInstitution(res.institution)).catch((err) => setError(err.message));
@@ -40,8 +42,7 @@ export default function DashboardPage() {
   return (
     <AppShell active="Dashboard">
       <div className="p-5 dt:p-10">
-        {error && <p className="text-rose-600 text-sm mb-4">{error}</p>}
-        {!institution && !error && <p className="text-text-muted text-sm">Loading institution…</p>}
+                {!institution && !error && <p className="text-text-muted text-sm">Loading institution…</p>}
 
         {institution && (
           <>

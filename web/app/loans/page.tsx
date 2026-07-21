@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
+import { useErrorToast } from "@/components/Toast";
 import { AppShell } from "@/components/AppShell";
 
 const STATUS_COLOR: Record<string, string> = {
@@ -20,6 +21,7 @@ export default function LoansPage() {
   const [loans, setLoans] = useState<any[]>([]);
   const [customers, setCustomers] = useState<any[]>([]);
   const [error, setError] = useState<string | null>(null);
+  useErrorToast(error);
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ customerId: "", principal: "", interestRate: "", termMonths: "" });
   const [saving, setSaving] = useState(false);
@@ -62,8 +64,7 @@ export default function LoansPage() {
           </button>
         </div>
 
-        {error && <p className="text-rose-600 text-sm mb-4">{error}</p>}
-
+        
         {showForm && (
           <form onSubmit={handleCreate} className="card p-6 mb-8">
             <div className="grid grid-cols-1 sm:grid-cols-4 gap-4 mb-4">

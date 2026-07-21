@@ -2,12 +2,14 @@
 
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
+import { useErrorToast } from "@/components/Toast";
 import { AppShell } from "@/components/AppShell";
 import { GHANA_REGIONS } from "@/lib/ghana-regions";
 
 export default function BranchesPage() {
   const [branches, setBranches] = useState<any[]>([]);
   const [error, setError] = useState<string | null>(null);
+  useErrorToast(error);
   const [form, setForm] = useState({ name: "", code: "", region: "" });
   const [saving, setSaving] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
@@ -68,8 +70,7 @@ export default function BranchesPage() {
           </label>
         </div>
 
-        {error && <p className="text-rose-600 text-sm mb-4">{error}</p>}
-
+        
         <form onSubmit={handleCreate} className="card p-6 mb-8">
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
             <label className="block">

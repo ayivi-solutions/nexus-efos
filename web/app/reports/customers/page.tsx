@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
+import { useErrorToast } from "@/components/Toast";
 import { downloadCsv } from "@/lib/csv";
 import { AppShell } from "@/components/AppShell";
 
@@ -10,6 +11,7 @@ export default function CustomerReportPage() {
   const [to, setTo] = useState("");
   const [data, setData] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
+  useErrorToast(error);
 
   function load() {
     api.getCustomerReport(from || undefined, to || undefined).then(setData).catch((err) => setError(err.message));
@@ -39,8 +41,7 @@ export default function CustomerReportPage() {
           )}
         </div>
 
-        {error && <p className="text-rose-600 text-sm mb-4">{error}</p>}
-
+        
         {data && (
           <>
             <div className="grid grid-cols-2 dt:grid-cols-4 gap-3 mb-6">

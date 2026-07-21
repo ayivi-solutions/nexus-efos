@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { api, persistSession } from "@/lib/api";
+import { useErrorToast } from "@/components/Toast";
 
 const INSTITUTION_TYPES: { value: string; label: string }[] = [
   { value: "INDIVIDUAL_SUSU_OPERATOR", label: "Individual Susu Operator" },
@@ -26,6 +27,7 @@ export default function OnboardingPage() {
     adminPassword: "",
   });
   const [error, setError] = useState<string | null>(null);
+  useErrorToast(error);
   const [loading, setLoading] = useState(false);
 
   function update<K extends keyof typeof form>(key: K, value: string) {
@@ -122,8 +124,7 @@ export default function OnboardingPage() {
           />
         </Field>
 
-        {error && <p className="text-rose-600 text-sm mb-4">{error}</p>}
-
+        
         <button type="submit" disabled={loading} className="btn-dark w-full py-3">
           {loading ? "Creating institution…" : "Create institution & continue"}
         </button>

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
+import { useErrorToast } from "@/components/Toast";
 import { AppShell } from "@/components/AppShell";
 
 export default function RolesPage() {
@@ -11,6 +12,7 @@ export default function RolesPage() {
   const [employees, setEmployees] = useState<any[]>([]);
   const [permissions, setPermissions] = useState<any[]>([]);
   const [error, setError] = useState<string | null>(null);
+  useErrorToast(error);
 
   const [saving, setSaving] = useState(false);
   const [addingEmployee, setAddingEmployee] = useState(false);
@@ -198,8 +200,7 @@ export default function RolesPage() {
       <div className="p-5 dt:p-10 overflow-x-auto">
         <h1 className="font-display font-semibold text-2xl dt:text-3xl text-ink-900 mb-8">Roles and Permissions</h1>
 
-        {error && <p className="text-rose-600 text-sm mb-4">{error}</p>}
-
+        
         <h2 className="font-display font-semibold text-lg text-ink-900 mb-3">Role definitions</h2>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-10">
           {roles.map((r) => (

@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
+import { useErrorToast } from "@/components/Toast";
 import { AppShell } from "@/components/AppShell";
 
 export default function SavingsPage() {
@@ -10,6 +11,7 @@ export default function SavingsPage() {
   const [accounts, setAccounts] = useState<any[]>([]);
   const [customers, setCustomers] = useState<any[]>([]);
   const [error, setError] = useState<string | null>(null);
+  useErrorToast(error);
   const [showForm, setShowForm] = useState(false);
   const [newCustomerId, setNewCustomerId] = useState("");
   const [saving, setSaving] = useState(false);
@@ -47,8 +49,7 @@ export default function SavingsPage() {
           </button>
         </div>
 
-        {error && <p className="text-rose-600 text-sm mb-4">{error}</p>}
-
+        
         {showForm && (
           <form onSubmit={handleOpen} className="card p-6 mb-8">
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">

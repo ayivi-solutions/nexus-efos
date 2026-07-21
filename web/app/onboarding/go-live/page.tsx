@@ -3,11 +3,13 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
+import { useErrorToast } from "@/components/Toast";
 import { OnboardingShell } from "@/components/OnboardingShell";
 
 export default function OnboardingGoLivePage() {
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
+  useErrorToast(error);
   const [loading, setLoading] = useState(false);
 
   async function handleGoLive() {
@@ -32,8 +34,7 @@ export default function OnboardingGoLivePage() {
         in once they accept.
       </p>
 
-      {error && <p className="text-rose-600 text-sm mb-4">{error}</p>}
-
+      
       <div className="flex justify-between items-center">
         <button
           type="button"

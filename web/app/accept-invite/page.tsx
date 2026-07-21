@@ -3,6 +3,7 @@
 import { Suspense, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { api } from "@/lib/api";
+import { useErrorToast } from "@/components/Toast";
 
 function AcceptInviteForm() {
   const router = useRouter();
@@ -11,6 +12,7 @@ function AcceptInviteForm() {
 
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
+  useErrorToast(error);
   const [saving, setSaving] = useState(false);
   const [done, setDone] = useState(false);
 
@@ -45,7 +47,6 @@ function AcceptInviteForm() {
 
         {token && !done && (
           <form onSubmit={handleSubmit} className="space-y-4">
-            {error && <p className="text-rose-600 text-sm">{error}</p>}
             <label className="block">
               <span className="block text-[13px] text-text-500 mb-1.5">New password</span>
               <input required type="password" autoComplete="new-password" minLength={8} className="input" value={password} onChange={(e) => setPassword(e.target.value)} />

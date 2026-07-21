@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
+import { useErrorToast } from "@/components/Toast";
 import { OnboardingShell } from "@/components/OnboardingShell";
 import { GHANA_REGIONS } from "@/lib/ghana-regions";
 
@@ -10,6 +11,7 @@ export default function OnboardingDetailsPage() {
   const router = useRouter();
   const [form, setForm] = useState({ regulatorId: "", region: "", phone: "", email: "" });
   const [error, setError] = useState<string | null>(null);
+  useErrorToast(error);
   const [loading, setLoading] = useState(false);
 
   async function handleSubmit(e: React.FormEvent) {
@@ -78,8 +80,7 @@ export default function OnboardingDetailsPage() {
           </label>
         </div>
 
-        {error && <p className="text-rose-600 text-sm mb-4">{error}</p>}
-
+        
         <div className="flex justify-between items-center">
           <button type="button" onClick={() => router.push("/onboarding/branches")} className="text-sm text-text-muted hover:text-text-700">
             Skip for now

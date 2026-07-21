@@ -2,11 +2,13 @@
 
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
+import { useErrorToast } from "@/components/Toast";
 import { AppShell } from "@/components/AppShell";
 
 export default function AuditLogPage() {
   const [logs, setLogs] = useState<any[]>([]);
   const [error, setError] = useState<string | null>(null);
+  useErrorToast(error);
 
   useEffect(() => {
     api.listAuditLog().then((res) => setLogs(res.logs)).catch((err) => setError(err.message));
@@ -18,8 +20,7 @@ export default function AuditLogPage() {
         <h1 className="font-display font-semibold text-2xl dt:text-3xl text-ink-900 mb-2">Audit Log</h1>
         <p className="text-text-muted text-sm mb-8">Read-only. Most recent 200 events, newest first.</p>
 
-        {error && <p className="text-rose-600 text-sm mb-4">{error}</p>}
-
+        
         <div className="card overflow-x-auto">
           <table className="w-full min-w-[640px] text-sm table-modern">
             <thead>

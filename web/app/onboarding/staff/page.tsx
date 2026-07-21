@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
+import { useErrorToast } from "@/components/Toast";
 import { OnboardingShell } from "@/components/OnboardingShell";
 
 interface RoleOption {
@@ -17,6 +18,7 @@ export default function OnboardingStaffPage() {
   const [form, setForm] = useState({ fullName: "", email: "", roleId: "" });
   const [invited, setInvited] = useState<{ fullName: string; email: string }[]>([]);
   const [error, setError] = useState<string | null>(null);
+  useErrorToast(error);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
@@ -106,8 +108,7 @@ export default function OnboardingStaffPage() {
           </label>
         </div>
 
-        {error && <p className="text-rose-600 text-sm mb-4">{error}</p>}
-
+        
         <button
           type="submit"
           disabled={loading || !form.roleId}

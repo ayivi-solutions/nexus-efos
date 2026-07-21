@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { api } from "@/lib/api";
+import { useErrorToast } from "@/components/Toast";
 import { AppShell } from "@/components/AppShell";
 
 export default function SavingsDetailPage() {
@@ -12,6 +13,7 @@ export default function SavingsDetailPage() {
   const id = params.id as string;
   const [account, setAccount] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
+  useErrorToast(error);
   const [busy, setBusy] = useState(false);
   const [amount, setAmount] = useState("");
 
@@ -69,8 +71,7 @@ export default function SavingsDetailPage() {
       <div className="p-5 dt:p-10 overflow-x-auto">
         <button onClick={() => router.push("/savings")} className="text-[13px] text-text-muted hover:text-text-700 mb-4">← Back to Savings</button>
 
-        {error && <p className="text-rose-600 text-sm mb-4">{error}</p>}
-        {!account && !error && <p className="text-text-muted text-sm">Loading…</p>}
+                {!account && !error && <p className="text-text-muted text-sm">Loading…</p>}
 
         {account && (
           <>

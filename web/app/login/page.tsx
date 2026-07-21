@@ -3,6 +3,7 @@
 import { Suspense, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { api, persistSession } from "@/lib/api";
+import { useErrorToast } from "@/components/Toast";
 
 function LoginForm() {
   const router = useRouter();
@@ -12,6 +13,7 @@ function LoginForm() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
+  useErrorToast(error);
   const [loading, setLoading] = useState(false);
 
   async function handleSubmit(e: React.FormEvent) {
@@ -64,8 +66,7 @@ function LoginForm() {
           />
         </label>
 
-        {error && <p className="text-rose-600 text-sm mb-4">{error}</p>}
-
+        
         <button
           type="submit"
           disabled={loading}
