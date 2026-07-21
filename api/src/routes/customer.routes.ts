@@ -7,6 +7,17 @@ import { requirePermission } from "../middleware/rbac";
 export const customerRouter = Router();
 customerRouter.use(requireAuth);
 
+const LOCKED_STATUSES = ["CLOSED", "ARCHIVED"];
+
+// Entity data control: once a customer is CLOSED/ARCHIVED the record locks —
+// no field may be edited without an explicit reopen (not built yet).
+function assertNotLocked(status: string) {
+  if (LOCKED_STATUSES.includes(status)) {
+    return `This customer is ${status} and locked. No fields can be changed until the record is reopened.`;
+  }
+  return null;
+}
+
 customerRouter.get("/", requirePermission("customers.view"), async (req: AuthedRequest, res) => {
   const { segment, stage, includeArchived } = req.query as { segment?: string; stage?: string; includeArchived?: string };
   const customers = await prisma.customer.findMany({
@@ -58,7 +69,7 @@ customerRouter.post("/", requirePermission("customers.create"), async (req: Auth
   res.status(201).json({ customer });
 });
 
-// CRUAA — general Update, distinct from the stage/KYC business-flow patches below.
+// CRUAA — general Update, distinct from the stage/status/KYC business-flow patches below.
 const updateSchema = z.object({
   fullName: z.string().min(2).optional(),
   phone: z.string().min(6).optional(),
@@ -75,6 +86,8 @@ customerRouter.patch("/:id", requirePermission("customers.update"), async (req: 
 
   const existing = await prisma.customer.findFirst({ where: { id: req.params.id, institutionId: req.auth!.institutionId } });
   if (!existing) return res.status(404).json({ error: "Customer not found" });
+  const lockError = assertNotLocked(existing.status);
+  if (lockError) return res.status(409).json({ error: lockError });
 
   const customer = await prisma.customer.update({ where: { id: existing.id }, data: parsed.data });
 
@@ -93,11 +106,12 @@ customerRouter.patch("/:id/stage", requirePermission("customers.update"), async 
   const parsed = stageSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
-  const customer = await prisma.customer.updateMany({
-    where: { id: req.params.id, institutionId: req.auth!.institutionId },
-    data: { lifecycleStage: parsed.data.lifecycleStage },
-  });
-  if (customer.count === 0) return res.status(404).json({ error: "Customer not found" });
+  const existing = await prisma.customer.findFirst({ where: { id: req.params.id, institutionId: req.auth!.institutionId } });
+  if (!existing) return res.status(404).json({ error: "Customer not found" });
+  const lockError = assertNotLocked(existing.status);
+  if (lockError) return res.status(409).json({ error: lockError });
+
+  await prisma.customer.update({ where: { id: existing.id }, data: { lifecycleStage: parsed.data.lifecycleStage } });
 
   await prisma.auditLog.create({
     data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "customer.stage_change", resource: "customer", resourceId: req.params.id, metadata: { lifecycleStage: parsed.data.lifecycleStage } },
@@ -109,6 +123,9 @@ customerRouter.patch("/:id/stage", requirePermission("customers.update"), async 
 // AccountStatus — separate axis from lifecycleStage. Gates transactability
 // (Technical Spec §26.4 / §57.6 / §59.6): "Customers cannot transact before
 // activation... Closed customers cannot initiate new transactions."
+//
+// Entity data control: VERIFIED/ACTIVE cannot be set unless KYC is already
+// VERIFIED — Account Status is gated by KYC Status, not independent of it.
 const statusSchema = z.object({
   status: z.enum(["REGISTERED", "PENDING_VERIFICATION", "VERIFIED", "ACTIVE", "DORMANT", "RESTRICTED", "SUSPENDED", "CLOSED", "ARCHIVED"]),
 });
@@ -117,11 +134,16 @@ customerRouter.patch("/:id/status", requirePermission("customers.update"), async
   const parsed = statusSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
-  const customer = await prisma.customer.updateMany({
-    where: { id: req.params.id, institutionId: req.auth!.institutionId },
-    data: { status: parsed.data.status },
-  });
-  if (customer.count === 0) return res.status(404).json({ error: "Customer not found" });
+  const existing = await prisma.customer.findFirst({ where: { id: req.params.id, institutionId: req.auth!.institutionId } });
+  if (!existing) return res.status(404).json({ error: "Customer not found" });
+  const lockError = assertNotLocked(existing.status);
+  if (lockError) return res.status(409).json({ error: lockError });
+
+  if (["VERIFIED", "ACTIVE"].includes(parsed.data.status) && existing.kycStatus !== "VERIFIED") {
+    return res.status(409).json({ error: `Cannot set status to ${parsed.data.status} — KYC must be VERIFIED first (currently ${existing.kycStatus})` });
+  }
+
+  await prisma.customer.update({ where: { id: existing.id }, data: { status: parsed.data.status } });
 
   await prisma.auditLog.create({
     data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "customer.status_change", resource: "customer", resourceId: req.params.id, metadata: { status: parsed.data.status } },
@@ -134,11 +156,12 @@ customerRouter.patch("/:id/kyc", requirePermission("customers.update"), async (r
   const { kycStatus } = req.body as { kycStatus?: "PENDING" | "VERIFIED" | "REJECTED" };
   if (!kycStatus) return res.status(400).json({ error: "kycStatus required" });
 
-  const customer = await prisma.customer.updateMany({
-    where: { id: req.params.id, institutionId: req.auth!.institutionId },
-    data: { kycStatus },
-  });
-  if (customer.count === 0) return res.status(404).json({ error: "Customer not found" });
+  const existing = await prisma.customer.findFirst({ where: { id: req.params.id, institutionId: req.auth!.institutionId } });
+  if (!existing) return res.status(404).json({ error: "Customer not found" });
+  const lockError = assertNotLocked(existing.status);
+  if (lockError) return res.status(409).json({ error: lockError });
+
+  await prisma.customer.update({ where: { id: existing.id }, data: { kycStatus } });
 
   await prisma.auditLog.create({
     data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "customer.kyc_change", resource: "customer", resourceId: req.params.id, metadata: { kycStatus } },
