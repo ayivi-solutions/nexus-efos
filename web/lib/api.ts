@@ -83,6 +83,8 @@ export const api = {
   revokeRole: (userRoleId: string) => request(`/roles/assign/${userRoleId}`, { method: "DELETE" }),
   updateRole: (id: string, data: { description?: string; permissionCodes?: string[] }) =>
     request(`/roles/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
+  createRole: (data: { name: string; description?: string; category: string; permissionCodes?: string[] }) =>
+    request("/roles", { method: "POST", body: JSON.stringify(data) }),
 
   inviteStaff: (data: { fullName: string; email: string; roleId: string; branchId?: string }) =>
     request("/institutions/onboarding/staff", { method: "POST", body: JSON.stringify(data) }),
@@ -101,7 +103,7 @@ export const api = {
   unarchiveBranch: (id: string) => request(`/institutions/branches/${id}/unarchive`, { method: "POST" }),
 
   listEmployees: (includeArchived = false) => request(`/employees${includeArchived ? "?includeArchived=true" : ""}`),
-  createEmployee: (data: { fullName: string; email: string; branchId?: string }) =>
+  createEmployee: (data: { fullName: string; email: string; branchId?: string; employeeNumber?: string; position?: string; department?: string; employmentType?: string }) =>
     request("/employees", { method: "POST", body: JSON.stringify(data) }),
   updateEmployee: (id: string, data: any) => request(`/employees/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
   archiveEmployee: (id: string) => request(`/employees/${id}/archive`, { method: "POST" }),
@@ -143,7 +145,15 @@ export const api = {
   closeSavingsAccount: (id: string) => request(`/savings/${id}/close`, { method: "POST" }),
   reactivateSavingsAccount: (id: string) => request(`/savings/${id}/reactivate`, { method: "POST" }),
 
-  listAuditLog: () => request("/audit-log"),
+  listAuditLog: (filters?: { userId?: string; action?: string; from?: string; to?: string }) => {
+    const params = new URLSearchParams();
+    if (filters?.userId) params.set("userId", filters.userId);
+    if (filters?.action) params.set("action", filters.action);
+    if (filters?.from) params.set("from", filters.from);
+    if (filters?.to) params.set("to", filters.to);
+    const qs = params.toString();
+    return request(`/audit-log${qs ? `?${qs}` : ""}`);
+  },
 
   getReportsOverview: (months = 6) => request(`/reports/overview?months=${months}`),
   getLoanReport: (from?: string, to?: string) =>

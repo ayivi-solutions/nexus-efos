@@ -22,14 +22,19 @@ export default function RolesPage() {
   const [busyId, setBusyId] = useState<string | null>(null);
 
   const [form, setForm] = useState({ userId: "", roleId: "", branchId: "", expiresAt: "", isDelegated: false });
-  const [employeeForm, setEmployeeForm] = useState({ fullName: "", email: "", branchId: "" });
+  const [employeeForm, setEmployeeForm] = useState({ fullName: "", email: "", branchId: "", employeeNumber: "", position: "", department: "", employmentType: "PERMANENT" });
   const [grantForm, setGrantForm] = useState({ employeeId: "", roleId: "", branchId: "" });
 
   const [editingEmployeeId, setEditingEmployeeId] = useState<string | null>(null);
-  const [editEmployeeForm, setEditEmployeeForm] = useState({ fullName: "", email: "", branchId: "" });
+  const [editEmployeeForm, setEditEmployeeForm] = useState({ fullName: "", email: "", branchId: "", employeeNumber: "", position: "", department: "" });
 
   const [editingRoleId, setEditingRoleId] = useState<string | null>(null);
   const [editRolePermCodes, setEditRolePermCodes] = useState<string[]>([]);
+
+  const [showNewRole, setShowNewRole] = useState(false);
+  const [creatingRole, setCreatingRole] = useState(false);
+  const [newRoleForm, setNewRoleForm] = useState({ name: "", description: "", category: "OPERATIONAL" });
+  const [newRolePermCodes, setNewRolePermCodes] = useState<string[]>([]);
 
   const [showArchivedEmployees, setShowArchivedEmployees] = useState(false);
 
@@ -61,7 +66,7 @@ export default function RolesPage() {
     setError(null);
     try {
       await api.createEmployee(employeeForm);
-      setEmployeeForm({ fullName: "", email: "", branchId: "" });
+      setEmployeeForm({ fullName: "", email: "", branchId: "", employeeNumber: "", position: "", department: "", employmentType: "PERMANENT" });
       load();
     } catch (err: any) {
       setError(err.message || "Could not add employee");
@@ -72,7 +77,7 @@ export default function RolesPage() {
 
   function startEditEmployee(emp: any) {
     setEditingEmployeeId(emp.id);
-    setEditEmployeeForm({ fullName: emp.fullName, email: emp.email, branchId: emp.branchId || "" });
+    setEditEmployeeForm({ fullName: emp.fullName, email: emp.email, branchId: emp.branchId || "", employeeNumber: emp.employeeNumber || "", position: emp.position || "", department: emp.department || "" });
   }
 
   async function saveEditEmployee(id: string) {
@@ -124,6 +129,27 @@ export default function RolesPage() {
 
   function togglePermCode(code: string) {
     setEditRolePermCodes((codes) => (codes.includes(code) ? codes.filter((c) => c !== code) : [...codes, code]));
+  }
+
+  function toggleNewRolePermCode(code: string) {
+    setNewRolePermCodes((codes) => (codes.includes(code) ? codes.filter((c) => c !== code) : [...codes, code]));
+  }
+
+  async function handleCreateRole(e: React.FormEvent) {
+    e.preventDefault();
+    setCreatingRole(true);
+    setError(null);
+    try {
+      await api.createRole({ ...newRoleForm, permissionCodes: newRolePermCodes });
+      setNewRoleForm({ name: "", description: "", category: "OPERATIONAL" });
+      setNewRolePermCodes([]);
+      setShowNewRole(false);
+      load();
+    } catch (err: any) {
+      setError(err.message || "Could not create role");
+    } finally {
+      setCreatingRole(false);
+    }
   }
 
   async function saveRolePermissions(roleId: string) {
@@ -200,8 +226,52 @@ export default function RolesPage() {
       <div className="p-5 dt:p-10 overflow-x-auto">
         <h1 className="font-display font-semibold text-2xl dt:text-3xl text-ink-900 mb-8">Roles and Permissions</h1>
 
-        
-        <h2 className="font-display font-semibold text-lg text-ink-900 mb-3">Role definitions</h2>
+        {error && null}
+
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="font-display font-semibold text-lg text-ink-900">Role definitions</h2>
+          <button onClick={() => setShowNewRole((s) => !s)} className="btn-dark !py-2">
+            {showNewRole ? "Cancel" : "+ New role"}
+          </button>
+        </div>
+
+        {showNewRole && (
+          <form onSubmit={handleCreateRole} className="card p-6 mb-6">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
+              <label className="block">
+                <span className="block text-[13px] text-text-500 mb-1.5">Role name</span>
+                <input required className="input" value={newRoleForm.name} onChange={(e) => setNewRoleForm((f) => ({ ...f, name: e.target.value }))} />
+              </label>
+              <label className="block">
+                <span className="block text-[13px] text-text-500 mb-1.5">Description (optional)</span>
+                <input className="input" value={newRoleForm.description} onChange={(e) => setNewRoleForm((f) => ({ ...f, description: e.target.value }))} />
+              </label>
+              <label className="block">
+                <span className="block text-[13px] text-text-500 mb-1.5">Category</span>
+                <select className="input" value={newRoleForm.category} onChange={(e) => setNewRoleForm((f) => ({ ...f, category: e.target.value }))}>
+                  <option value="EXECUTIVE">Executive</option>
+                  <option value="OPERATIONAL">Operational</option>
+                  <option value="GOVERNANCE">Governance</option>
+                  <option value="TECHNICAL">Technical</option>
+                  <option value="CUSTOMER">Customer</option>
+                </select>
+              </label>
+            </div>
+            <div className="mb-4">
+              <span className="block text-[13px] text-text-500 mb-1.5">Permissions</span>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5 max-h-48 overflow-y-auto card p-3">
+                {permissions.map((p: any) => (
+                  <label key={p.id} className="flex items-center gap-1.5 text-[11px] text-text-700">
+                    <input type="checkbox" checked={newRolePermCodes.includes(p.code)} onChange={() => toggleNewRolePermCode(p.code)} />
+                    {p.code}
+                  </label>
+                ))}
+              </div>
+            </div>
+            <button type="submit" disabled={creatingRole} className="btn-primary">{creatingRole ? "Creating…" : "Create role"}</button>
+          </form>
+        )}
+
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-10">
           {roles.map((r) => (
             <div key={r.id} className="card p-4">
@@ -238,7 +308,7 @@ export default function RolesPage() {
           {roles.length === 0 && <p className="text-text-muted text-sm">No roles seeded yet.</p>}
         </div>
 
-        {/* Employee Master — doc §50.5 */}
+        {/* Employee Master — doc §50.5 / §71 */}
         <div className="flex items-center justify-between mb-3">
           <h2 className="font-display font-semibold text-lg text-ink-900">Employee directory</h2>
           <label className="flex items-center gap-1.5 text-[12.5px] text-text-500">
@@ -264,18 +334,44 @@ export default function RolesPage() {
               </select>
             </label>
           </div>
+          <div className="grid grid-cols-1 sm:grid-cols-4 gap-4 mb-4">
+            <label className="block">
+              <span className="block text-[13px] text-text-500 mb-1.5">Employee number (optional)</span>
+              <input className="input" value={employeeForm.employeeNumber} onChange={(e) => setEmployeeForm((f) => ({ ...f, employeeNumber: e.target.value }))} />
+            </label>
+            <label className="block">
+              <span className="block text-[13px] text-text-500 mb-1.5">Position (optional)</span>
+              <input className="input" value={employeeForm.position} onChange={(e) => setEmployeeForm((f) => ({ ...f, position: e.target.value }))} />
+            </label>
+            <label className="block">
+              <span className="block text-[13px] text-text-500 mb-1.5">Department (optional)</span>
+              <input className="input" value={employeeForm.department} onChange={(e) => setEmployeeForm((f) => ({ ...f, department: e.target.value }))} />
+            </label>
+            <label className="block">
+              <span className="block text-[13px] text-text-500 mb-1.5">Employment type</span>
+              <select className="input" value={employeeForm.employmentType} onChange={(e) => setEmployeeForm((f) => ({ ...f, employmentType: e.target.value }))}>
+                <option value="PERMANENT">Permanent</option>
+                <option value="CONTRACT">Contract</option>
+                <option value="TEMPORARY">Temporary</option>
+                <option value="INTERN">Intern</option>
+                <option value="CONSULTANT">Consultant</option>
+              </select>
+            </label>
+          </div>
           <button type="submit" disabled={addingEmployee} className="btn-dark">{addingEmployee ? "Adding…" : "+ Add employee"}</button>
         </form>
 
         <div className="card overflow-x-auto mb-10">
           <table className="w-full min-w-[700px] text-sm table-modern">
-            <thead><tr><th>Name</th><th>Email</th><th>Branch</th><th>System access</th><th>Actions</th></tr></thead>
+            <thead><tr><th>Name</th><th>Emp. No.</th><th>Position</th><th>Email</th><th>Branch</th><th>System access</th><th>Actions</th></tr></thead>
             <tbody>
               {employees.map((e) => (
                 <tr key={e.id}>
                   {editingEmployeeId === e.id ? (
                     <>
                       <td><input className="input !py-1 !text-[12px]" value={editEmployeeForm.fullName} onChange={(ev) => setEditEmployeeForm((f) => ({ ...f, fullName: ev.target.value }))} /></td>
+                      <td><input className="input !py-1 !text-[12px] !w-24" value={editEmployeeForm.employeeNumber} onChange={(ev) => setEditEmployeeForm((f) => ({ ...f, employeeNumber: ev.target.value }))} /></td>
+                      <td><input className="input !py-1 !text-[12px] !w-28" value={editEmployeeForm.position} onChange={(ev) => setEditEmployeeForm((f) => ({ ...f, position: ev.target.value }))} /></td>
                       <td><input className="input !py-1 !text-[12px]" value={editEmployeeForm.email} onChange={(ev) => setEditEmployeeForm((f) => ({ ...f, email: ev.target.value }))} /></td>
                       <td>
                         <select className="input !py-1 !text-[12px]" value={editEmployeeForm.branchId} onChange={(ev) => setEditEmployeeForm((f) => ({ ...f, branchId: ev.target.value }))}>
@@ -292,6 +388,8 @@ export default function RolesPage() {
                   ) : (
                     <>
                       <td className={e.status === "INACTIVE" ? "text-text-muted line-through" : "text-text-900"}>{e.fullName}</td>
+                      <td className="text-text-700 font-mono text-[12px]">{e.employeeNumber || "—"}</td>
+                      <td className="text-text-700">{e.position || "—"}</td>
                       <td className="text-text-700">{e.email}</td>
                       <td className="text-text-700">{e.branch?.name || "—"}</td>
                       <td>{e.user ? <span className="badge bg-green-100 text-green-600">{e.user.status}</span> : <span className="badge bg-violet-500/15 text-violet-500">No access</span>}</td>
@@ -305,7 +403,7 @@ export default function RolesPage() {
                   )}
                 </tr>
               ))}
-              {employees.length === 0 && <tr><td colSpan={5} className="text-center text-text-muted text-sm py-8">No employees yet.</td></tr>}
+              {employees.length === 0 && <tr><td colSpan={7} className="text-center text-text-muted text-sm py-8">No employees yet.</td></tr>}
             </tbody>
           </table>
         </div>

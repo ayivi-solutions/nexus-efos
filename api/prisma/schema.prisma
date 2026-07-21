@@ -268,6 +268,16 @@ enum EmploymentStatus {
   @@schema("nexus")
 }
 
+enum EmploymentType {
+  PERMANENT
+  CONTRACT
+  TEMPORARY
+  INTERN
+  CONSULTANT
+
+  @@schema("nexus")
+}
+
 model Employee {
   id            String           @id @default(cuid())
   institution   Institution      @relation(fields: [institutionId], references: [id], onDelete: Cascade)
@@ -275,8 +285,21 @@ model Employee {
   branch        Branch?          @relation(fields: [branchId], references: [id], onDelete: SetNull)
   branchId      String?
 
+  employeeNumber String?
   fullName      String
   email         String
+  employmentType EmploymentType  @default(PERMANENT)
+  department    String?
+  division      String?
+  position      String?
+  grade         String?
+  employmentDate    DateTime?
+  confirmationDate  DateTime?
+
+  reportingManager   Employee?   @relation("ReportingLine", fields: [reportingManagerId], references: [id], onDelete: SetNull)
+  reportingManagerId String?
+  directReports      Employee[]  @relation("ReportingLine")
+
   status        EmploymentStatus @default(ACTIVE)
 
   user          User?            @relation(fields: [userId], references: [id], onDelete: SetNull)
@@ -286,6 +309,7 @@ model Employee {
   updatedAt     DateTime         @updatedAt
 
   @@unique([institutionId, email])
+  @@unique([institutionId, employeeNumber])
   @@map("employees")
   @@schema("nexus")
 }

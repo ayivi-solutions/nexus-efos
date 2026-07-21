@@ -20,6 +20,45 @@ roleRouter.get("/permissions", async (_req, res) => {
   res.json({ permissions });
 });
 
+// CRUAA — Create. Custom institution-defined roles alongside the seeded
+// system templates.
+const createRoleSchema = z.object({
+  name: z.string().min(2),
+  description: z.string().optional(),
+  category: z.enum(["EXECUTIVE", "OPERATIONAL", "GOVERNANCE", "TECHNICAL", "CUSTOMER"]),
+  permissionCodes: z.array(z.string()).optional(),
+});
+
+roleRouter.post("/", requirePermission("roles.configure"), async (req: AuthedRequest, res) => {
+  const parsed = createRoleSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+  const role = await prisma.role.create({
+    data: {
+      institutionId: req.auth!.institutionId,
+      name: parsed.data.name,
+      description: parsed.data.description,
+      category: parsed.data.category,
+      isSystem: false,
+    },
+  });
+
+  if (parsed.data.permissionCodes?.length) {
+    const permissions = await prisma.permission.findMany({ where: { code: { in: parsed.data.permissionCodes } } });
+    await prisma.rolePermission.createMany({
+      data: permissions.map((p) => ({ roleId: role.id, permissionId: p.id })),
+      skipDuplicates: true,
+    });
+  }
+
+  await prisma.auditLog.create({
+    data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "role.create", resource: "role", resourceId: role.id },
+  });
+
+  const created = await prisma.role.findUnique({ where: { id: role.id }, include: { rolePermissions: { include: { permission: true } } } });
+  res.status(201).json({ role: created });
+});
+
 // doc §38.12 — Temporary Delegation: assign a role with optional expiry + branch scope
 const assignSchema = z.object({
   userId: z.string(),

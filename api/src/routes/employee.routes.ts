@@ -12,19 +12,48 @@ employeeRouter.get("/", requirePermission("users.administer"), async (req: Authe
   const { includeArchived } = req.query as { includeArchived?: string };
   const employees = await prisma.employee.findMany({
     where: { institutionId: req.auth!.institutionId, ...(includeArchived === "true" ? {} : { status: "ACTIVE" }) },
-    include: { branch: true, user: { include: { userRoles: { include: { role: true, branch: true } } } } },
+    include: {
+      branch: true,
+      user: { include: { userRoles: { include: { role: true, branch: true } } } },
+      reportingManager: { select: { id: true, fullName: true } },
+    },
     orderBy: { fullName: "asc" },
   });
   res.json({ employees });
 });
 
-const createSchema = z.object({ fullName: z.string().min(2), email: z.string().email(), branchId: z.string().optional() });
+// Technical Spec §71 Employee Entity Architecture — real HR fields
+// alongside the minimal set used since Employee Master was first built.
+const employmentTypeEnum = z.enum(["PERMANENT", "CONTRACT", "TEMPORARY", "INTERN", "CONSULTANT"]);
+
+const createSchema = z.object({
+  fullName: z.string().min(2),
+  email: z.string().email(),
+  branchId: z.string().optional(),
+  employeeNumber: z.string().optional(),
+  employmentType: employmentTypeEnum.optional(),
+  department: z.string().optional(),
+  division: z.string().optional(),
+  position: z.string().optional(),
+  grade: z.string().optional(),
+  employmentDate: z.string().datetime().optional(),
+  confirmationDate: z.string().datetime().optional(),
+  reportingManagerId: z.string().optional(),
+});
 
 employeeRouter.post("/", requirePermission("users.administer"), async (req: AuthedRequest, res) => {
   const parsed = createSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
-  const employee = await prisma.employee.create({ data: { institutionId: req.auth!.institutionId, ...parsed.data } });
+  const { employmentDate, confirmationDate, ...rest } = parsed.data;
+  const employee = await prisma.employee.create({
+    data: {
+      institutionId: req.auth!.institutionId,
+      ...rest,
+      employmentDate: employmentDate ? new Date(employmentDate) : undefined,
+      confirmationDate: confirmationDate ? new Date(confirmationDate) : undefined,
+    },
+  });
   await prisma.auditLog.create({
     data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "employee.create", resource: "employee", resourceId: employee.id },
   });
@@ -32,7 +61,20 @@ employeeRouter.post("/", requirePermission("users.administer"), async (req: Auth
 });
 
 // CRUAA — Update
-const updateSchema = z.object({ fullName: z.string().min(2).optional(), email: z.string().email().optional(), branchId: z.string().optional().nullable() });
+const updateSchema = z.object({
+  fullName: z.string().min(2).optional(),
+  email: z.string().email().optional(),
+  branchId: z.string().optional().nullable(),
+  employeeNumber: z.string().optional().nullable(),
+  employmentType: employmentTypeEnum.optional(),
+  department: z.string().optional().nullable(),
+  division: z.string().optional().nullable(),
+  position: z.string().optional().nullable(),
+  grade: z.string().optional().nullable(),
+  employmentDate: z.string().datetime().optional().nullable(),
+  confirmationDate: z.string().datetime().optional().nullable(),
+  reportingManagerId: z.string().optional().nullable(),
+});
 
 employeeRouter.patch("/:id", requirePermission("users.administer"), async (req: AuthedRequest, res) => {
   const parsed = updateSchema.safeParse(req.body);
@@ -41,7 +83,19 @@ employeeRouter.patch("/:id", requirePermission("users.administer"), async (req: 
   const existing = await prisma.employee.findFirst({ where: { id: req.params.id, institutionId: req.auth!.institutionId } });
   if (!existing) return res.status(404).json({ error: "Employee not found" });
 
-  const employee = await prisma.employee.update({ where: { id: existing.id }, data: parsed.data });
+  if (parsed.data.reportingManagerId === req.params.id) {
+    return res.status(400).json({ error: "An employee cannot be their own reporting manager" });
+  }
+
+  const { employmentDate, confirmationDate, ...rest } = parsed.data;
+  const employee = await prisma.employee.update({
+    where: { id: existing.id },
+    data: {
+      ...rest,
+      ...(employmentDate !== undefined ? { employmentDate: employmentDate ? new Date(employmentDate) : null } : {}),
+      ...(confirmationDate !== undefined ? { confirmationDate: confirmationDate ? new Date(confirmationDate) : null } : {}),
+    },
+  });
   await prisma.auditLog.create({
     data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "employee.update", resource: "employee", resourceId: employee.id },
   });
