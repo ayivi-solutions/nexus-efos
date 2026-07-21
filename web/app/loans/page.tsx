@@ -107,8 +107,8 @@ export default function LoansPage() {
           </form>
         )}
 
-        <div className="border border-paper-100 rounded-lg overflow-hidden">
-          <table className="w-full text-sm">
+        <div className="border border-paper-100 rounded-lg overflow-x-auto">
+          <table className="w-full min-w-[760px] text-sm">
             <thead>
               <tr className="bg-paper-50 text-left text-[11px] uppercase tracking-wide text-text-muted">
                 <th className="px-4 py-3">Customer</th>

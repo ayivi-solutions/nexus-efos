@@ -170,8 +170,8 @@ export default function RolesPage() {
         </form>
 
         <h2 className="font-display font-semibold text-lg text-ink-900 mb-3">Staff and assignments</h2>
-        <div className="border border-paper-100 rounded-lg overflow-hidden">
-          <table className="w-full text-sm">
+        <div className="border border-paper-100 rounded-lg overflow-x-auto">
+          <table className="w-full min-w-[640px] text-sm">
             <thead>
               <tr className="bg-paper-50 text-left text-[11px] uppercase tracking-wide text-text-muted">
                 <th className="px-4 py-3">Name</th>
