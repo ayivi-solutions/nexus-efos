@@ -9,6 +9,7 @@ export default function RolesPage() {
   const [users, setUsers] = useState<any[]>([]);
   const [branches, setBranches] = useState<any[]>([]);
   const [employees, setEmployees] = useState<any[]>([]);
+  const [permissions, setPermissions] = useState<any[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   const [saving, setSaving] = useState(false);
@@ -16,25 +17,41 @@ export default function RolesPage() {
   const [granting, setGranting] = useState(false);
   const [lastInviteLink, setLastInviteLink] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [busyId, setBusyId] = useState<string | null>(null);
 
   const [form, setForm] = useState({ userId: "", roleId: "", branchId: "", expiresAt: "", isDelegated: false });
   const [employeeForm, setEmployeeForm] = useState({ fullName: "", email: "", branchId: "" });
   const [grantForm, setGrantForm] = useState({ employeeId: "", roleId: "", branchId: "" });
 
+  const [editingEmployeeId, setEditingEmployeeId] = useState<string | null>(null);
+  const [editEmployeeForm, setEditEmployeeForm] = useState({ fullName: "", email: "", branchId: "" });
+
+  const [editingRoleId, setEditingRoleId] = useState<string | null>(null);
+  const [editRolePermCodes, setEditRolePermCodes] = useState<string[]>([]);
+
+  const [showArchivedEmployees, setShowArchivedEmployees] = useState(false);
+
   function load() {
-    Promise.all([api.listRoles(), api.listUsers(), api.listBranches(), api.listEmployees()])
-      .then(([r, u, b, e]) => {
+    Promise.all([
+      api.listRoles(),
+      api.listUsers(),
+      api.listBranches(),
+      api.listEmployees(showArchivedEmployees),
+      api.listPermissions(),
+    ])
+      .then(([r, u, b, e, p]) => {
         setRoles(r.roles);
         setUsers(u.users);
         setBranches(b.branches);
         setEmployees(e.employees);
+        setPermissions(p.permissions);
       })
       .catch((err) => setError(err.message));
   }
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); }, [showArchivedEmployees]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const employeesWithoutAccess = employees.filter((e) => !e.userId);
+  const employeesWithoutAccess = employees.filter((e) => !e.userId && e.status !== "INACTIVE");
 
   async function handleAddEmployee(e: React.FormEvent) {
     e.preventDefault();
@@ -51,16 +68,83 @@ export default function RolesPage() {
     }
   }
 
+  function startEditEmployee(emp: any) {
+    setEditingEmployeeId(emp.id);
+    setEditEmployeeForm({ fullName: emp.fullName, email: emp.email, branchId: emp.branchId || "" });
+  }
+
+  async function saveEditEmployee(id: string) {
+    setBusyId(id);
+    setError(null);
+    try {
+      await api.updateEmployee(id, { ...editEmployeeForm, branchId: editEmployeeForm.branchId || null });
+      setEditingEmployeeId(null);
+      load();
+    } catch (err: any) {
+      setError(err.message || "Could not update employee");
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function toggleArchiveEmployee(emp: any) {
+    setBusyId(emp.id);
+    setError(null);
+    try {
+      if (emp.status === "INACTIVE") await api.unarchiveEmployee(emp.id);
+      else await api.archiveEmployee(emp.id);
+      load();
+    } catch (err: any) {
+      setError(err.message || "Action failed");
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function toggleSuspendUser(userId: string, currentStatus: string) {
+    setBusyId(userId);
+    setError(null);
+    try {
+      if (currentStatus === "SUSPENDED") await api.reinstateUser(userId);
+      else await api.suspendUser(userId);
+      load();
+    } catch (err: any) {
+      setError(err.message || "Action failed");
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  function startEditRole(role: any) {
+    setEditingRoleId(role.id);
+    setEditRolePermCodes(role.rolePermissions.map((rp: any) => rp.permission.code));
+  }
+
+  function togglePermCode(code: string) {
+    setEditRolePermCodes((codes) => (codes.includes(code) ? codes.filter((c) => c !== code) : [...codes, code]));
+  }
+
+  async function saveRolePermissions(roleId: string) {
+    setBusyId(roleId);
+    setError(null);
+    try {
+      await api.updateRole(roleId, { permissionCodes: editRolePermCodes });
+      setEditingRoleId(null);
+      load();
+    } catch (err: any) {
+      setError(err.message || "Could not update role");
+    } finally {
+      setBusyId(null);
+    }
+  }
+
   async function handleGrantAccess(e: React.FormEvent) {
     e.preventDefault();
     setGranting(true);
     setError(null);
     setLastInviteLink(null);
     try {
-      const res = await api.grantAccess(grantForm.employeeId, {
-        roleId: grantForm.roleId,
-        branchId: grantForm.branchId || undefined,
-      });
+      const res = await api.grantAccess(grantForm.employeeId, { roleId: grantForm.roleId, branchId: grantForm.branchId || undefined });
       setLastInviteLink(res.inviteLink);
       setGrantForm({ employeeId: "", roleId: "", branchId: "" });
       load();
@@ -120,20 +204,47 @@ export default function RolesPage() {
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-10">
           {roles.map((r) => (
             <div key={r.id} className="card p-4">
-              <div className="font-display font-semibold text-ink-900 mb-2">{r.name}</div>
-              <div className="flex flex-wrap gap-1.5">
-                {r.rolePermissions.map((rp: any) => (
-                  <span key={rp.permission.id} className="text-[10.5px] px-2 py-0.5 rounded-full bg-gold-300/25 text-gold-600">{rp.permission.code}</span>
-                ))}
+              <div className="flex items-center justify-between mb-2">
+                <div className="font-display font-semibold text-ink-900">{r.name}</div>
+                {editingRoleId === r.id ? (
+                  <div className="flex gap-2">
+                    <button onClick={() => saveRolePermissions(r.id)} disabled={busyId === r.id} className="text-[11.5px] text-green-600 font-semibold">Save</button>
+                    <button onClick={() => setEditingRoleId(null)} className="text-[11.5px] text-text-muted">Cancel</button>
+                  </div>
+                ) : (
+                  <button onClick={() => startEditRole(r)} className="text-[11.5px] text-gold-600 font-semibold">Edit</button>
+                )}
               </div>
+
+              {editingRoleId === r.id ? (
+                <div className="grid grid-cols-2 gap-1.5 max-h-48 overflow-y-auto">
+                  {permissions.map((p: any) => (
+                    <label key={p.id} className="flex items-center gap-1.5 text-[11px] text-text-700">
+                      <input type="checkbox" checked={editRolePermCodes.includes(p.code)} onChange={() => togglePermCode(p.code)} />
+                      {p.code}
+                    </label>
+                  ))}
+                </div>
+              ) : (
+                <div className="flex flex-wrap gap-1.5">
+                  {r.rolePermissions.map((rp: any) => (
+                    <span key={rp.permission.id} className="text-[10.5px] px-2 py-0.5 rounded-full bg-gold-300/25 text-gold-600">{rp.permission.code}</span>
+                  ))}
+                </div>
+              )}
             </div>
           ))}
           {roles.length === 0 && <p className="text-text-muted text-sm">No roles seeded yet.</p>}
         </div>
 
-        {/* Employee Master — doc §50.5. This is the authoritative directory;
-            people must exist here before they can be granted system access. */}
-        <h2 className="font-display font-semibold text-lg text-ink-900 mb-3">Employee directory</h2>
+        {/* Employee Master — doc §50.5 */}
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="font-display font-semibold text-lg text-ink-900">Employee directory</h2>
+          <label className="flex items-center gap-1.5 text-[12.5px] text-text-500">
+            <input type="checkbox" checked={showArchivedEmployees} onChange={(e) => setShowArchivedEmployees(e.target.checked)} />
+            Show archived
+          </label>
+        </div>
         <form onSubmit={handleAddEmployee} className="card p-6 mb-6">
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
             <label className="block">
@@ -152,39 +263,52 @@ export default function RolesPage() {
               </select>
             </label>
           </div>
-          <button type="submit" disabled={addingEmployee} className="btn-dark">
-            {addingEmployee ? "Adding…" : "+ Add employee"}
-          </button>
+          <button type="submit" disabled={addingEmployee} className="btn-dark">{addingEmployee ? "Adding…" : "+ Add employee"}</button>
         </form>
 
         <div className="card overflow-x-auto mb-10">
-          <table className="w-full min-w-[600px] text-sm table-modern">
-            <thead>
-              <tr><th>Name</th><th>Email</th><th>Branch</th><th>System access</th></tr>
-            </thead>
+          <table className="w-full min-w-[700px] text-sm table-modern">
+            <thead><tr><th>Name</th><th>Email</th><th>Branch</th><th>System access</th><th>Actions</th></tr></thead>
             <tbody>
               {employees.map((e) => (
                 <tr key={e.id}>
-                  <td className="text-text-900">{e.fullName}</td>
-                  <td className="text-text-700">{e.email}</td>
-                  <td className="text-text-700">{e.branch?.name || "—"}</td>
-                  <td>
-                    {e.user ? (
-                      <span className="badge bg-green-100 text-green-600">{e.user.status}</span>
-                    ) : (
-                      <span className="badge bg-violet-500/15 text-violet-500">No access</span>
-                    )}
-                  </td>
+                  {editingEmployeeId === e.id ? (
+                    <>
+                      <td><input className="input !py-1 !text-[12px]" value={editEmployeeForm.fullName} onChange={(ev) => setEditEmployeeForm((f) => ({ ...f, fullName: ev.target.value }))} /></td>
+                      <td><input className="input !py-1 !text-[12px]" value={editEmployeeForm.email} onChange={(ev) => setEditEmployeeForm((f) => ({ ...f, email: ev.target.value }))} /></td>
+                      <td>
+                        <select className="input !py-1 !text-[12px]" value={editEmployeeForm.branchId} onChange={(ev) => setEditEmployeeForm((f) => ({ ...f, branchId: ev.target.value }))}>
+                          <option value="">Unassigned</option>
+                          {branches.map((b) => (<option key={b.id} value={b.id}>{b.name}</option>))}
+                        </select>
+                      </td>
+                      <td>{e.user ? <span className="badge bg-green-100 text-green-600">{e.user.status}</span> : <span className="badge bg-violet-500/15 text-violet-500">No access</span>}</td>
+                      <td className="whitespace-nowrap space-x-2">
+                        <button onClick={() => saveEditEmployee(e.id)} disabled={busyId === e.id} className="btn-text text-green-600">Save</button>
+                        <button onClick={() => setEditingEmployeeId(null)} className="btn-text text-text-muted">Cancel</button>
+                      </td>
+                    </>
+                  ) : (
+                    <>
+                      <td className={e.status === "INACTIVE" ? "text-text-muted line-through" : "text-text-900"}>{e.fullName}</td>
+                      <td className="text-text-700">{e.email}</td>
+                      <td className="text-text-700">{e.branch?.name || "—"}</td>
+                      <td>{e.user ? <span className="badge bg-green-100 text-green-600">{e.user.status}</span> : <span className="badge bg-violet-500/15 text-violet-500">No access</span>}</td>
+                      <td className="whitespace-nowrap space-x-2">
+                        <button onClick={() => startEditEmployee(e)} className="btn-text text-gold-600">Edit</button>
+                        <button onClick={() => toggleArchiveEmployee(e)} disabled={busyId === e.id} className={`btn-text ${e.status === "INACTIVE" ? "text-green-600" : "text-rose-600"}`}>
+                          {e.status === "INACTIVE" ? "Unarchive" : "Archive"}
+                        </button>
+                      </td>
+                    </>
+                  )}
                 </tr>
               ))}
-              {employees.length === 0 && (
-                <tr><td colSpan={4} className="text-center text-text-muted text-sm py-8">No employees yet.</td></tr>
-              )}
+              {employees.length === 0 && <tr><td colSpan={5} className="text-center text-text-muted text-sm py-8">No employees yet.</td></tr>}
             </tbody>
           </table>
         </div>
 
-        {/* Grant access — select an EXISTING employee, never a typed name/email */}
         <h2 className="font-display font-semibold text-lg text-ink-900 mb-3">Grant system access</h2>
         <form onSubmit={handleGrantAccess} className="card p-6 mb-10">
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
@@ -210,20 +334,14 @@ export default function RolesPage() {
               </select>
             </label>
           </div>
-          <button type="submit" disabled={granting || employeesWithoutAccess.length === 0} className="btn-primary">
-            {granting ? "Granting…" : "Grant access"}
-          </button>
-          {employeesWithoutAccess.length === 0 && employees.length > 0 && (
-            <p className="text-text-muted text-xs mt-2">Every employee already has system access.</p>
-          )}
+          <button type="submit" disabled={granting || employeesWithoutAccess.length === 0} className="btn-primary">{granting ? "Granting…" : "Grant access"}</button>
+          {employeesWithoutAccess.length === 0 && employees.length > 0 && <p className="text-text-muted text-xs mt-2">Every active employee already has system access.</p>}
           {lastInviteLink && (
             <div className="mt-4 p-3 rounded-md bg-gold-300/10 border border-gold-500/25">
               <p className="text-[12.5px] text-text-700 mb-2">Share this link with them (expires in 7 days):</p>
               <div className="flex items-center gap-2 flex-wrap">
                 <code className="text-[11.5px] bg-white border border-paper-100 rounded px-2 py-1.5 break-all">{lastInviteLink}</code>
-                <button type="button" onClick={copyInviteLink} className="btn-dark shrink-0 !px-3 !py-1.5 !text-[12px]">
-                  {copied ? "Copied!" : "Copy"}
-                </button>
+                <button type="button" onClick={copyInviteLink} className="btn-dark shrink-0 !px-3 !py-1.5 !text-[12px]">{copied ? "Copied!" : "Copy"}</button>
               </div>
             </div>
           )}
@@ -262,17 +380,13 @@ export default function RolesPage() {
               <span className="text-[13px] text-text-500">Temporary delegation</span>
             </label>
           </div>
-          <button type="submit" disabled={saving} className="btn-primary">
-            {saving ? "Assigning…" : "Assign role"}
-          </button>
+          <button type="submit" disabled={saving} className="btn-primary">{saving ? "Assigning…" : "Assign role"}</button>
         </form>
 
         <h2 className="font-display font-semibold text-lg text-ink-900 mb-3">Staff and assignments</h2>
         <div className="card overflow-x-auto">
-          <table className="w-full min-w-[640px] text-sm table-modern">
-            <thead>
-              <tr><th>Name</th><th>Email</th><th>Status</th><th>Roles</th></tr>
-            </thead>
+          <table className="w-full min-w-[720px] text-sm table-modern">
+            <thead><tr><th>Name</th><th>Email</th><th>Status</th><th>Roles</th><th>Access</th></tr></thead>
             <tbody>
               {users.map((u) => (
                 <tr key={u.id} className="align-top">
@@ -283,20 +397,23 @@ export default function RolesPage() {
                     <div className="flex flex-wrap gap-1.5">
                       {u.userRoles.map((ur: any) => (
                         <span key={ur.id} className="text-[10.5px] px-2 py-0.5 rounded-full bg-violet-500/15 text-violet-500 flex items-center gap-1">
-                          {ur.role.name}
-                          {ur.branch ? ` - ${ur.branch.name}` : ""}
-                          {ur.expiresAt ? ` - exp ${new Date(ur.expiresAt).toLocaleDateString()}` : ""}
+                          {ur.role.name}{ur.branch ? ` - ${ur.branch.name}` : ""}{ur.expiresAt ? ` - exp ${new Date(ur.expiresAt).toLocaleDateString()}` : ""}
                           <button onClick={() => handleRevoke(ur.id)} className="text-rose-600 font-bold ml-1">x</button>
                         </span>
                       ))}
                       {u.userRoles.length === 0 && <span className="text-text-muted text-xs">No roles assigned</span>}
                     </div>
                   </td>
+                  <td>
+                    {u.status !== "INVITED" && (
+                      <button onClick={() => toggleSuspendUser(u.id, u.status)} disabled={busyId === u.id} className={`btn-text ${u.status === "SUSPENDED" ? "text-green-600" : "text-rose-600"}`}>
+                        {u.status === "SUSPENDED" ? "Reinstate" : "Suspend"}
+                      </button>
+                    )}
+                  </td>
                 </tr>
               ))}
-              {users.length === 0 && (
-                <tr><td colSpan={4} className="text-center text-text-muted text-sm py-8">No staff yet.</td></tr>
-              )}
+              {users.length === 0 && <tr><td colSpan={5} className="text-center text-text-muted text-sm py-8">No staff yet.</td></tr>}
             </tbody>
           </table>
         </div>
