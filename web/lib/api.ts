@@ -127,7 +127,13 @@ export const api = {
 
   listAuditLog: () => request("/audit-log"),
 
-  getReportsOverview: () => request("/reports/overview"),
+  getReportsOverview: (months = 6) => request(`/reports/overview?months=${months}`),
+  getLoanReport: (from?: string, to?: string) =>
+    request(`/reports/loans${from || to ? `?${new URLSearchParams({ ...(from ? { from } : {}), ...(to ? { to } : {}) })}` : ""}`),
+  getSavingsReport: (from?: string, to?: string) =>
+    request(`/reports/savings${from || to ? `?${new URLSearchParams({ ...(from ? { from } : {}), ...(to ? { to } : {}) })}` : ""}`),
+  getCustomerReport: (from?: string, to?: string) =>
+    request(`/reports/customers${from || to ? `?${new URLSearchParams({ ...(from ? { from } : {}), ...(to ? { to } : {}) })}` : ""}`),
 };
 
 // NOTE: sessionStorage is used here (client-only, in-memory-per-tab) rather
