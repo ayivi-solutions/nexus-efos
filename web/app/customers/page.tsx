@@ -101,15 +101,15 @@ export default function CustomersPage() {
             <div className="grid grid-cols-1 sm:grid-cols-4 gap-4 mb-4">
               <label className="block">
                 <span className="block text-[13px] text-text-500 mb-1.5">Full name</span>
-                <input required className="input" value={form.fullName} onChange={(e) => setForm((f) => ({ ...f, fullName: e.target.value }))} />
+                <input required autoComplete="name" className="input" value={form.fullName} onChange={(e) => setForm((f) => ({ ...f, fullName: e.target.value }))} />
               </label>
               <label className="block">
                 <span className="block text-[13px] text-text-500 mb-1.5">Phone</span>
-                <input required className="input" value={form.phone} onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))} />
+                <input required type="tel" inputMode="tel" autoComplete="tel" pattern="^(0|\+233)[0-9]{9}$" title="Ghana number, e.g. 0244123456" placeholder="0244 123 456" className="input" value={form.phone} onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))} />
               </label>
               <label className="block">
                 <span className="block text-[13px] text-text-500 mb-1.5">Email (optional)</span>
-                <input type="email" className="input" value={form.email} onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))} />
+                <input type="email" autoComplete="email" className="input" value={form.email} onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))} />
               </label>
               <label className="block">
                 <span className="block text-[13px] text-text-500 mb-1.5">Segment</span>

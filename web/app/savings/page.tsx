@@ -100,7 +100,10 @@ export default function SavingsPage() {
                   <td className="px-4 py-3 text-text-500">{a.status}</td>
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-2 flex-wrap">
-                      <input type="number" min="1" placeholder="Amount" className="input !py-1 !w-24 text-[12px]" value={txnAmount[a.id] || ""} onChange={(e) => setTxnAmount((t) => ({ ...t, [a.id]: e.target.value }))} />
+                      <div className="relative">
+                        <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[10.5px] text-text-muted font-mono pointer-events-none">GHS</span>
+                        <input type="number" inputMode="decimal" min="0.01" step="0.01" placeholder="0.00" className="input !py-1 !w-28 !pl-9 text-[12px]" value={txnAmount[a.id] || ""} onChange={(e) => setTxnAmount((t) => ({ ...t, [a.id]: e.target.value }))} />
+                      </div>
                       <button onClick={() => handleTxn(a.id, "deposit")} className="btn-text text-green-600">Deposit</button>
                       <button onClick={() => handleTxn(a.id, "withdraw")} className="btn-text text-rose-600">Withdraw</button>
                     </div>

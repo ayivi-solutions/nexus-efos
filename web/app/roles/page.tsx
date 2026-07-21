@@ -104,11 +104,11 @@ export default function RolesPage() {
           <div className="grid grid-cols-1 sm:grid-cols-4 gap-4 mb-4">
             <label className="block">
               <span className="block text-[13px] text-text-500 mb-1.5">Full name</span>
-              <input required className="input" value={inviteForm.fullName} onChange={(e) => setInviteForm((f) => ({ ...f, fullName: e.target.value }))} />
+              <input required autoComplete="name" className="input" value={inviteForm.fullName} onChange={(e) => setInviteForm((f) => ({ ...f, fullName: e.target.value }))} />
             </label>
             <label className="block">
               <span className="block text-[13px] text-text-500 mb-1.5">Email</span>
-              <input required type="email" className="input" value={inviteForm.email} onChange={(e) => setInviteForm((f) => ({ ...f, email: e.target.value }))} />
+              <input required type="email" autoComplete="email" className="input" value={inviteForm.email} onChange={(e) => setInviteForm((f) => ({ ...f, email: e.target.value }))} />
             </label>
             <label className="block">
               <span className="block text-[13px] text-text-500 mb-1.5">Role</span>

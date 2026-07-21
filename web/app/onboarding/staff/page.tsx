@@ -73,6 +73,7 @@ export default function OnboardingStaffPage() {
             <span className="block text-[13px] text-text-500 mb-1.5">Full name</span>
             <input
               required
+              autoComplete="name"
               className="input"
               value={form.fullName}
               onChange={(e) => setForm((f) => ({ ...f, fullName: e.target.value }))}
@@ -83,6 +84,7 @@ export default function OnboardingStaffPage() {
             <input
               required
               type="email"
+              autoComplete="email"
               className="input"
               value={form.email}
               onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))}

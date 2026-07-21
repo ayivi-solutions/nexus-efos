@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
 import { OnboardingShell } from "@/components/OnboardingShell";
+import { GHANA_REGIONS } from "@/lib/ghana-regions";
 
 export default function OnboardingBranchesPage() {
   const router = useRouter();
@@ -30,19 +31,14 @@ export default function OnboardingBranchesPage() {
   return (
     <OnboardingShell step={3} title="Add branches">
       <p className="text-text-500 text-sm mb-5">
-        Head Office was created automatically. Add any additional branches — you can always add
-        more later.
+        Head Office was created automatically. Add any additional branches — you can always add more later.
       </p>
 
       {added.length > 0 && (
         <ul className="mb-5 space-y-1.5">
           {added.map((b) => (
-            <li
-              key={b.code}
-              className="flex items-center gap-2 text-[13px] text-text-700 bg-paper-50 border border-paper-100 rounded-md px-3 py-2"
-            >
-              <span className="text-gold-600">✓</span> {b.name}{" "}
-              <span className="text-text-muted font-mono">({b.code})</span>
+            <li key={b.code} className="flex items-center gap-2 text-[13px] text-text-700 bg-paper-50 border border-paper-100 rounded-md px-3 py-2">
+              <span className="text-gold-600">✓</span> {b.name} <span className="text-text-muted font-mono">({b.code})</span>
             </li>
           ))}
         </ul>
@@ -52,18 +48,13 @@ export default function OnboardingBranchesPage() {
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
           <label className="block">
             <span className="block text-[13px] text-text-500 mb-1.5">Branch name</span>
-            <input
-              required
-              className="input"
-              value={form.name}
-              onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
-            />
+            <input required className="input" value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} />
           </label>
           <label className="block">
             <span className="block text-[13px] text-text-500 mb-1.5">Code</span>
             <input
               required
-              className="input"
+              className="input uppercase"
               value={form.code}
               onChange={(e) => setForm((f) => ({ ...f, code: e.target.value.toUpperCase() }))}
               placeholder="e.g. TAM-01"
@@ -71,30 +62,22 @@ export default function OnboardingBranchesPage() {
           </label>
           <label className="block">
             <span className="block text-[13px] text-text-500 mb-1.5">Region</span>
-            <input
-              className="input"
-              value={form.region}
-              onChange={(e) => setForm((f) => ({ ...f, region: e.target.value }))}
-            />
+            <select className="input" value={form.region} onChange={(e) => setForm((f) => ({ ...f, region: e.target.value }))}>
+              <option value="">Select…</option>
+              {GHANA_REGIONS.map((r) => (<option key={r} value={r}>{r}</option>))}
+            </select>
           </label>
         </div>
 
         {error && <p className="text-rose-600 text-sm mb-4">{error}</p>}
 
-        <button
-          type="submit"
-          disabled={loading}
-          className="px-4 py-2 rounded-md border border-ink-900 text-ink-900 font-semibold text-sm hover:bg-ink-900 hover:text-gold-400 transition disabled:opacity-60"
-        >
+        <button type="submit" disabled={loading} className="px-4 py-2 rounded-[10px] border border-ink-900 text-ink-900 font-semibold text-sm hover:bg-ink-900 hover:text-gold-400 transition disabled:opacity-55">
           {loading ? "Adding…" : "+ Add branch"}
         </button>
       </form>
 
       <div className="flex justify-end">
-        <button
-          onClick={() => router.push("/onboarding/staff")}
-          className="px-6 py-3 rounded-md bg-ink-900 text-gold-400 font-semibold text-sm hover:bg-ink-800 transition"
-        >
+        <button onClick={() => router.push("/onboarding/staff")} className="btn-dark px-6 py-3">
           Continue
         </button>
       </div>

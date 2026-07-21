@@ -40,11 +40,11 @@ export default function AcceptInvitePage() {
             {error && <p className="text-rose-600 text-sm">{error}</p>}
             <label className="block">
               <span className="block text-[13px] text-text-500 mb-1.5">Email</span>
-              <input required type="email" className="input" value={email} onChange={(e) => setEmail(e.target.value)} />
+              <input required type="email" autoComplete="email" className="input" value={email} onChange={(e) => setEmail(e.target.value)} />
             </label>
             <label className="block">
               <span className="block text-[13px] text-text-500 mb-1.5">New password</span>
-              <input required type="password" minLength={8} className="input" value={password} onChange={(e) => setPassword(e.target.value)} />
+              <input required type="password" autoComplete="new-password" minLength={8} className="input" value={password} onChange={(e) => setPassword(e.target.value)} />
             </label>
             <button
               type="submit"

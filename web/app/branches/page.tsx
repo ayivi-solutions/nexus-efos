@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { AppShell } from "@/components/AppShell";
+import { GHANA_REGIONS } from "@/lib/ghana-regions";
 
 export default function BranchesPage() {
   const [branches, setBranches] = useState<any[]>([]);
@@ -46,11 +47,20 @@ export default function BranchesPage() {
             </label>
             <label className="block">
               <span className="block text-[13px] text-text-500 mb-1.5">Code</span>
-              <input required className="input" value={form.code} onChange={(e) => setForm((f) => ({ ...f, code: e.target.value }))} />
+              <input
+                required
+                className="input uppercase"
+                value={form.code}
+                onChange={(e) => setForm((f) => ({ ...f, code: e.target.value.toUpperCase() }))}
+                placeholder="e.g. TAM-01"
+              />
             </label>
             <label className="block">
-              <span className="block text-[13px] text-text-500 mb-1.5">Region (optional)</span>
-              <input className="input" value={form.region} onChange={(e) => setForm((f) => ({ ...f, region: e.target.value }))} />
+              <span className="block text-[13px] text-text-500 mb-1.5">Region</span>
+              <select className="input" value={form.region} onChange={(e) => setForm((f) => ({ ...f, region: e.target.value }))}>
+                <option value="">Select…</option>
+                {GHANA_REGIONS.map((r) => (<option key={r} value={r}>{r}</option>))}
+              </select>
             </label>
           </div>
           <button type="submit" disabled={saving} className="btn-primary">
@@ -61,22 +71,22 @@ export default function BranchesPage() {
         <div className="card overflow-x-auto">
           <table className="w-full min-w-[640px] text-sm table-modern">
             <thead>
-              <tr className="bg-paper-50 text-left text-[11px] uppercase tracking-wide text-text-muted">
-                <th className="px-4 py-3">Name</th>
-                <th className="px-4 py-3">Code</th>
-                <th className="px-4 py-3">Region</th>
+              <tr>
+                <th>Name</th>
+                <th>Code</th>
+                <th>Region</th>
               </tr>
             </thead>
             <tbody>
               {branches.map((b) => (
-                <tr key={b.id} className="border-t border-paper-100">
-                  <td className="px-4 py-3 text-text-900">{b.name}</td>
-                  <td className="px-4 py-3 text-text-700">{b.code}</td>
-                  <td className="px-4 py-3 text-text-700">{b.region || "—"}</td>
+                <tr key={b.id}>
+                  <td className="text-text-900">{b.name}</td>
+                  <td className="text-text-700 font-mono text-[12px]">{b.code}</td>
+                  <td className="text-text-700">{b.region || "—"}</td>
                 </tr>
               ))}
               {branches.length === 0 && (
-                <tr><td colSpan={3} className="px-4 py-8 text-center text-text-muted text-sm">No branches yet.</td></tr>
+                <tr><td colSpan={3} className="text-center text-text-muted text-sm py-8">No branches yet.</td></tr>
               )}
             </tbody>
           </table>

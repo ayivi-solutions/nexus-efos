@@ -88,16 +88,25 @@ export default function LoansPage() {
                 </select>
               </label>
               <label className="block">
-                <span className="block text-[13px] text-text-500 mb-1.5">Principal (GHS)</span>
-                <input required type="number" min="1" className="input" value={form.principal} onChange={(e) => setForm((f) => ({ ...f, principal: e.target.value }))} />
+                <span className="block text-[13px] text-text-500 mb-1.5">Principal</span>
+                <div className="relative">
+                  <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-[13px] text-text-muted font-mono pointer-events-none">GHS</span>
+                  <input required type="number" inputMode="decimal" min="1" step="0.01" className="input pl-12" value={form.principal} onChange={(e) => setForm((f) => ({ ...f, principal: e.target.value }))} />
+                </div>
               </label>
               <label className="block">
-                <span className="block text-[13px] text-text-500 mb-1.5">Interest rate (% p.a.)</span>
-                <input required type="number" min="0" step="0.1" className="input" value={form.interestRate} onChange={(e) => setForm((f) => ({ ...f, interestRate: e.target.value }))} />
+                <span className="block text-[13px] text-text-500 mb-1.5">Interest rate (p.a.)</span>
+                <div className="relative">
+                  <input required type="number" inputMode="decimal" min="0" max="100" step="0.1" className="input pr-8" value={form.interestRate} onChange={(e) => setForm((f) => ({ ...f, interestRate: e.target.value }))} />
+                  <span className="absolute right-3.5 top-1/2 -translate-y-1/2 text-[13px] text-text-muted pointer-events-none">%</span>
+                </div>
               </label>
               <label className="block">
-                <span className="block text-[13px] text-text-500 mb-1.5">Term (months)</span>
-                <input required type="number" min="1" className="input" value={form.termMonths} onChange={(e) => setForm((f) => ({ ...f, termMonths: e.target.value }))} />
+                <span className="block text-[13px] text-text-500 mb-1.5">Term</span>
+                <div className="relative">
+                  <input required type="number" inputMode="numeric" min="1" max="360" step="1" className="input pr-16" value={form.termMonths} onChange={(e) => setForm((f) => ({ ...f, termMonths: e.target.value }))} />
+                  <span className="absolute right-3.5 top-1/2 -translate-y-1/2 text-[13px] text-text-muted pointer-events-none">months</span>
+                </div>
               </label>
             </div>
             <button type="submit" disabled={saving || !customers.length} className="btn-primary">

@@ -77,4 +77,8 @@ body {
   .table-modern td {
     @apply px-4 py-3;
   }
+
+  .input.uppercase::placeholder {
+    text-transform: none;
+  }
 }
