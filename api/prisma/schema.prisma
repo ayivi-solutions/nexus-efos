@@ -60,6 +60,7 @@ model Institution {
   loans         Loan[]
   savingsAccounts SavingsAccount[]
   auditLogs     AuditLog[]
+  employees     Employee[]
 
   createdAt     DateTime          @default(now())
   updatedAt     DateTime          @updatedAt
@@ -81,6 +82,7 @@ model Branch {
   customers     Customer[]
   loans         Loan[]
   savingsAccounts SavingsAccount[]
+  employees     Employee[]
 
   createdAt     DateTime     @default(now())
   updatedAt     DateTime     @updatedAt
@@ -126,6 +128,7 @@ model User {
   userRoles     UserRole[]
   refreshTokens RefreshToken[]
   auditLogs     AuditLog[]
+  employee      Employee?
 
   createdAt     DateTime      @default(now())
   updatedAt     DateTime      @updatedAt
@@ -241,6 +244,42 @@ model UserRole {
 
   @@unique([userId, roleId, branchId])
   @@map("user_roles")
+  @@schema("nexus")
+}
+
+// ---------------------------------------------------------------------------
+// EMPLOYEE MASTER (doc §50.5 Master Data Domains — "Employee Master:
+// Employees, Contract staff, Consultants, Field officers, Executives,
+// System users." System access (User) is subordinate to the employee
+// record, not the other way around.)
+// ---------------------------------------------------------------------------
+
+enum EmploymentStatus {
+  ACTIVE
+  INACTIVE
+
+  @@schema("nexus")
+}
+
+model Employee {
+  id            String           @id @default(cuid())
+  institution   Institution      @relation(fields: [institutionId], references: [id], onDelete: Cascade)
+  institutionId String
+  branch        Branch?          @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  branchId      String?
+
+  fullName      String
+  email         String
+  status        EmploymentStatus @default(ACTIVE)
+
+  user          User?            @relation(fields: [userId], references: [id], onDelete: SetNull)
+  userId        String?          @unique
+
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+
+  @@unique([institutionId, email])
+  @@map("employees")
   @@schema("nexus")
 }
 
