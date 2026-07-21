@@ -23,13 +23,12 @@ async function request(path: string, options: RequestInit = {}, _retried = false
         if (refreshRes.ok) {
           const { accessToken: newAccessToken } = await refreshRes.json();
           sessionStorage.setItem("nexus_access_token", newAccessToken);
-          return request(path, options, true); // retry once, silently, with the new token
+          return request(path, options, true);
         }
       } catch {
         // fall through to session-expired handling below
       }
     }
-    // Refresh token missing, invalid, or itself expired — the session is genuinely over.
     sessionStorage.removeItem("nexus_access_token");
     sessionStorage.removeItem("nexus_refresh_token");
     if (!window.location.pathname.startsWith("/login")) {
@@ -84,10 +83,6 @@ export const api = {
   revokeRole: (userRoleId: string) => request(`/roles/assign/${userRoleId}`, { method: "DELETE" }),
   updateRole: (id: string, data: { description?: string; permissionCodes?: string[] }) =>
     request(`/roles/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
-  updateRole: (id: string, data: { description?: string; permissionCodes?: string[] }) =>
-    request(`/roles/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
-  updateRole: (id: string, data: { description?: string; permissionCodes?: string[] }) =>
-    request(`/roles/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
 
   inviteStaff: (data: { fullName: string; email: string; roleId: string; branchId?: string }) =>
     request("/institutions/onboarding/staff", { method: "POST", body: JSON.stringify(data) }),
@@ -95,59 +90,36 @@ export const api = {
   goLive: () => request("/institutions/onboarding/go-live", { method: "POST" }),
 
   listUsers: () => request("/institutions/users"),
+  suspendUser: (id: string) => request(`/institutions/users/${id}/suspend`, { method: "POST" }),
+  reinstateUser: (id: string) => request(`/institutions/users/${id}/reinstate`, { method: "POST" }),
 
-  listBranches: () => request("/institutions/branches"),
+  listBranches: (includeArchived = false) => request(`/institutions/branches${includeArchived ? "?includeArchived=true" : ""}`),
   createBranch: (data: { name: string; code: string; region?: string }) =>
     request("/institutions/branches", { method: "POST", body: JSON.stringify(data) }),
   updateBranch: (id: string, data: any) => request(`/institutions/branches/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
   archiveBranch: (id: string) => request(`/institutions/branches/${id}/archive`, { method: "POST" }),
   unarchiveBranch: (id: string) => request(`/institutions/branches/${id}/unarchive`, { method: "POST" }),
-  suspendUser: (id: string) => request(`/institutions/users/${id}/suspend`, { method: "POST" }),
-  reinstateUser: (id: string) => request(`/institutions/users/${id}/reinstate`, { method: "POST" }),
-  updateBranch: (id: string, data: any) => request(`/institutions/branches/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
-  archiveBranch: (id: string) => request(`/institutions/branches/${id}/archive`, { method: "POST" }),
-  unarchiveBranch: (id: string) => request(`/institutions/branches/${id}/unarchive`, { method: "POST" }),
-  suspendUser: (id: string) => request(`/institutions/users/${id}/suspend`, { method: "POST" }),
-  reinstateUser: (id: string) => request(`/institutions/users/${id}/reinstate`, { method: "POST" }),
-  updateBranch: (id: string, data: any) => request(`/institutions/branches/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
-  archiveBranch: (id: string) => request(`/institutions/branches/${id}/archive`, { method: "POST" }),
-  unarchiveBranch: (id: string) => request(`/institutions/branches/${id}/unarchive`, { method: "POST" }),
-  suspendUser: (id: string) => request(`/institutions/users/${id}/suspend`, { method: "POST" }),
-  reinstateUser: (id: string) => request(`/institutions/users/${id}/reinstate`, { method: "POST" }),
 
-  listCustomers: () => request("/customers"),
-  getCustomer: (id: string) => request(`/customers/${id}`),
-
-  listEmployees: () => request("/employees"),
+  listEmployees: (includeArchived = false) => request(`/employees${includeArchived ? "?includeArchived=true" : ""}`),
   createEmployee: (data: { fullName: string; email: string; branchId?: string }) =>
     request("/employees", { method: "POST", body: JSON.stringify(data) }),
+  updateEmployee: (id: string, data: any) => request(`/employees/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
+  archiveEmployee: (id: string) => request(`/employees/${id}/archive`, { method: "POST" }),
+  unarchiveEmployee: (id: string) => request(`/employees/${id}/unarchive`, { method: "POST" }),
   grantAccess: (employeeId: string, data: { roleId: string; branchId?: string }) =>
     request(`/employees/${employeeId}/grant-access`, { method: "POST", body: JSON.stringify(data) }),
-  updateEmployee: (id: string, data: any) => request(`/employees/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
-  archiveEmployee: (id: string) => request(`/employees/${id}/archive`, { method: "POST" }),
-  unarchiveEmployee: (id: string) => request(`/employees/${id}/unarchive`, { method: "POST" }),
-  updateEmployee: (id: string, data: any) => request(`/employees/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
-  archiveEmployee: (id: string) => request(`/employees/${id}/archive`, { method: "POST" }),
-  unarchiveEmployee: (id: string) => request(`/employees/${id}/unarchive`, { method: "POST" }),
-  updateEmployee: (id: string, data: any) => request(`/employees/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
-  archiveEmployee: (id: string) => request(`/employees/${id}/archive`, { method: "POST" }),
-  unarchiveEmployee: (id: string) => request(`/employees/${id}/unarchive`, { method: "POST" }),
 
+  listCustomers: (includeArchived = false) => request(`/customers${includeArchived ? "?includeArchived=true" : ""}`),
+  getCustomer: (id: string) => request(`/customers/${id}`),
   createCustomer: (data: { fullName: string; phone: string; email?: string; segment: string }) =>
     request("/customers", { method: "POST", body: JSON.stringify(data) }),
+  updateCustomer: (id: string, data: any) => request(`/customers/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
+  archiveCustomer: (id: string) => request(`/customers/${id}/archive`, { method: "POST" }),
+  unarchiveCustomer: (id: string) => request(`/customers/${id}/unarchive`, { method: "POST" }),
   updateCustomerStage: (id: string, lifecycleStage: string) =>
     request(`/customers/${id}/stage`, { method: "PATCH", body: JSON.stringify({ lifecycleStage }) }),
   updateCustomerKyc: (id: string, kycStatus: string) =>
     request(`/customers/${id}/kyc`, { method: "PATCH", body: JSON.stringify({ kycStatus }) }),
-  updateCustomer: (id: string, data: any) => request(`/customers/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
-  archiveCustomer: (id: string) => request(`/customers/${id}/archive`, { method: "POST" }),
-  unarchiveCustomer: (id: string) => request(`/customers/${id}/unarchive`, { method: "POST" }),
-  updateCustomer: (id: string, data: any) => request(`/customers/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
-  archiveCustomer: (id: string) => request(`/customers/${id}/archive`, { method: "POST" }),
-  unarchiveCustomer: (id: string) => request(`/customers/${id}/unarchive`, { method: "POST" }),
-  updateCustomer: (id: string, data: any) => request(`/customers/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
-  archiveCustomer: (id: string) => request(`/customers/${id}/archive`, { method: "POST" }),
-  unarchiveCustomer: (id: string) => request(`/customers/${id}/unarchive`, { method: "POST" }),
 
   listLoans: () => request("/loans"),
   getLoan: (id: string) => request(`/loans/${id}`),
@@ -166,10 +138,6 @@ export const api = {
     request(`/savings/${id}/deposit`, { method: "POST", body: JSON.stringify({ amount }) }),
   withdrawSavings: (id: string, amount: number) =>
     request(`/savings/${id}/withdraw`, { method: "POST", body: JSON.stringify({ amount }) }),
-  closeSavingsAccount: (id: string) => request(`/savings/${id}/close`, { method: "POST" }),
-  reactivateSavingsAccount: (id: string) => request(`/savings/${id}/reactivate`, { method: "POST" }),
-  closeSavingsAccount: (id: string) => request(`/savings/${id}/close`, { method: "POST" }),
-  reactivateSavingsAccount: (id: string) => request(`/savings/${id}/reactivate`, { method: "POST" }),
   closeSavingsAccount: (id: string) => request(`/savings/${id}/close`, { method: "POST" }),
   reactivateSavingsAccount: (id: string) => request(`/savings/${id}/reactivate`, { method: "POST" }),
 
