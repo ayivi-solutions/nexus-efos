@@ -38,6 +38,32 @@ export default function SavingsDetailPage() {
     }
   }
 
+  async function handleClose() {
+    setBusy(true);
+    setError(null);
+    try {
+      await api.closeSavingsAccount(id);
+      load();
+    } catch (err: any) {
+      setError(err.message || "Could not close account");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleReactivate() {
+    setBusy(true);
+    setError(null);
+    try {
+      await api.reactivateSavingsAccount(id);
+      load();
+    } catch (err: any) {
+      setError(err.message || "Could not reactivate account");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <AppShell active="Savings">
       <div className="p-5 dt:p-10 overflow-x-auto">
@@ -65,13 +91,27 @@ export default function SavingsDetailPage() {
 
             <div className="card p-6 mb-8">
               <h2 className="font-display font-semibold text-base text-ink-900 mb-4">Transact</h2>
-              <div className="flex flex-wrap items-center gap-3">
-                <div className="relative">
-                  <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-[13px] text-text-muted font-mono pointer-events-none">GHS</span>
-                  <input type="number" inputMode="decimal" min="0.01" step="0.01" placeholder="0.00" className="input pl-12 !w-40" value={amount} onChange={(e) => setAmount(e.target.value)} />
+              {account.status === "CLOSED" ? (
+                <p className="text-text-muted text-sm">This account is closed. Reactivate it below to resume transactions.</p>
+              ) : (
+                <div className="flex flex-wrap items-center gap-3 mb-4">
+                  <div className="relative">
+                    <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-[13px] text-text-muted font-mono pointer-events-none">GHS</span>
+                    <input type="number" inputMode="decimal" min="0.01" step="0.01" placeholder="0.00" className="input pl-12 !w-40" value={amount} onChange={(e) => setAmount(e.target.value)} />
+                  </div>
+                  <button onClick={() => handleTxn("deposit")} disabled={busy} className="btn-primary">Deposit</button>
+                  <button onClick={() => handleTxn("withdraw")} disabled={busy} className="px-4 py-2.5 rounded-[10px] border border-rose-600 text-rose-600 font-semibold text-sm hover:bg-rose-100 transition">Withdraw</button>
                 </div>
-                <button onClick={() => handleTxn("deposit")} disabled={busy} className="btn-primary">Deposit</button>
-                <button onClick={() => handleTxn("withdraw")} disabled={busy} className="px-4 py-2.5 rounded-[10px] border border-rose-600 text-rose-600 font-semibold text-sm hover:bg-rose-100 transition">Withdraw</button>
+              )}
+              <div className="pt-4 border-t border-paper-100">
+                {account.status === "CLOSED" ? (
+                  <button onClick={handleReactivate} disabled={busy} className="text-[13px] text-green-600 font-semibold">Reactivate account</button>
+                ) : (
+                  <>
+                    <button onClick={handleClose} disabled={busy || Number(account.balance) !== 0} className="text-[13px] text-rose-600 font-semibold disabled:opacity-40 disabled:cursor-not-allowed">Close account</button>
+                    {Number(account.balance) !== 0 && <p className="text-text-muted text-xs mt-1">Balance must be GHS 0 before closing.</p>}
+                  </>
+                )}
               </div>
             </div>
 

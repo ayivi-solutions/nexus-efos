@@ -7,6 +7,7 @@ import { AppShell } from "@/components/AppShell";
 
 const STAGES = ["AWARENESS", "ACQUISITION", "ONBOARDING", "ACTIVATION", "GROWTH", "RETENTION", "ADVOCACY", "RE_ENGAGEMENT"];
 const KYC_STATUSES = ["PENDING", "VERIFIED", "REJECTED"];
+const SEGMENTS = ["INDIVIDUAL", "BUSINESS", "FARMER_GROUP", "WOMENS_GROUP", "YOUTH", "CORPORATE"];
 
 type TimelineEvent = { date: string; label: string; detail: string; amount?: string };
 
@@ -17,37 +18,50 @@ export default function CustomerDetailPage() {
   const [customer, setCustomer] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [editForm, setEditForm] = useState({ fullName: "", phone: "", email: "", segment: "INDIVIDUAL" });
 
   function load() {
-    api.getCustomer(id).then((res) => setCustomer(res.customer)).catch((err) => setError(err.message));
+    api.getCustomer(id).then((res) => {
+      setCustomer(res.customer);
+      setEditForm({ fullName: res.customer.fullName, phone: res.customer.phone, email: res.customer.email || "", segment: res.customer.segment });
+    }).catch((err) => setError(err.message));
   }
 
   useEffect(() => { load(); }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function handleStageChange(lifecycleStage: string) {
-    setBusy(true);
-    setError(null);
-    try {
-      await api.updateCustomerStage(id, lifecycleStage);
-      load();
-    } catch (err: any) {
-      setError(err.message || "Could not update stage");
-    } finally {
-      setBusy(false);
-    }
+    setBusy(true); setError(null);
+    try { await api.updateCustomerStage(id, lifecycleStage); load(); }
+    catch (err: any) { setError(err.message || "Could not update stage"); }
+    finally { setBusy(false); }
   }
 
   async function handleKycChange(kycStatus: string) {
-    setBusy(true);
-    setError(null);
+    setBusy(true); setError(null);
+    try { await api.updateCustomerKyc(id, kycStatus); load(); }
+    catch (err: any) { setError(err.message || "Could not update KYC status"); }
+    finally { setBusy(false); }
+  }
+
+  async function saveEdit() {
+    setBusy(true); setError(null);
     try {
-      await api.updateCustomerKyc(id, kycStatus);
+      await api.updateCustomer(id, { ...editForm, email: editForm.email || null });
+      setEditing(false);
       load();
-    } catch (err: any) {
-      setError(err.message || "Could not update KYC status");
-    } finally {
-      setBusy(false);
-    }
+    } catch (err: any) { setError(err.message || "Could not update customer"); }
+    finally { setBusy(false); }
+  }
+
+  async function toggleArchive() {
+    setBusy(true); setError(null);
+    try {
+      if (customer.archived) await api.unarchiveCustomer(id);
+      else await api.archiveCustomer(id);
+      load();
+    } catch (err: any) { setError(err.message || "Action failed"); }
+    finally { setBusy(false); }
   }
 
   const events: TimelineEvent[] = [];
@@ -55,9 +69,7 @@ export default function CustomerDetailPage() {
     for (const loan of customer.loans || []) {
       events.push({ date: loan.createdAt, label: "Loan initiated", detail: `${loan.status} · GHS ${Number(loan.principal).toLocaleString()} at ${loan.interestRate}% over ${loan.termMonths}mo` });
       if (loan.disbursedAt) events.push({ date: loan.disbursedAt, label: "Loan disbursed", detail: `GHS ${Number(loan.principal).toLocaleString()}` });
-      for (const r of loan.repayments || []) {
-        events.push({ date: r.paidAt, label: "Loan repayment", detail: "Recorded against loan", amount: `+GHS ${Number(r.amount).toLocaleString()}` });
-      }
+      for (const r of loan.repayments || []) events.push({ date: r.paidAt, label: "Loan repayment", detail: "Recorded against loan", amount: `+GHS ${Number(r.amount).toLocaleString()}` });
     }
     for (const acct of customer.savingsAccounts || []) {
       events.push({ date: acct.createdAt, label: "Savings account opened", detail: acct.accountNumber });
@@ -83,28 +95,70 @@ export default function CustomerDetailPage() {
 
         {customer && (
           <>
-            <div className="font-mono text-[11.5px] tracking-[0.1em] uppercase text-rose-600 mb-2">
-              {customer.segment.replaceAll("_", " ")}
+            <div className="flex items-center justify-between flex-wrap gap-3 mb-1">
+              <div className="font-mono text-[11.5px] tracking-[0.1em] uppercase text-rose-600">{customer.segment.replaceAll("_", " ")}</div>
+              {customer.archived && <span className="badge bg-rose-100 text-rose-600">Archived</span>}
             </div>
             <h1 className="font-display font-semibold text-2xl dt:text-3xl text-ink-900 mb-1">{customer.fullName}</h1>
             <div className="text-text-muted text-sm mb-6">{customer.phone}{customer.email ? ` · ${customer.email}` : ""}</div>
 
             <div className="card p-6 mb-8">
-              <h2 className="font-display font-semibold text-base text-ink-900 mb-4">Lifecycle &amp; KYC</h2>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <label className="block">
-                  <span className="block text-[13px] text-text-500 mb-1.5">Lifecycle stage</span>
-                  <select disabled={busy} className="input" value={customer.lifecycleStage} onChange={(e) => handleStageChange(e.target.value)}>
-                    {STAGES.map((s) => (<option key={s} value={s}>{s.replaceAll("_", " ")}</option>))}
-                  </select>
-                </label>
-                <label className="block">
-                  <span className="block text-[13px] text-text-500 mb-1.5">KYC status</span>
-                  <select disabled={busy} className="input" value={customer.kycStatus} onChange={(e) => handleKycChange(e.target.value)}>
-                    {KYC_STATUSES.map((s) => (<option key={s} value={s}>{s}</option>))}
-                  </select>
-                </label>
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="font-display font-semibold text-base text-ink-900">Customer details</h2>
+                <div className="flex gap-2">
+                  {editing ? (
+                    <>
+                      <button onClick={saveEdit} disabled={busy} className="text-[12.5px] text-green-600 font-semibold">Save</button>
+                      <button onClick={() => setEditing(false)} className="text-[12.5px] text-text-muted">Cancel</button>
+                    </>
+                  ) : (
+                    <>
+                      <button onClick={() => setEditing(true)} className="text-[12.5px] text-gold-600 font-semibold">Edit</button>
+                      <button onClick={toggleArchive} disabled={busy} className={`text-[12.5px] font-semibold ${customer.archived ? "text-green-600" : "text-rose-600"}`}>
+                        {customer.archived ? "Unarchive" : "Archive"}
+                      </button>
+                    </>
+                  )}
+                </div>
               </div>
+
+              {editing ? (
+                <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
+                  <label className="block">
+                    <span className="block text-[13px] text-text-500 mb-1.5">Full name</span>
+                    <input className="input" value={editForm.fullName} onChange={(e) => setEditForm((f) => ({ ...f, fullName: e.target.value }))} />
+                  </label>
+                  <label className="block">
+                    <span className="block text-[13px] text-text-500 mb-1.5">Phone</span>
+                    <input type="tel" className="input" value={editForm.phone} onChange={(e) => setEditForm((f) => ({ ...f, phone: e.target.value }))} />
+                  </label>
+                  <label className="block">
+                    <span className="block text-[13px] text-text-500 mb-1.5">Email</span>
+                    <input type="email" className="input" value={editForm.email} onChange={(e) => setEditForm((f) => ({ ...f, email: e.target.value }))} />
+                  </label>
+                  <label className="block">
+                    <span className="block text-[13px] text-text-500 mb-1.5">Segment</span>
+                    <select className="input" value={editForm.segment} onChange={(e) => setEditForm((f) => ({ ...f, segment: e.target.value }))}>
+                      {SEGMENTS.map((s) => (<option key={s} value={s}>{s.replaceAll("_", " ")}</option>))}
+                    </select>
+                  </label>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <label className="block">
+                    <span className="block text-[13px] text-text-500 mb-1.5">Lifecycle stage</span>
+                    <select disabled={busy || customer.archived} className="input" value={customer.lifecycleStage} onChange={(e) => handleStageChange(e.target.value)}>
+                      {STAGES.map((s) => (<option key={s} value={s}>{s.replaceAll("_", " ")}</option>))}
+                    </select>
+                  </label>
+                  <label className="block">
+                    <span className="block text-[13px] text-text-500 mb-1.5">KYC status</span>
+                    <select disabled={busy || customer.archived} className="input" value={customer.kycStatus} onChange={(e) => handleKycChange(e.target.value)}>
+                      {KYC_STATUSES.map((s) => (<option key={s} value={s}>{s}</option>))}
+                    </select>
+                  </label>
+                </div>
+              )}
             </div>
 
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-10">
@@ -123,14 +177,10 @@ export default function CustomerDetailPage() {
                       <td className="text-text-700 whitespace-nowrap">{new Date(e.date).toLocaleString()}</td>
                       <td className="text-text-900 font-medium">{e.label}</td>
                       <td className="text-text-700">{e.detail}</td>
-                      <td className={`font-mono text-[12.5px] ${e.amount?.startsWith("+") ? "text-green-600" : e.amount?.startsWith("-") ? "text-rose-600" : "text-text-muted"}`}>
-                        {e.amount || "—"}
-                      </td>
+                      <td className={`font-mono text-[12.5px] ${e.amount?.startsWith("+") ? "text-green-600" : e.amount?.startsWith("-") ? "text-rose-600" : "text-text-muted"}`}>{e.amount || "—"}</td>
                     </tr>
                   ))}
-                  {events.length === 0 && (
-                    <tr><td colSpan={4} className="text-center text-text-muted text-sm py-8">No activity yet.</td></tr>
-                  )}
+                  {events.length === 0 && <tr><td colSpan={4} className="text-center text-text-muted text-sm py-8">No activity yet.</td></tr>}
                 </tbody>
               </table>
             </div>
