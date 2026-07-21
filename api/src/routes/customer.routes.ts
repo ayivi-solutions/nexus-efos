@@ -86,7 +86,7 @@ customerRouter.patch("/:id", requirePermission("customers.update"), async (req: 
 });
 
 const stageSchema = z.object({
-  lifecycleStage: z.enum(["AWARENESS", "ACQUISITION", "ONBOARDING", "ACTIVATION", "GROWTH", "RETENTION", "ADVOCACY", "RE_ENGAGEMENT"]),
+  lifecycleStage: z.enum(["REGISTERED", "PENDING_VERIFICATION", "VERIFIED", "ACTIVE", "DORMANT", "RESTRICTED", "SUSPENDED", "CLOSED", "ARCHIVED"]),
 });
 
 customerRouter.patch("/:id/stage", requirePermission("customers.update"), async (req: AuthedRequest, res) => {
