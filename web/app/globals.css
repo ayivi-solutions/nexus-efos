@@ -12,28 +12,19 @@ body {
    non-selectable by default. Real data values stay selectable/copyable —
    every table cell (account numbers, names, amounts) plus anything
    explicitly marked .selectable (detail-page headers, KPI stat values). */
-body {
+/* Full lockdown by default — no native selection, no callout/context menu
+   anywhere in the app. Copying is only ever available where explicitly
+   marked .selectable (deliberate data values: names, phone numbers,
+   account numbers, KPI figures) — never as a byproduct of a blanket rule. */
+* {
   -webkit-user-select: none;
   user-select: none;
+  -webkit-touch-callout: none;
 }
-td, td *,
 .selectable, .selectable * {
   -webkit-user-select: text !important;
   user-select: text !important;
-  -webkit-touch-callout: default;
-}
-
-/* Clickable list rows (tap-to-open-detail) are navigation surfaces, not
-   read/copy surfaces — accidental selection there triggers the mobile
-   "Search Google for..." popup mid-tap. Overrides the td rule above. */
-.nav-row, .nav-row td, .nav-row * {
-  -webkit-user-select: none !important;
-  user-select: none !important;
-  -webkit-touch-callout: none !important;
-}
-
-body {
-  -webkit-touch-callout: none;
+  -webkit-touch-callout: default !important;
 }
 input, textarea, select {
   -webkit-user-select: text;

@@ -72,7 +72,7 @@ export default function SavingsPage() {
             <thead><tr><th>Account</th><th>Customer</th><th>Balance</th><th>Status</th></tr></thead>
             <tbody>
               {accounts.map((a) => (
-                <tr key={a.id} onClick={() => router.push(`/savings/${a.id}`)} className="cursor-pointer nav-row">
+                <tr key={a.id} onClick={() => router.push(`/savings/${a.id}`)} className="cursor-pointer">
                   <td className="font-mono text-[12px] text-text-700">{a.accountNumber}</td>
                   <td className="text-text-900 font-medium hover:text-gold-600">{a.customer?.fullName}</td>
                   <td className="text-text-700">GHS {Number(a.balance).toLocaleString()}</td>

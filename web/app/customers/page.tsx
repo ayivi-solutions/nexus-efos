@@ -113,7 +113,7 @@ export default function CustomersPage() {
             </thead>
             <tbody>
               {customers.map((c) => (
-                <tr key={c.id} onClick={() => router.push(`/customers/${c.id}`)} className="cursor-pointer nav-row">
+                <tr key={c.id} onClick={() => router.push(`/customers/${c.id}`)} className="cursor-pointer">
                   <td className="text-text-900 font-medium hover:text-gold-600">{c.fullName}</td>
                   <td className="text-text-700">{c.phone}</td>
                   <td className="text-text-700">{c.segment.replaceAll("_", " ")}</td>
