@@ -110,7 +110,7 @@ export default function LoansPage() {
             </thead>
             <tbody>
               {loans.map((l) => (
-                <tr key={l.id} onClick={() => router.push(`/loans/${l.id}`)} className="cursor-pointer">
+                <tr key={l.id} onClick={() => router.push(`/loans/${l.id}`)} className="cursor-pointer nav-row">
                   <td className="text-text-900 font-medium hover:text-gold-600">{l.customer?.fullName}</td>
                   <td className="text-text-700">GHS {Number(l.principal).toLocaleString()}</td>
                   <td className="text-text-700">{l.interestRate}%</td>
