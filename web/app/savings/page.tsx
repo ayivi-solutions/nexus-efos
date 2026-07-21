@@ -55,7 +55,7 @@ export default function SavingsPage() {
       <div className="p-5 dt:p-10 overflow-x-auto">
         <div className="flex items-center justify-between mb-8 gap-3">
           <h1 className="font-display font-semibold text-2xl dt:text-3xl text-ink-900">Savings</h1>
-          <button onClick={() => setShowForm((s) => !s)} className="px-4 py-2 rounded-md bg-ink-900 text-gold-400 font-semibold text-sm hover:bg-ink-800 transition shrink-0">
+          <button onClick={() => setShowForm((s) => !s)} className="btn-dark shrink-0">
             {showForm ? "Cancel" : "+ Open account"}
           </button>
         </div>
@@ -63,7 +63,7 @@ export default function SavingsPage() {
         {error && <p className="text-rose-600 text-sm mb-4">{error}</p>}
 
         {showForm && (
-          <form onSubmit={handleOpen} className="border border-paper-100 rounded-lg p-6 mb-8 bg-paper-50">
+          <form onSubmit={handleOpen} className="card p-6 mb-8">
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
               <label className="block col-span-2">
                 <span className="block text-[13px] text-text-500 mb-1.5">Customer</span>
@@ -73,15 +73,15 @@ export default function SavingsPage() {
                 </select>
               </label>
             </div>
-            <button type="submit" disabled={saving || !customers.length} className="px-4 py-2 rounded-md bg-gold-500 text-ink-900 font-semibold text-sm hover:bg-gold-400 transition disabled:opacity-60">
+            <button type="submit" disabled={saving || !customers.length} className="btn-primary">
               {saving ? "Opening…" : "Open account"}
             </button>
             {!customers.length && <p className="text-text-muted text-xs mt-2">Add a customer first.</p>}
           </form>
         )}
 
-        <div className="border border-paper-100 rounded-lg overflow-x-auto">
-          <table className="w-full min-w-[760px] text-sm">
+        <div className="card overflow-x-auto">
+          <table className="w-full min-w-[760px] text-sm table-modern">
             <thead>
               <tr className="bg-paper-50 text-left text-[11px] uppercase tracking-wide text-text-muted">
                 <th className="px-4 py-3">Account</th>
@@ -101,8 +101,8 @@ export default function SavingsPage() {
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-2 flex-wrap">
                       <input type="number" min="1" placeholder="Amount" className="input !py-1 !w-24 text-[12px]" value={txnAmount[a.id] || ""} onChange={(e) => setTxnAmount((t) => ({ ...t, [a.id]: e.target.value }))} />
-                      <button onClick={() => handleTxn(a.id, "deposit")} className="text-[12px] text-green-600 hover:underline">Deposit</button>
-                      <button onClick={() => handleTxn(a.id, "withdraw")} className="text-[12px] text-rose-600 hover:underline">Withdraw</button>
+                      <button onClick={() => handleTxn(a.id, "deposit")} className="btn-text text-green-600">Deposit</button>
+                      <button onClick={() => handleTxn(a.id, "withdraw")} className="btn-text text-rose-600">Withdraw</button>
                     </div>
                   </td>
                 </tr>

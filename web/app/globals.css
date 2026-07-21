@@ -7,3 +7,74 @@
 body {
   @apply bg-paper-0 text-text-900 font-body;
 }
+
+@layer components {
+  /* Inputs, selects, textareas — soft elevation + signature gold focus glow */
+  .input {
+    @apply w-full bg-white border border-paper-100 rounded-[10px] px-3.5 py-2.5 text-[14px] text-text-900
+           shadow-[0_1px_2px_rgba(8,23,46,0.05)]
+           transition-all duration-150 ease-out
+           placeholder:text-text-muted
+           hover:border-gold-500/50
+           focus:outline-none focus:border-gold-500 focus:shadow-[0_0_0_3px_rgba(200,169,81,0.22)]
+           disabled:opacity-55 disabled:cursor-not-allowed disabled:bg-paper-50;
+  }
+
+  select.input {
+    @apply appearance-none bg-no-repeat pr-9;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6' fill='none'%3E%3Cpath d='M1 1L5 5L9 1' stroke='%23a98a3f' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+    background-position: right 0.9rem center;
+    background-size: 10px 6px;
+  }
+
+  /* Elevated container — replaces flat border-only boxes */
+  .card {
+    @apply bg-white border border-paper-100 rounded-lg
+           shadow-[0_1px_3px_rgba(8,23,46,0.05),0_1px_2px_rgba(8,23,46,0.04)];
+  }
+
+  /* Primary CTA — gold, for the main action in a form */
+  .btn-primary {
+    @apply px-4 py-2.5 rounded-[10px] bg-gold-500 text-ink-900 font-semibold text-sm
+           shadow-[0_1px_2px_rgba(8,23,46,0.08)]
+           transition-all duration-150 ease-out
+           hover:bg-gold-400 hover:shadow-[0_2px_8px_rgba(200,169,81,0.35)] hover:-translate-y-px
+           active:translate-y-0 active:shadow-[0_1px_2px_rgba(8,23,46,0.08)]
+           disabled:opacity-55 disabled:cursor-not-allowed disabled:translate-y-0 disabled:shadow-none;
+  }
+
+  /* Secondary CTA — dark ink, for "+ New X" / navigational actions */
+  .btn-dark {
+    @apply px-4 py-2.5 rounded-[10px] bg-ink-900 text-gold-400 font-semibold text-sm
+           shadow-[0_1px_2px_rgba(8,23,46,0.15)]
+           transition-all duration-150 ease-out
+           hover:bg-ink-800 hover:shadow-[0_2px_8px_rgba(8,23,46,0.25)] hover:-translate-y-px
+           active:translate-y-0
+           disabled:opacity-55 disabled:cursor-not-allowed disabled:translate-y-0;
+  }
+
+  /* Quiet inline text actions — Approve/Reject/Deposit/Withdraw etc. */
+  .btn-text {
+    @apply text-[12.5px] font-medium underline-offset-2 transition-colors duration-100 hover:underline;
+  }
+
+  /* Status/segment pill */
+  .badge {
+    @apply text-[11px] font-medium px-2.5 py-1 rounded-full inline-block;
+  }
+
+  /* Data table shell — sits inside a .card.overflow-x-auto wrapper */
+  .table-modern thead tr {
+    @apply bg-paper-50 text-left text-[11px] uppercase tracking-wide text-text-muted;
+  }
+  .table-modern tbody tr {
+    @apply border-t border-paper-100 transition-colors duration-100;
+  }
+  .table-modern tbody tr:hover {
+    @apply bg-paper-50/60;
+  }
+  .table-modern th,
+  .table-modern td {
+    @apply px-4 py-3;
+  }
+}

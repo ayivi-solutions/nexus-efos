@@ -20,8 +20,8 @@ export default function AuditLogPage() {
 
         {error && <p className="text-rose-600 text-sm mb-4">{error}</p>}
 
-        <div className="border border-paper-100 rounded-lg overflow-x-auto">
-          <table className="w-full min-w-[640px] text-sm">
+        <div className="card overflow-x-auto">
+          <table className="w-full min-w-[640px] text-sm table-modern">
             <thead>
               <tr className="bg-paper-50 text-left text-[11px] uppercase tracking-wide text-text-muted">
                 <th className="px-4 py-3">Time</th>

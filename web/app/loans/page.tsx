@@ -69,7 +69,7 @@ export default function LoansPage() {
           <h1 className="font-display font-semibold text-2xl dt:text-3xl text-ink-900">Loans</h1>
           <button
             onClick={() => setShowForm((s) => !s)}
-            className="px-4 py-2 rounded-md bg-ink-900 text-gold-400 font-semibold text-sm hover:bg-ink-800 transition shrink-0"
+            className="btn-dark shrink-0"
           >
             {showForm ? "Cancel" : "+ New loan"}
           </button>
@@ -78,7 +78,7 @@ export default function LoansPage() {
         {error && <p className="text-rose-600 text-sm mb-4">{error}</p>}
 
         {showForm && (
-          <form onSubmit={handleCreate} className="border border-paper-100 rounded-lg p-6 mb-8 bg-paper-50">
+          <form onSubmit={handleCreate} className="card p-6 mb-8">
             <div className="grid grid-cols-1 sm:grid-cols-4 gap-4 mb-4">
               <label className="block">
                 <span className="block text-[13px] text-text-500 mb-1.5">Customer</span>
@@ -100,15 +100,15 @@ export default function LoansPage() {
                 <input required type="number" min="1" className="input" value={form.termMonths} onChange={(e) => setForm((f) => ({ ...f, termMonths: e.target.value }))} />
               </label>
             </div>
-            <button type="submit" disabled={saving || !customers.length} className="px-4 py-2 rounded-md bg-gold-500 text-ink-900 font-semibold text-sm hover:bg-gold-400 transition disabled:opacity-60">
+            <button type="submit" disabled={saving || !customers.length} className="btn-primary">
               {saving ? "Saving…" : "Initiate loan"}
             </button>
             {!customers.length && <p className="text-text-muted text-xs mt-2">Add a customer first.</p>}
           </form>
         )}
 
-        <div className="border border-paper-100 rounded-lg overflow-x-auto">
-          <table className="w-full min-w-[760px] text-sm">
+        <div className="card overflow-x-auto">
+          <table className="w-full min-w-[760px] text-sm table-modern">
             <thead>
               <tr className="bg-paper-50 text-left text-[11px] uppercase tracking-wide text-text-muted">
                 <th className="px-4 py-3">Customer</th>
@@ -132,12 +132,12 @@ export default function LoansPage() {
                   <td className="px-4 py-3 space-x-2 whitespace-nowrap">
                     {l.status === "PENDING" && (
                       <>
-                        <button onClick={() => handleAction(l.id, "approve")} className="text-[12px] text-green-600 hover:underline">Approve</button>
-                        <button onClick={() => handleAction(l.id, "reject")} className="text-[12px] text-rose-600 hover:underline">Reject</button>
+                        <button onClick={() => handleAction(l.id, "approve")} className="btn-text text-green-600">Approve</button>
+                        <button onClick={() => handleAction(l.id, "reject")} className="btn-text text-rose-600">Reject</button>
                       </>
                     )}
                     {l.status === "APPROVED" && (
-                      <button onClick={() => handleAction(l.id, "disburse")} className="text-[12px] text-gold-600 hover:underline">Disburse</button>
+                      <button onClick={() => handleAction(l.id, "disburse")} className="btn-text text-gold-600">Disburse</button>
                     )}
                   </td>
                 </tr>

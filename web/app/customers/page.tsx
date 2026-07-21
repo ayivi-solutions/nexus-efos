@@ -88,7 +88,7 @@ export default function CustomersPage() {
           <h1 className="font-display font-semibold text-2xl dt:text-3xl text-ink-900">Customers</h1>
           <button
             onClick={() => setShowForm((s) => !s)}
-            className="px-4 py-2 rounded-md bg-ink-900 text-gold-400 font-semibold text-sm hover:bg-ink-800 transition shrink-0"
+            className="btn-dark shrink-0"
           >
             {showForm ? "Cancel" : "+ New customer"}
           </button>
@@ -97,7 +97,7 @@ export default function CustomersPage() {
         {error && <p className="text-rose-600 text-sm mb-4">{error}</p>}
 
         {showForm && (
-          <form onSubmit={handleCreate} className="border border-paper-100 rounded-lg p-6 mb-8 bg-paper-50">
+          <form onSubmit={handleCreate} className="card p-6 mb-8">
             <div className="grid grid-cols-1 sm:grid-cols-4 gap-4 mb-4">
               <label className="block">
                 <span className="block text-[13px] text-text-500 mb-1.5">Full name</span>
@@ -123,15 +123,15 @@ export default function CustomersPage() {
             <button
               type="submit"
               disabled={saving}
-              className="px-4 py-2 rounded-md bg-gold-500 text-ink-900 font-semibold text-sm hover:bg-gold-400 transition disabled:opacity-60"
+              className="btn-primary"
             >
               {saving ? "Saving…" : "Create customer"}
             </button>
           </form>
         )}
 
-        <div className="border border-paper-100 rounded-lg overflow-x-auto">
-          <table className="w-full min-w-[640px] text-sm">
+        <div className="card overflow-x-auto">
+          <table className="w-full min-w-[640px] text-sm table-modern">
             <thead>
               <tr className="bg-paper-50 text-left text-[11px] uppercase tracking-wide text-text-muted">
                 <th className="px-4 py-3">Name</th>
