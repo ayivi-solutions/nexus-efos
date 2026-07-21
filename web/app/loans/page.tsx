@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { api } from "@/lib/api";
 import { AppShell } from "@/components/AppShell";
 
@@ -21,6 +22,7 @@ export default function LoansPage() {
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ customerId: "", principal: "", interestRate: "", termMonths: "" });
   const [saving, setSaving] = useState(false);
+  const [repayAmount, setRepayAmount] = useState<Record<string, string>>({});
 
   function load() {
     api.listLoans().then((res) => setLoans(res.loans)).catch((err) => setError(err.message));
@@ -59,6 +61,19 @@ export default function LoansPage() {
       load();
     } catch (err: any) {
       setError(err.message || "Action failed");
+    }
+  }
+
+  async function handleRepayment(id: string) {
+    const amount = Number(repayAmount[id]);
+    if (!amount || amount <= 0) return;
+    setError(null);
+    try {
+      await api.recordRepayment(id, amount);
+      setRepayAmount((r) => ({ ...r, [id]: "" }));
+      load();
+    } catch (err: any) {
+      setError(err.message || "Could not record repayment");
     }
   }
 
@@ -147,6 +162,23 @@ export default function LoansPage() {
                     )}
                     {l.status === "APPROVED" && (
                       <button onClick={() => handleAction(l.id, "disburse")} className="btn-text text-gold-600">Disburse</button>
+                    )}
+                    {(l.status === "DISBURSED" || l.status === "ACTIVE") && (
+                      <div className="inline-flex items-center gap-1.5">
+                        <div className="relative inline-block">
+                          <span className="absolute left-2 top-1/2 -translate-y-1/2 text-[10px] text-text-muted font-mono pointer-events-none">GHS</span>
+                          <input
+                            type="number" inputMode="decimal" min="0.01" step="0.01" placeholder="0.00"
+                            className="input !py-1 !w-24 !pl-8 text-[12px]"
+                            value={repayAmount[l.id] || ""}
+                            onChange={(e) => setRepayAmount((r) => ({ ...r, [l.id]: e.target.value }))}
+                          />
+                        </div>
+                        <button onClick={() => handleRepayment(l.id)} className="btn-text text-green-600">Record repayment</button>
+                      </div>
+                    )}
+                    {l.customerId && (
+                      <Link href={`/customers/${l.customerId}`} className="btn-text text-violet-500">History</Link>
                     )}
                   </td>
                 </tr>

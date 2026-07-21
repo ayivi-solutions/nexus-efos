@@ -116,6 +116,7 @@ export const api = {
   approveLoan: (id: string) => request(`/loans/${id}/approve`, { method: "POST" }),
   rejectLoan: (id: string) => request(`/loans/${id}/reject`, { method: "POST" }),
   disburseLoan: (id: string) => request(`/loans/${id}/disburse`, { method: "POST" }),
+  recordRepayment: (id: string, amount: number) => request(`/loans/${id}/repayments`, { method: "POST", body: JSON.stringify({ amount }) }),
 
   listSavingsAccounts: () => request("/savings"),
   openSavingsAccount: (data: { customerId: string }) =>
