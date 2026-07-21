@@ -83,6 +83,17 @@ loanRouter.post("/:id/reject", requirePermission("loans.reject"), async (req: Au
     data: { status: "REJECTED" },
   });
   if (loan.count === 0) return res.status(404).json({ error: "Loan not found" });
+
+  await prisma.auditLog.create({
+    data: {
+      institutionId: req.auth!.institutionId,
+      userId: req.auth!.userId,
+      action: "loan.reject",
+      resource: "loan",
+      resourceId: req.params.id,
+    },
+  });
+
   res.json({ ok: true });
 });
 
@@ -125,6 +136,17 @@ loanRouter.post("/:id/repayments", requirePermission("collections.record"), asyn
   if (loan.status === "DISBURSED") {
     await prisma.loan.update({ where: { id: loan.id }, data: { status: "ACTIVE" } });
   }
+
+  await prisma.auditLog.create({
+    data: {
+      institutionId: req.auth!.institutionId,
+      userId: req.auth!.userId,
+      action: "loan.repayment_recorded",
+      resource: "loan",
+      resourceId: loan.id,
+      metadata: { amount: parsed.data.amount },
+    },
+  });
 
   res.status(201).json({ repayment });
 });
