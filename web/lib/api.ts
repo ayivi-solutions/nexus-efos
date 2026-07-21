@@ -126,6 +126,8 @@ export const api = {
     request(`/savings/${id}/withdraw`, { method: "POST", body: JSON.stringify({ amount }) }),
 
   listAuditLog: () => request("/audit-log"),
+
+  getReportsOverview: () => request("/reports/overview"),
 };
 
 // NOTE: sessionStorage is used here (client-only, in-memory-per-tab) rather
