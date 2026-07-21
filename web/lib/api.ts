@@ -33,6 +33,16 @@ export const api = {
   login: (data: { email: string; password: string }) =>
     request("/auth/login", { method: "POST", body: JSON.stringify(data) }),
 
+  whoAmI: () => request("/auth/me"),
+
+  acceptInvite: (data: { email: string; password: string }) =>
+    request("/auth/accept-invite", { method: "POST", body: JSON.stringify(data) }),
+
+  logout: () => {
+    const refreshToken = typeof window !== "undefined" ? sessionStorage.getItem("nexus_refresh_token") : null;
+    return request("/auth/logout", { method: "POST", body: JSON.stringify({ refreshToken }) }).catch(() => {});
+  },
+
   me: () => request("/institutions/me"),
 
   updateDetails: (data: { regulatorId?: string; region?: string; phone?: string; email?: string }) =>
@@ -82,14 +92,6 @@ export const api = {
     request(`/savings/${id}/withdraw`, { method: "POST", body: JSON.stringify({ amount }) }),
 
   listAuditLog: () => request("/audit-log"),
-
-  acceptInvite: (data: { email: string; password: string }) =>
-    request("/auth/accept-invite", { method: "POST", body: JSON.stringify(data) }),
-
-    logout: () => {
-    const refreshToken = typeof window !== "undefined" ? sessionStorage.getItem("nexus_refresh_token") : null;
-    return request("/auth/logout", { method: "POST", body: JSON.stringify({ refreshToken }) }).catch(() => {});
-  },
 };
 
 // NOTE: sessionStorage is used here (client-only, in-memory-per-tab) rather

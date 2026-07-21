@@ -1,31 +1,21 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
-import { Sidebar } from "@/components/Sidebar";
+import { AppShell } from "@/components/AppShell";
 
 export default function AuditLogPage() {
-  const router = useRouter();
   const [logs, setLogs] = useState<any[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!sessionStorage.getItem("nexus_access_token")) {
-      router.push("/login");
-      return;
-    }
-    api
-      .listAuditLog()
-      .then((res) => setLogs(res.logs))
-      .catch((err) => setError(err.message));
-  }, [router]);
+    api.listAuditLog().then((res) => setLogs(res.logs)).catch((err) => setError(err.message));
+  }, []);
 
   return (
-    <div className="min-h-screen flex flex-col md:flex-row bg-paper-0">
-      <Sidebar active="Audit Log" />
-      <main className="flex-1 p-5 md:p-10 overflow-x-auto">
-        <h1 className="font-display font-semibold text-3xl text-ink-900 mb-2">Audit Log</h1>
+    <AppShell active="Audit Log">
+      <div className="p-5 dt:p-10 overflow-x-auto">
+        <h1 className="font-display font-semibold text-2xl dt:text-3xl text-ink-900 mb-2">Audit Log</h1>
         <p className="text-text-muted text-sm mb-8">Read-only. Most recent 200 events, newest first.</p>
 
         {error && <p className="text-rose-600 text-sm mb-4">{error}</p>}
@@ -50,16 +40,12 @@ export default function AuditLogPage() {
                 </tr>
               ))}
               {logs.length === 0 && (
-                <tr>
-                  <td colSpan={4} className="px-4 py-8 text-center text-text-muted text-sm">
-                    No audit events yet.
-                  </td>
-                </tr>
+                <tr><td colSpan={4} className="px-4 py-8 text-center text-text-muted text-sm">No audit events yet.</td></tr>
               )}
             </tbody>
           </table>
         </div>
-      </main>
-    </div>
+      </div>
+    </AppShell>
   );
 }

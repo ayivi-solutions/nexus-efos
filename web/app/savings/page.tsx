@@ -1,12 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
-import { Sidebar } from "@/components/Sidebar";
+import { AppShell } from "@/components/AppShell";
 
 export default function SavingsPage() {
-  const router = useRouter();
   const [accounts, setAccounts] = useState<any[]>([]);
   const [customers, setCustomers] = useState<any[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -20,13 +18,7 @@ export default function SavingsPage() {
     api.listCustomers().then((res) => setCustomers(res.customers)).catch(() => {});
   }
 
-  useEffect(() => {
-    if (!sessionStorage.getItem("nexus_access_token")) {
-      router.push("/login");
-      return;
-    }
-    load();
-  }, [router]);
+  useEffect(() => { load(); }, []);
 
   async function handleOpen(e: React.FormEvent) {
     e.preventDefault();
@@ -59,15 +51,11 @@ export default function SavingsPage() {
   }
 
   return (
-    <div className="min-h-screen flex flex-col md:flex-row bg-paper-0">
-      <Sidebar active="Savings" />
-      <main className="flex-1 p-5 md:p-10 overflow-x-auto">
-        <div className="flex items-center justify-between mb-8">
-          <h1 className="font-display font-semibold text-3xl text-ink-900">Savings</h1>
-          <button
-            onClick={() => setShowForm((s) => !s)}
-            className="px-4 py-2 rounded-md bg-ink-900 text-gold-400 font-semibold text-sm hover:bg-ink-800 transition"
-          >
+    <AppShell active="Savings">
+      <div className="p-5 dt:p-10 overflow-x-auto">
+        <div className="flex items-center justify-between mb-8 gap-3">
+          <h1 className="font-display font-semibold text-2xl dt:text-3xl text-ink-900">Savings</h1>
+          <button onClick={() => setShowForm((s) => !s)} className="px-4 py-2 rounded-md bg-ink-900 text-gold-400 font-semibold text-sm hover:bg-ink-800 transition shrink-0">
             {showForm ? "Cancel" : "+ Open account"}
           </button>
         </div>
@@ -79,26 +67,13 @@ export default function SavingsPage() {
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
               <label className="block col-span-2">
                 <span className="block text-[13px] text-text-500 mb-1.5">Customer</span>
-                <select
-                  required
-                  className="input"
-                  value={newCustomerId}
-                  onChange={(e) => setNewCustomerId(e.target.value)}
-                >
+                <select required className="input" value={newCustomerId} onChange={(e) => setNewCustomerId(e.target.value)}>
                   <option value="">Select…</option>
-                  {customers.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.fullName}
-                    </option>
-                  ))}
+                  {customers.map((c) => (<option key={c.id} value={c.id}>{c.fullName}</option>))}
                 </select>
               </label>
             </div>
-            <button
-              type="submit"
-              disabled={saving || !customers.length}
-              className="px-4 py-2 rounded-md bg-gold-500 text-ink-900 font-semibold text-sm hover:bg-gold-400 transition disabled:opacity-60"
-            >
+            <button type="submit" disabled={saving || !customers.length} className="px-4 py-2 rounded-md bg-gold-500 text-ink-900 font-semibold text-sm hover:bg-gold-400 transition disabled:opacity-60">
               {saving ? "Opening…" : "Open account"}
             </button>
             {!customers.length && <p className="text-text-muted text-xs mt-2">Add a customer first.</p>}
@@ -124,36 +99,21 @@ export default function SavingsPage() {
                   <td className="px-4 py-3 text-text-700">GHS {Number(a.balance).toLocaleString()}</td>
                   <td className="px-4 py-3 text-text-500">{a.status}</td>
                   <td className="px-4 py-3">
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="number"
-                        min="1"
-                        placeholder="Amount"
-                        className="input !py-1 !w-24 text-[12px]"
-                        value={txnAmount[a.id] || ""}
-                        onChange={(e) => setTxnAmount((t) => ({ ...t, [a.id]: e.target.value }))}
-                      />
-                      <button onClick={() => handleTxn(a.id, "deposit")} className="text-[12px] text-green-600 hover:underline">
-                        Deposit
-                      </button>
-                      <button onClick={() => handleTxn(a.id, "withdraw")} className="text-[12px] text-rose-600 hover:underline">
-                        Withdraw
-                      </button>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <input type="number" min="1" placeholder="Amount" className="input !py-1 !w-24 text-[12px]" value={txnAmount[a.id] || ""} onChange={(e) => setTxnAmount((t) => ({ ...t, [a.id]: e.target.value }))} />
+                      <button onClick={() => handleTxn(a.id, "deposit")} className="text-[12px] text-green-600 hover:underline">Deposit</button>
+                      <button onClick={() => handleTxn(a.id, "withdraw")} className="text-[12px] text-rose-600 hover:underline">Withdraw</button>
                     </div>
                   </td>
                 </tr>
               ))}
               {accounts.length === 0 && (
-                <tr>
-                  <td colSpan={5} className="px-4 py-8 text-center text-text-muted text-sm">
-                    No savings accounts yet.
-                  </td>
-                </tr>
+                <tr><td colSpan={5} className="px-4 py-8 text-center text-text-muted text-sm">No savings accounts yet.</td></tr>
               )}
             </tbody>
           </table>
         </div>
-      </main>
-    </div>
+      </div>
+    </AppShell>
   );
 }

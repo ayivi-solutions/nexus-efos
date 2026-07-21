@@ -1,16 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
-import { Sidebar } from "@/components/Sidebar";
+import { AppShell } from "@/components/AppShell";
 
 const SEGMENTS = ["INDIVIDUAL", "BUSINESS", "FARMER_GROUP", "WOMENS_GROUP", "YOUTH", "CORPORATE"];
-
-const STAGES = [
-  "AWARENESS", "ACQUISITION", "ONBOARDING", "ACTIVATION", "GROWTH", "RETENTION", "ADVOCACY", "RE_ENGAGEMENT",
-];
-
+const STAGES = ["AWARENESS", "ACQUISITION", "ONBOARDING", "ACTIVATION", "GROWTH", "RETENTION", "ADVOCACY", "RE_ENGAGEMENT"];
 const KYC_STATUSES = ["PENDING", "VERIFIED", "REJECTED"];
 
 const STAGE_COLOR: Record<string, string> = {
@@ -31,7 +26,6 @@ const KYC_COLOR: Record<string, string> = {
 };
 
 export default function CustomersPage() {
-  const router = useRouter();
   const [customers, setCustomers] = useState<any[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
@@ -40,19 +34,10 @@ export default function CustomersPage() {
   const [updatingId, setUpdatingId] = useState<string | null>(null);
 
   function load() {
-    api
-      .listCustomers()
-      .then((res) => setCustomers(res.customers))
-      .catch((err) => setError(err.message));
+    api.listCustomers().then((res) => setCustomers(res.customers)).catch((err) => setError(err.message));
   }
 
-  useEffect(() => {
-    if (!sessionStorage.getItem("nexus_access_token")) {
-      router.push("/login");
-      return;
-    }
-    load();
-  }, [router]);
+  useEffect(() => { load(); }, []);
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
@@ -97,14 +82,13 @@ export default function CustomersPage() {
   }
 
   return (
-    <div className="min-h-screen flex flex-col md:flex-row bg-paper-0">
-      <Sidebar active="Customers" />
-      <main className="flex-1 p-5 md:p-10 overflow-x-auto">
-        <div className="flex items-center justify-between mb-8">
-          <h1 className="font-display font-semibold text-3xl text-ink-900">Customers</h1>
+    <AppShell active="Customers">
+      <div className="p-5 dt:p-10 overflow-x-auto">
+        <div className="flex items-center justify-between mb-8 gap-3">
+          <h1 className="font-display font-semibold text-2xl dt:text-3xl text-ink-900">Customers</h1>
           <button
             onClick={() => setShowForm((s) => !s)}
-            className="px-4 py-2 rounded-md bg-ink-900 text-gold-400 font-semibold text-sm hover:bg-ink-800 transition"
+            className="px-4 py-2 rounded-md bg-ink-900 text-gold-400 font-semibold text-sm hover:bg-ink-800 transition shrink-0"
           >
             {showForm ? "Cancel" : "+ New customer"}
           </button>
@@ -117,42 +101,21 @@ export default function CustomersPage() {
             <div className="grid grid-cols-1 sm:grid-cols-4 gap-4 mb-4">
               <label className="block">
                 <span className="block text-[13px] text-text-500 mb-1.5">Full name</span>
-                <input
-                  required
-                  className="input"
-                  value={form.fullName}
-                  onChange={(e) => setForm((f) => ({ ...f, fullName: e.target.value }))}
-                />
+                <input required className="input" value={form.fullName} onChange={(e) => setForm((f) => ({ ...f, fullName: e.target.value }))} />
               </label>
               <label className="block">
                 <span className="block text-[13px] text-text-500 mb-1.5">Phone</span>
-                <input
-                  required
-                  className="input"
-                  value={form.phone}
-                  onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))}
-                />
+                <input required className="input" value={form.phone} onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))} />
               </label>
               <label className="block">
                 <span className="block text-[13px] text-text-500 mb-1.5">Email (optional)</span>
-                <input
-                  type="email"
-                  className="input"
-                  value={form.email}
-                  onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))}
-                />
+                <input type="email" className="input" value={form.email} onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))} />
               </label>
               <label className="block">
                 <span className="block text-[13px] text-text-500 mb-1.5">Segment</span>
-                <select
-                  className="input"
-                  value={form.segment}
-                  onChange={(e) => setForm((f) => ({ ...f, segment: e.target.value }))}
-                >
+                <select className="input" value={form.segment} onChange={(e) => setForm((f) => ({ ...f, segment: e.target.value }))}>
                   {SEGMENTS.map((s) => (
-                    <option key={s} value={s}>
-                      {s.replaceAll("_", " ")}
-                    </option>
+                    <option key={s} value={s}>{s.replaceAll("_", " ")}</option>
                   ))}
                 </select>
               </label>
@@ -192,9 +155,7 @@ export default function CustomersPage() {
                       className={`text-[11px] px-2 py-1 rounded-full border-0 cursor-pointer disabled:opacity-50 ${STAGE_COLOR[c.lifecycleStage] || ""}`}
                     >
                       {STAGES.map((s) => (
-                        <option key={s} value={s}>
-                          {s.replaceAll("_", " ")}
-                        </option>
+                        <option key={s} value={s}>{s.replaceAll("_", " ")}</option>
                       ))}
                     </select>
                   </td>
@@ -206,9 +167,7 @@ export default function CustomersPage() {
                       className={`text-[11px] px-2 py-1 rounded-full border-0 cursor-pointer disabled:opacity-50 ${KYC_COLOR[c.kycStatus] || ""}`}
                     >
                       {KYC_STATUSES.map((s) => (
-                        <option key={s} value={s}>
-                          {s}
-                        </option>
+                        <option key={s} value={s}>{s}</option>
                       ))}
                     </select>
                   </td>
@@ -216,15 +175,13 @@ export default function CustomersPage() {
               ))}
               {customers.length === 0 && (
                 <tr>
-                  <td colSpan={5} className="px-4 py-8 text-center text-text-muted text-sm">
-                    No customers yet.
-                  </td>
+                  <td colSpan={5} className="px-4 py-8 text-center text-text-muted text-sm">No customers yet.</td>
                 </tr>
               )}
             </tbody>
           </table>
         </div>
-      </main>
-    </div>
+      </div>
+    </AppShell>
   );
 }

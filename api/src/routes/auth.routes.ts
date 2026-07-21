@@ -4,6 +4,7 @@ import { z } from "zod";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import { signAccessToken, generateRefreshToken, hashRefreshToken } from "../lib/jwt";
+import { requireAuth, AuthedRequest } from "../middleware/auth";
 import { SYSTEM_ROLE_TEMPLATES } from "../seed-data";
 
 export const authRouter = Router();
@@ -194,6 +195,37 @@ authRouter.post("/refresh", async (req, res) => {
   });
 
   res.json({ accessToken });
+});
+
+// -----------------------------------------------------------------------
+// GET /auth/me
+// Current user + their effective (deduped, non-expired) permission codes
+// across all active role assignments — used to drive role-aware nav.
+// -----------------------------------------------------------------------
+authRouter.get("/me", requireAuth, async (req: AuthedRequest, res) => {
+  const user = await prisma.user.findUnique({
+    where: { id: req.auth!.userId },
+    select: {
+      id: true,
+      fullName: true,
+      email: true,
+      userRoles: {
+        where: { OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }] },
+        include: { role: { include: { rolePermissions: { include: { permission: true } } } } },
+      },
+    },
+  });
+  if (!user) return res.status(404).json({ error: "User not found" });
+
+  const permissionSet = new Set<string>();
+  for (const ur of user.userRoles) {
+    for (const rp of ur.role.rolePermissions) permissionSet.add(rp.permission.code);
+  }
+
+  res.json({
+    user: { id: user.id, fullName: user.fullName, email: user.email },
+    permissions: Array.from(permissionSet),
+  });
 });
 
 // -----------------------------------------------------------------------

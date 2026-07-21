@@ -1,12 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
-import { Sidebar } from "@/components/Sidebar";
+import { AppShell } from "@/components/AppShell";
 
 export default function RolesPage() {
-  const router = useRouter();
   const [roles, setRoles] = useState<any[]>([]);
   const [users, setUsers] = useState<any[]>([]);
   const [branches, setBranches] = useState<any[]>([]);
@@ -26,13 +24,7 @@ export default function RolesPage() {
       .catch((err) => setError(err.message));
   }
 
-  useEffect(() => {
-    if (!sessionStorage.getItem("nexus_access_token")) {
-      router.push("/login");
-      return;
-    }
-    load();
-  }, [router]);
+  useEffect(() => { load(); }, []);
 
   async function handleInvite(e: React.FormEvent) {
     e.preventDefault();
@@ -86,10 +78,9 @@ export default function RolesPage() {
   }
 
   return (
-    <div className="min-h-screen flex flex-col md:flex-row bg-paper-0">
-      <Sidebar active="Roles & Permissions" />
-      <main className="flex-1 p-5 md:p-10 overflow-x-auto">
-        <h1 className="font-display font-semibold text-3xl text-ink-900 mb-8">Roles and Permissions</h1>
+    <AppShell active="Roles & Permissions">
+      <div className="p-5 dt:p-10 overflow-x-auto">
+        <h1 className="font-display font-semibold text-2xl dt:text-3xl text-ink-900 mb-8">Roles and Permissions</h1>
 
         {error && <p className="text-rose-600 text-sm mb-4">{error}</p>}
 
@@ -100,9 +91,7 @@ export default function RolesPage() {
               <div className="font-display font-semibold text-ink-900 mb-2">{r.name}</div>
               <div className="flex flex-wrap gap-1.5">
                 {r.rolePermissions.map((rp: any) => (
-                  <span key={rp.permission.id} className="text-[10.5px] px-2 py-0.5 rounded-full bg-gold-300/25 text-gold-600">
-                    {rp.permission.code}
-                  </span>
+                  <span key={rp.permission.id} className="text-[10.5px] px-2 py-0.5 rounded-full bg-gold-300/25 text-gold-600">{rp.permission.code}</span>
                 ))}
               </div>
             </div>
@@ -125,31 +114,21 @@ export default function RolesPage() {
               <span className="block text-[13px] text-text-500 mb-1.5">Role</span>
               <select required className="input" value={inviteForm.roleId} onChange={(e) => setInviteForm((f) => ({ ...f, roleId: e.target.value }))}>
                 <option value="">Select...</option>
-                {roles.map((r) => (
-                  <option key={r.id} value={r.id}>{r.name}</option>
-                ))}
+                {roles.map((r) => (<option key={r.id} value={r.id}>{r.name}</option>))}
               </select>
             </label>
             <label className="block">
               <span className="block text-[13px] text-text-500 mb-1.5">Branch (optional)</span>
               <select className="input" value={inviteForm.branchId} onChange={(e) => setInviteForm((f) => ({ ...f, branchId: e.target.value }))}>
                 <option value="">Unassigned</option>
-                {branches.map((b) => (
-                  <option key={b.id} value={b.id}>{b.name}</option>
-                ))}
+                {branches.map((b) => (<option key={b.id} value={b.id}>{b.name}</option>))}
               </select>
             </label>
           </div>
-          <button
-            type="submit"
-            disabled={inviting}
-            className="px-4 py-2 rounded-md bg-ink-900 text-gold-400 font-semibold text-sm hover:bg-ink-800 transition disabled:opacity-60"
-          >
+          <button type="submit" disabled={inviting} className="px-4 py-2 rounded-md bg-ink-900 text-gold-400 font-semibold text-sm hover:bg-ink-800 transition disabled:opacity-60">
             {inviting ? "Inviting..." : "Send invite"}
           </button>
-          <p className="text-text-muted text-xs mt-2">
-            The invited user sets their own password at /accept-invite using this email.
-          </p>
+          <p className="text-text-muted text-xs mt-2">The invited user sets their own password at /accept-invite using this email.</p>
         </form>
 
         <h2 className="font-display font-semibold text-lg text-ink-900 mb-3">Assign a role</h2>
@@ -159,27 +138,21 @@ export default function RolesPage() {
               <span className="block text-[13px] text-text-500 mb-1.5">User</span>
               <select required className="input" value={form.userId} onChange={(e) => setForm((f) => ({ ...f, userId: e.target.value }))}>
                 <option value="">Select...</option>
-                {users.map((u) => (
-                  <option key={u.id} value={u.id}>{u.fullName}</option>
-                ))}
+                {users.map((u) => (<option key={u.id} value={u.id}>{u.fullName}</option>))}
               </select>
             </label>
             <label className="block sm:col-span-1">
               <span className="block text-[13px] text-text-500 mb-1.5">Role</span>
               <select required className="input" value={form.roleId} onChange={(e) => setForm((f) => ({ ...f, roleId: e.target.value }))}>
                 <option value="">Select...</option>
-                {roles.map((r) => (
-                  <option key={r.id} value={r.id}>{r.name}</option>
-                ))}
+                {roles.map((r) => (<option key={r.id} value={r.id}>{r.name}</option>))}
               </select>
             </label>
             <label className="block sm:col-span-1">
               <span className="block text-[13px] text-text-500 mb-1.5">Branch (optional)</span>
               <select className="input" value={form.branchId} onChange={(e) => setForm((f) => ({ ...f, branchId: e.target.value }))}>
                 <option value="">All branches</option>
-                {branches.map((b) => (
-                  <option key={b.id} value={b.id}>{b.name}</option>
-                ))}
+                {branches.map((b) => (<option key={b.id} value={b.id}>{b.name}</option>))}
               </select>
             </label>
             <label className="block sm:col-span-1">
@@ -191,11 +164,7 @@ export default function RolesPage() {
               <span className="text-[13px] text-text-500">Temporary delegation</span>
             </label>
           </div>
-          <button
-            type="submit"
-            disabled={saving}
-            className="px-4 py-2 rounded-md bg-gold-500 text-ink-900 font-semibold text-sm hover:bg-gold-400 transition disabled:opacity-60"
-          >
+          <button type="submit" disabled={saving} className="px-4 py-2 rounded-md bg-gold-500 text-ink-900 font-semibold text-sm hover:bg-gold-400 transition disabled:opacity-60">
             {saving ? "Assigning..." : "Assign role"}
           </button>
         </form>
@@ -233,16 +202,12 @@ export default function RolesPage() {
                 </tr>
               ))}
               {users.length === 0 && (
-                <tr>
-                  <td colSpan={4} className="px-4 py-8 text-center text-text-muted text-sm">
-                    No staff yet.
-                  </td>
-                </tr>
+                <tr><td colSpan={4} className="px-4 py-8 text-center text-text-muted text-sm">No staff yet.</td></tr>
               )}
             </tbody>
           </table>
         </div>
-      </main>
-    </div>
+      </div>
+    </AppShell>
   );
 }
