@@ -16,9 +16,9 @@ const config: Config = {
       colors: {
         ink: {
           950: "#050d1a",
-          900: "#08172E",
-          850: "#0f2444",
-          800: "#163660",
+          900: "#050d1a", // pinned to match ink-950 exactly per GM directive — no
+          850: "#0f2444", // navy variation anywhere in the app; login's own color
+          800: "#163660", // is the single source of truth for the whole app's chrome.
           700: "#1a3a6b",
         },
         gold: {
