@@ -111,13 +111,34 @@ export const api = {
   grantAccess: (employeeId: string, data: { roleId: string; branchId?: string }) =>
     request(`/employees/${employeeId}/grant-access`, { method: "POST", body: JSON.stringify(data) }),
 
-  listCustomers: (includeArchived = false) => request(`/customers${includeArchived ? "?includeArchived=true" : ""}`),
+  listCustomers: (opts?: { includeArchived?: boolean; search?: string; watchlistFlag?: boolean; possibleDuplicate?: boolean }) => {
+    const params = new URLSearchParams();
+    if (opts?.includeArchived) params.set("includeArchived", "true");
+    if (opts?.search) params.set("search", opts.search);
+    if (opts?.watchlistFlag) params.set("watchlistFlag", "true");
+    if (opts?.possibleDuplicate) params.set("possibleDuplicate", "true");
+    const qs = params.toString();
+    return request(`/customers${qs ? `?${qs}` : ""}`);
+  },
   getCustomer: (id: string) => request(`/customers/${id}`),
   createCustomer: (data: { fullName: string; phone: string; email?: string; segment: string }) =>
     request("/customers", { method: "POST", body: JSON.stringify(data) }),
   updateCustomer: (id: string, data: any) => request(`/customers/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
   archiveCustomer: (id: string) => request(`/customers/${id}/archive`, { method: "POST" }),
   unarchiveCustomer: (id: string) => request(`/customers/${id}/unarchive`, { method: "POST" }),
+  clearDuplicateFlag: (id: string) => request(`/customers/${id}/clear-duplicate-flag`, { method: "POST" }),
+
+  addNextOfKin: (customerId: string, data: any) => request(`/customers/${customerId}/next-of-kin`, { method: "POST", body: JSON.stringify(data) }),
+  deleteNextOfKin: (customerId: string, kinId: string) => request(`/customers/${customerId}/next-of-kin/${kinId}`, { method: "DELETE" }),
+  addCustomerNote: (customerId: string, note: string) => request(`/customers/${customerId}/notes`, { method: "POST", body: JSON.stringify({ note }) }),
+  addBeneficiary: (customerId: string, data: any) => request(`/customers/${customerId}/beneficiaries`, { method: "POST", body: JSON.stringify(data) }),
+  deleteBeneficiary: (customerId: string, beneficiaryId: string) => request(`/customers/${customerId}/beneficiaries/${beneficiaryId}`, { method: "DELETE" }),
+  addBeneficialOwner: (customerId: string, data: any) => request(`/customers/${customerId}/beneficial-owners`, { method: "POST", body: JSON.stringify(data) }),
+  deleteBeneficialOwner: (customerId: string, ownerId: string) => request(`/customers/${customerId}/beneficial-owners/${ownerId}`, { method: "DELETE" }),
+
+  listWatchlist: () => request("/watchlist"),
+  addWatchlistEntry: (data: { fullName: string; idNumber?: string; reason?: string }) => request("/watchlist", { method: "POST", body: JSON.stringify(data) }),
+  deleteWatchlistEntry: (id: string) => request(`/watchlist/${id}`, { method: "DELETE" }),
   updateCustomerStage: (id: string, lifecycleStage: string) =>
     request(`/customers/${id}/stage`, { method: "PATCH", body: JSON.stringify({ lifecycleStage }) }),
   updateCustomerKyc: (id: string, kycStatus: string) =>

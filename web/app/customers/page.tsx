@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
-import { useErrorToast } from "@/components/Toast";
+import { useErrorToast, useToast } from "@/components/Toast";
 import { AppShell } from "@/components/AppShell";
 
 const SEGMENTS = ["INDIVIDUAL", "BUSINESS", "FARMER_GROUP", "WOMENS_GROUP", "YOUTH", "CORPORATE"];
@@ -39,25 +39,30 @@ const KYC_COLOR: Record<string, string> = {
 
 export default function CustomersPage() {
   const router = useRouter();
+  const toast = useToast();
   const [customers, setCustomers] = useState<any[]>([]);
   const [error, setError] = useState<string | null>(null);
   useErrorToast(error);
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ fullName: "", phone: "", email: "", segment: "INDIVIDUAL" });
   const [saving, setSaving] = useState(false);
+  const [search, setSearch] = useState("");
 
   function load() {
-    api.listCustomers().then((res) => setCustomers(res.customers)).catch((err) => setError(err.message));
+    api.listCustomers({ search: search || undefined }).then((res) => setCustomers(res.customers)).catch((err) => setError(err.message));
   }
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
     setSaving(true);
     setError(null);
     try {
-      await api.createCustomer(form);
+      const res = await api.createCustomer(form);
+      if (res.warnings?.watchlist) toast.error(`Watchlist match: ${res.warnings.watchlist}`);
+      if (res.warnings?.duplicate) toast.error(`Possible duplicate: ${res.warnings.duplicate}`);
+      if (!res.warnings?.watchlist && !res.warnings?.duplicate) toast.success("Customer created.");
       setForm({ fullName: "", phone: "", email: "", segment: "INDIVIDUAL" });
       setShowForm(false);
       load();
@@ -71,14 +76,21 @@ export default function CustomersPage() {
   return (
     <AppShell active="Customers">
       <div className="p-5 dt:p-10 overflow-x-auto">
-        <div className="flex items-center justify-between mb-8 gap-3">
+        <div className="flex items-center justify-between mb-6 gap-3 flex-wrap">
           <h1 className="font-display font-semibold text-2xl dt:text-3xl text-ink-900">Customers</h1>
           <button onClick={() => setShowForm((s) => !s)} className="btn-dark shrink-0">
             {showForm ? "Cancel" : "+ New customer"}
           </button>
         </div>
 
-        
+        <div className="card p-4 mb-6 flex flex-wrap items-end gap-3">
+          <label className="block flex-1 min-w-[220px]">
+            <span className="block text-[12px] text-text-500 mb-1">Search</span>
+            <input className="input !py-1.5" placeholder="Name, phone, email, or ID number" value={search} onChange={(e) => setSearch(e.target.value)} onKeyDown={(e) => e.key === "Enter" && load()} />
+          </label>
+          <button onClick={load} className="btn-dark !py-2">Search</button>
+        </div>
+
         {showForm && (
           <form onSubmit={handleCreate} className="card p-6 mb-8">
             <div className="grid grid-cols-1 sm:grid-cols-4 gap-4 mb-4">
@@ -108,9 +120,9 @@ export default function CustomersPage() {
         )}
 
         <div className="card overflow-x-auto">
-          <table className="w-full min-w-[600px] text-sm table-modern">
+          <table className="w-full min-w-[680px] text-sm table-modern">
             <thead>
-              <tr><th>Name</th><th>Phone</th><th>Segment</th><th>Status</th><th>Stage</th><th>KYC</th></tr>
+              <tr><th>Name</th><th>Phone</th><th>Segment</th><th>Status</th><th>Stage</th><th>KYC</th><th>Flags</th></tr>
             </thead>
             <tbody>
               {customers.map((c) => (
@@ -121,10 +133,14 @@ export default function CustomersPage() {
                   <td><span className={`badge ${STATUS_COLOR[c.status] || ""}`}>{c.status.replaceAll("_", " ")}</span></td>
                   <td><span className={`badge ${STAGE_COLOR[c.lifecycleStage] || ""}`}>{c.lifecycleStage.replaceAll("_", " ")}</span></td>
                   <td><span className={`badge ${KYC_COLOR[c.kycStatus] || ""}`}>{c.kycStatus}</span></td>
+                  <td className="space-x-1">
+                    {c.watchlistFlag && <span className="badge bg-rose-100 text-rose-600">Watchlist</span>}
+                    {c.possibleDuplicate && <span className="badge bg-gold-500/15 text-gold-600">Duplicate?</span>}
+                  </td>
                 </tr>
               ))}
               {customers.length === 0 && (
-                <tr><td colSpan={6} className="text-center text-text-muted text-sm py-8">No customers yet.</td></tr>
+                <tr><td colSpan={7} className="text-center text-text-muted text-sm py-8">No customers yet.</td></tr>
               )}
             </tbody>
           </table>

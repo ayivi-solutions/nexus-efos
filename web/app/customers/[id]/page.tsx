@@ -10,8 +10,13 @@ const STAGES = ["AWARENESS", "ACQUISITION", "ONBOARDING", "ACTIVATION", "GROWTH"
 const STATUSES = ["REGISTERED", "PENDING_VERIFICATION", "VERIFIED", "ACTIVE", "DORMANT", "RESTRICTED", "SUSPENDED", "CLOSED", "ARCHIVED"];
 const KYC_STATUSES = ["PENDING", "VERIFIED", "REJECTED"];
 const SEGMENTS = ["INDIVIDUAL", "BUSINESS", "FARMER_GROUP", "WOMENS_GROUP", "YOUTH", "CORPORATE"];
+const RISK_RATINGS = ["LOW", "MEDIUM", "HIGH"];
 
 type TimelineEvent = { date: string; label: string; detail: string; amount?: string };
+
+const emptyKin = { fullName: "", relationship: "", phone: "", email: "", address: "" };
+const emptyBeneficiary = { fullName: "", relationship: "", allocationPct: "", phone: "" };
+const emptyOwner = { fullName: "", ownershipPct: "", idType: "", idNumber: "" };
 
 export default function CustomerDetailPage() {
   const params = useParams();
@@ -22,12 +27,25 @@ export default function CustomerDetailPage() {
   useErrorToast(error);
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState(false);
-  const [editForm, setEditForm] = useState({ fullName: "", phone: "", email: "", segment: "INDIVIDUAL" });
+  const [editForm, setEditForm] = useState({ fullName: "", phone: "", email: "", segment: "INDIVIDUAL", riskRating: "", preferredChannel: "", preferredLanguage: "" });
+
+  const [kinForm, setKinForm] = useState(emptyKin);
+  const [noteText, setNoteText] = useState("");
+  const [beneficiaryForm, setBeneficiaryForm] = useState(emptyBeneficiary);
+  const [ownerForm, setOwnerForm] = useState(emptyOwner);
 
   function load() {
     api.getCustomer(id).then((res) => {
       setCustomer(res.customer);
-      setEditForm({ fullName: res.customer.fullName, phone: res.customer.phone, email: res.customer.email || "", segment: res.customer.segment });
+      setEditForm({
+        fullName: res.customer.fullName,
+        phone: res.customer.phone,
+        email: res.customer.email || "",
+        segment: res.customer.segment,
+        riskRating: res.customer.riskRating || "",
+        preferredChannel: res.customer.preferredChannel || "",
+        preferredLanguage: res.customer.preferredLanguage || "",
+      });
     }).catch((err) => setError(err.message));
   }
 
@@ -57,7 +75,13 @@ export default function CustomerDetailPage() {
   async function saveEdit() {
     setBusy(true); setError(null);
     try {
-      await api.updateCustomer(id, { ...editForm, email: editForm.email || null });
+      await api.updateCustomer(id, {
+        ...editForm,
+        email: editForm.email || null,
+        riskRating: editForm.riskRating || null,
+        preferredChannel: editForm.preferredChannel || null,
+        preferredLanguage: editForm.preferredLanguage || null,
+      });
       setEditing(false);
       load();
     } catch (err: any) { setError(err.message || "Could not update customer"); }
@@ -71,6 +95,79 @@ export default function CustomerDetailPage() {
       else await api.archiveCustomer(id);
       load();
     } catch (err: any) { setError(err.message || "Action failed"); }
+    finally { setBusy(false); }
+  }
+
+  async function clearDuplicateFlag() {
+    setBusy(true); setError(null);
+    try { await api.clearDuplicateFlag(id); load(); }
+    catch (err: any) { setError(err.message || "Action failed"); }
+    finally { setBusy(false); }
+  }
+
+  async function handleAddKin(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy(true); setError(null);
+    try {
+      await api.addNextOfKin(id, { ...kinForm, email: kinForm.email || undefined, address: kinForm.address || undefined });
+      setKinForm(emptyKin);
+      load();
+    } catch (err: any) { setError(err.message || "Could not add next of kin"); }
+    finally { setBusy(false); }
+  }
+
+  async function handleDeleteKin(kinId: string) {
+    setBusy(true); setError(null);
+    try { await api.deleteNextOfKin(id, kinId); load(); }
+    catch (err: any) { setError(err.message || "Could not remove"); }
+    finally { setBusy(false); }
+  }
+
+  async function handleAddNote(e: React.FormEvent) {
+    e.preventDefault();
+    if (!noteText.trim()) return;
+    setBusy(true); setError(null);
+    try {
+      await api.addCustomerNote(id, noteText);
+      setNoteText("");
+      load();
+    } catch (err: any) { setError(err.message || "Could not add note"); }
+    finally { setBusy(false); }
+  }
+
+  async function handleAddBeneficiary(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy(true); setError(null);
+    try {
+      await api.addBeneficiary(id, { ...beneficiaryForm, allocationPct: Number(beneficiaryForm.allocationPct), phone: beneficiaryForm.phone || undefined });
+      setBeneficiaryForm(emptyBeneficiary);
+      load();
+    } catch (err: any) { setError(err.message || "Could not add beneficiary"); }
+    finally { setBusy(false); }
+  }
+
+  async function handleDeleteBeneficiary(beneficiaryId: string) {
+    setBusy(true); setError(null);
+    try { await api.deleteBeneficiary(id, beneficiaryId); load(); }
+    catch (err: any) { setError(err.message || "Could not remove"); }
+    finally { setBusy(false); }
+  }
+
+  async function handleAddOwner(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy(true); setError(null);
+    try {
+      await api.addBeneficialOwner(id, { ...ownerForm, ownershipPct: Number(ownerForm.ownershipPct), idType: ownerForm.idType || undefined, idNumber: ownerForm.idNumber || undefined });
+      setOwnerForm(emptyOwner);
+      load();
+    } catch (err: any) { setError(err.message || "Could not add beneficial owner"); }
+    finally { setBusy(false); }
+  }
+
+  async function handleDeleteOwner(ownerId: string) {
+    setBusy(true); setError(null);
+    try { await api.deleteBeneficialOwner(id, ownerId); load(); }
+    catch (err: any) { setError(err.message || "Could not remove"); }
     finally { setBusy(false); }
   }
 
@@ -95,18 +192,26 @@ export default function CustomerDetailPage() {
     events.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
   }
 
+  const isBusinessLike = customer && ["BUSINESS", "CORPORATE"].includes(customer.segment);
+
   return (
     <AppShell active="Customers">
       <div className="p-5 dt:p-10 overflow-x-auto">
         <button onClick={() => router.push("/customers")} className="text-[13px] text-text-muted hover:text-text-700 mb-4">← Back to Customers</button>
 
-                {!customer && !error && <p className="text-text-muted text-sm">Loading…</p>}
+        {!customer && !error && <p className="text-text-muted text-sm">Loading…</p>}
 
         {customer && (
           <>
-            <div className="flex items-center justify-between flex-wrap gap-3 mb-1">
+            <div className="flex items-center justify-between flex-wrap gap-2 mb-1">
               <div className="font-mono text-[11.5px] tracking-[0.1em] uppercase text-rose-600">{customer.segment.replaceAll("_", " ")}</div>
-              {customer.archived && <span className="badge bg-rose-100 text-rose-600">Archived</span>}
+              <div className="flex gap-2">
+                {customer.archived && <span className="badge bg-rose-100 text-rose-600">Archived</span>}
+                {customer.watchlistFlag && <span className="badge bg-rose-100 text-rose-600">Watchlist match</span>}
+                {customer.possibleDuplicate && (
+                  <button onClick={clearDuplicateFlag} disabled={busy} className="badge bg-gold-500/15 text-gold-600">Possible duplicate — clear?</button>
+                )}
+              </div>
             </div>
             <h1 className="font-display font-semibold text-2xl dt:text-3xl text-ink-900 mb-1 selectable">{customer.fullName}</h1>
             <div className="text-text-muted text-sm mb-6 selectable">{customer.phone}{customer.email ? ` · ${customer.email}` : ""}</div>
@@ -132,26 +237,51 @@ export default function CustomerDetailPage() {
               </div>
 
               {editing ? (
-                <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
-                  <label className="block">
-                    <span className="block text-[13px] text-text-500 mb-1.5">Full name</span>
-                    <input className="input" value={editForm.fullName} onChange={(e) => setEditForm((f) => ({ ...f, fullName: e.target.value }))} />
-                  </label>
-                  <label className="block">
-                    <span className="block text-[13px] text-text-500 mb-1.5">Phone</span>
-                    <input type="tel" className="input" value={editForm.phone} onChange={(e) => setEditForm((f) => ({ ...f, phone: e.target.value }))} />
-                  </label>
-                  <label className="block">
-                    <span className="block text-[13px] text-text-500 mb-1.5">Email</span>
-                    <input type="email" className="input" value={editForm.email} onChange={(e) => setEditForm((f) => ({ ...f, email: e.target.value }))} />
-                  </label>
-                  <label className="block">
-                    <span className="block text-[13px] text-text-500 mb-1.5">Segment</span>
-                    <select className="input" value={editForm.segment} onChange={(e) => setEditForm((f) => ({ ...f, segment: e.target.value }))}>
-                      {SEGMENTS.map((s) => (<option key={s} value={s}>{s.replaceAll("_", " ")}</option>))}
-                    </select>
-                  </label>
-                </div>
+                <>
+                  <div className="grid grid-cols-1 sm:grid-cols-4 gap-4 mb-4">
+                    <label className="block">
+                      <span className="block text-[13px] text-text-500 mb-1.5">Full name</span>
+                      <input className="input" value={editForm.fullName} onChange={(e) => setEditForm((f) => ({ ...f, fullName: e.target.value }))} />
+                    </label>
+                    <label className="block">
+                      <span className="block text-[13px] text-text-500 mb-1.5">Phone</span>
+                      <input type="tel" className="input" value={editForm.phone} onChange={(e) => setEditForm((f) => ({ ...f, phone: e.target.value }))} />
+                    </label>
+                    <label className="block">
+                      <span className="block text-[13px] text-text-500 mb-1.5">Email</span>
+                      <input type="email" className="input" value={editForm.email} onChange={(e) => setEditForm((f) => ({ ...f, email: e.target.value }))} />
+                    </label>
+                    <label className="block">
+                      <span className="block text-[13px] text-text-500 mb-1.5">Segment</span>
+                      <select className="input" value={editForm.segment} onChange={(e) => setEditForm((f) => ({ ...f, segment: e.target.value }))}>
+                        {SEGMENTS.map((s) => (<option key={s} value={s}>{s.replaceAll("_", " ")}</option>))}
+                      </select>
+                    </label>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                    <label className="block">
+                      <span className="block text-[13px] text-text-500 mb-1.5">Risk rating</span>
+                      <select className="input" value={editForm.riskRating} onChange={(e) => setEditForm((f) => ({ ...f, riskRating: e.target.value }))}>
+                        <option value="">Not set</option>
+                        {RISK_RATINGS.map((r) => (<option key={r} value={r}>{r}</option>))}
+                      </select>
+                    </label>
+                    <label className="block">
+                      <span className="block text-[13px] text-text-500 mb-1.5">Preferred channel</span>
+                      <select className="input" value={editForm.preferredChannel} onChange={(e) => setEditForm((f) => ({ ...f, preferredChannel: e.target.value }))}>
+                        <option value="">Not set</option>
+                        <option value="SMS">SMS</option>
+                        <option value="EMAIL">Email</option>
+                        <option value="WHATSAPP">WhatsApp</option>
+                        <option value="CALL">Phone call</option>
+                      </select>
+                    </label>
+                    <label className="block">
+                      <span className="block text-[13px] text-text-500 mb-1.5">Preferred language</span>
+                      <input className="input" value={editForm.preferredLanguage} onChange={(e) => setEditForm((f) => ({ ...f, preferredLanguage: e.target.value }))} placeholder="e.g. Ewe, Twi, English" />
+                    </label>
+                  </div>
+                </>
               ) : (
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                   <label className="block">
@@ -172,14 +302,105 @@ export default function CustomerDetailPage() {
                       {KYC_STATUSES.map((s) => (<option key={s} value={s}>{s}</option>))}
                     </select>
                   </label>
+                  {(customer.riskRating || customer.preferredChannel || customer.preferredLanguage) && (
+                    <div className="sm:col-span-3 flex flex-wrap gap-4 text-[12.5px] text-text-500 pt-1">
+                      {customer.riskRating && <span>Risk: <b className="text-text-700">{customer.riskRating}</b></span>}
+                      {customer.preferredChannel && <span>Prefers: <b className="text-text-700">{customer.preferredChannel}</b></span>}
+                      {customer.preferredLanguage && <span>Language: <b className="text-text-700">{customer.preferredLanguage}</b></span>}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
 
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-10">
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-8">
               <Stat label="Loans" value={String((customer.loans || []).length)} />
               <Stat label="Savings accounts" value={String((customer.savingsAccounts || []).length)} />
               <Stat label="Customer since" value={new Date(customer.createdAt).toLocaleDateString()} />
+            </div>
+
+            {/* Next of Kin — doc §38 */}
+            <h2 className="font-display font-semibold text-lg text-ink-900 mb-3">Next of kin</h2>
+            <form onSubmit={handleAddKin} className="card p-5 mb-4">
+              <div className="grid grid-cols-1 sm:grid-cols-5 gap-3 mb-3">
+                <input required placeholder="Full name" className="input !py-1.5" value={kinForm.fullName} onChange={(e) => setKinForm((f) => ({ ...f, fullName: e.target.value }))} />
+                <input required placeholder="Relationship" className="input !py-1.5" value={kinForm.relationship} onChange={(e) => setKinForm((f) => ({ ...f, relationship: e.target.value }))} />
+                <input required type="tel" placeholder="Phone" className="input !py-1.5" value={kinForm.phone} onChange={(e) => setKinForm((f) => ({ ...f, phone: e.target.value }))} />
+                <input type="email" placeholder="Email (optional)" className="input !py-1.5" value={kinForm.email} onChange={(e) => setKinForm((f) => ({ ...f, email: e.target.value }))} />
+                <input placeholder="Address (optional)" className="input !py-1.5" value={kinForm.address} onChange={(e) => setKinForm((f) => ({ ...f, address: e.target.value }))} />
+              </div>
+              <button type="submit" disabled={busy} className="btn-text text-gold-600">+ Add next of kin</button>
+            </form>
+            <div className="space-y-2 mb-8">
+              {(customer.nextOfKin || []).map((k: any) => (
+                <div key={k.id} className="card p-3 flex items-center justify-between text-[13px]">
+                  <span className="text-text-700"><b className="text-text-900">{k.fullName}</b> · {k.relationship} · {k.phone}{k.email ? ` · ${k.email}` : ""}</span>
+                  <button onClick={() => handleDeleteKin(k.id)} className="text-rose-600 text-[12px]">Remove</button>
+                </div>
+              ))}
+              {(!customer.nextOfKin || customer.nextOfKin.length === 0) && <p className="text-text-muted text-sm">None recorded.</p>}
+            </div>
+
+            {/* Beneficiaries — doc §37 */}
+            <h2 className="font-display font-semibold text-lg text-ink-900 mb-3">Beneficiaries</h2>
+            <form onSubmit={handleAddBeneficiary} className="card p-5 mb-4">
+              <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 mb-3">
+                <input required placeholder="Full name" className="input !py-1.5" value={beneficiaryForm.fullName} onChange={(e) => setBeneficiaryForm((f) => ({ ...f, fullName: e.target.value }))} />
+                <input required placeholder="Relationship" className="input !py-1.5" value={beneficiaryForm.relationship} onChange={(e) => setBeneficiaryForm((f) => ({ ...f, relationship: e.target.value }))} />
+                <input required type="number" min="0" max="100" placeholder="Allocation %" className="input !py-1.5" value={beneficiaryForm.allocationPct} onChange={(e) => setBeneficiaryForm((f) => ({ ...f, allocationPct: e.target.value }))} />
+                <input type="tel" placeholder="Phone (optional)" className="input !py-1.5" value={beneficiaryForm.phone} onChange={(e) => setBeneficiaryForm((f) => ({ ...f, phone: e.target.value }))} />
+              </div>
+              <button type="submit" disabled={busy} className="btn-text text-gold-600">+ Add beneficiary</button>
+            </form>
+            <div className="space-y-2 mb-8">
+              {(customer.beneficiaries || []).map((b: any) => (
+                <div key={b.id} className="card p-3 flex items-center justify-between text-[13px]">
+                  <span className="text-text-700"><b className="text-text-900">{b.fullName}</b> · {b.relationship} · {Number(b.allocationPct)}%{b.phone ? ` · ${b.phone}` : ""}</span>
+                  <button onClick={() => handleDeleteBeneficiary(b.id)} className="text-rose-600 text-[12px]">Remove</button>
+                </div>
+              ))}
+              {(!customer.beneficiaries || customer.beneficiaries.length === 0) && <p className="text-text-muted text-sm">None recorded.</p>}
+            </div>
+
+            {/* Beneficial Owners — doc §32, Business/Corporate only */}
+            {isBusinessLike && (
+              <>
+                <h2 className="font-display font-semibold text-lg text-ink-900 mb-3">Beneficial owners</h2>
+                <form onSubmit={handleAddOwner} className="card p-5 mb-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 mb-3">
+                    <input required placeholder="Full name" className="input !py-1.5" value={ownerForm.fullName} onChange={(e) => setOwnerForm((f) => ({ ...f, fullName: e.target.value }))} />
+                    <input required type="number" min="0" max="100" placeholder="Ownership %" className="input !py-1.5" value={ownerForm.ownershipPct} onChange={(e) => setOwnerForm((f) => ({ ...f, ownershipPct: e.target.value }))} />
+                    <input placeholder="ID type (optional)" className="input !py-1.5" value={ownerForm.idType} onChange={(e) => setOwnerForm((f) => ({ ...f, idType: e.target.value }))} />
+                    <input placeholder="ID number (optional)" className="input !py-1.5" value={ownerForm.idNumber} onChange={(e) => setOwnerForm((f) => ({ ...f, idNumber: e.target.value }))} />
+                  </div>
+                  <button type="submit" disabled={busy} className="btn-text text-gold-600">+ Add beneficial owner</button>
+                </form>
+                <div className="space-y-2 mb-8">
+                  {(customer.beneficialOwners || []).map((o: any) => (
+                    <div key={o.id} className="card p-3 flex items-center justify-between text-[13px]">
+                      <span className="text-text-700"><b className="text-text-900">{o.fullName}</b> · {Number(o.ownershipPct)}%{o.idNumber ? ` · ${o.idType || "ID"} ${o.idNumber}` : ""}</span>
+                      <button onClick={() => handleDeleteOwner(o.id)} className="text-rose-600 text-[12px]">Remove</button>
+                    </div>
+                  ))}
+                  {(!customer.beneficialOwners || customer.beneficialOwners.length === 0) && <p className="text-text-muted text-sm">None recorded.</p>}
+                </div>
+              </>
+            )}
+
+            {/* Notes — doc §28/§40 */}
+            <h2 className="font-display font-semibold text-lg text-ink-900 mb-3">Notes</h2>
+            <form onSubmit={handleAddNote} className="card p-5 mb-4">
+              <textarea rows={2} placeholder="Log a call, complaint, or interaction…" className="input mb-3" value={noteText} onChange={(e) => setNoteText(e.target.value)} />
+              <button type="submit" disabled={busy} className="btn-text text-gold-600">+ Add note</button>
+            </form>
+            <div className="space-y-2 mb-10">
+              {(customer.notes || []).map((n: any) => (
+                <div key={n.id} className="card p-3 text-[13px]">
+                  <div className="text-text-700">{n.note}</div>
+                  <div className="text-text-muted text-[11px] mt-1">{new Date(n.createdAt).toLocaleString()}</div>
+                </div>
+              ))}
+              {(!customer.notes || customer.notes.length === 0) && <p className="text-text-muted text-sm">No notes yet.</p>}
             </div>
 
             <h2 className="font-display font-semibold text-lg text-ink-900 mb-3">History</h2>

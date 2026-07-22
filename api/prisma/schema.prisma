@@ -62,6 +62,7 @@ model Institution {
   auditLogs     AuditLog[]
   employees     Employee[]
   products      Product[]
+  watchlistEntries WatchlistEntry[]
 
   createdAt     DateTime          @default(now())
   updatedAt     DateTime          @updatedAt
@@ -386,17 +387,115 @@ model Customer {
   status         AccountStatus  @default(REGISTERED)
   kycStatus     KycStatus       @default(PENDING)
 
+  // Technical Spec §57 — Risk Rating is a Core Attribute; Communication
+  // Preferences from doc §39; watchlist/duplicate are review flags, not
+  // hard blocks — a screened-positive customer can still be onboarded by
+  // an authorised officer after review.
+  riskRating         RiskRating? 
+  preferredChannel   String?
+  preferredLanguage  String?
+  watchlistFlag      Boolean     @default(false)
+  possibleDuplicate  Boolean     @default(false)
+
   archived      Boolean         @default(false)
   archivedAt    DateTime?
 
   createdAt     DateTime        @default(now())
   updatedAt     DateTime        @updatedAt
 
-  loans         Loan[]
+  loans           Loan[]
   savingsAccounts SavingsAccount[]
+  nextOfKin       NextOfKin[]
+  notes           CustomerNote[]
+  beneficiaries   Beneficiary[]
+  beneficialOwners BeneficialOwner[]
 
   @@unique([institutionId, phone])
   @@map("customers")
+  @@schema("nexus")
+}
+
+enum RiskRating {
+  LOW
+  MEDIUM
+  HIGH
+
+  @@schema("nexus")
+}
+
+// doc §38 Next of Kin
+model NextOfKin {
+  id           String   @id @default(cuid())
+  customer     Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  customerId   String
+  fullName     String
+  relationship String
+  phone        String
+  email        String?
+  address      String?
+  createdAt    DateTime @default(now())
+
+  @@map("next_of_kin")
+  @@schema("nexus")
+}
+
+// doc §28/§40 — CRM interaction/notes history
+model CustomerNote {
+  id         String   @id @default(cuid())
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  customerId String
+  authorId   String?
+  note       String
+  createdAt  DateTime @default(now())
+
+  @@map("customer_notes")
+  @@schema("nexus")
+}
+
+// doc §37 Beneficiary Management (savings)
+model Beneficiary {
+  id            String   @id @default(cuid())
+  customer      Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  customerId    String
+  fullName      String
+  relationship  String
+  allocationPct Decimal  @db.Decimal(5, 2)
+  phone         String?
+  createdAt     DateTime @default(now())
+
+  @@map("beneficiaries")
+  @@schema("nexus")
+}
+
+// doc §32 Beneficial Ownership (BUSINESS/CORPORATE customers)
+model BeneficialOwner {
+  id           String   @id @default(cuid())
+  customer     Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  customerId   String
+  fullName     String
+  ownershipPct Decimal  @db.Decimal(5, 2)
+  idType       String?
+  idNumber     String?
+  createdAt    DateTime @default(now())
+
+  @@map("beneficial_owners")
+  @@schema("nexus")
+}
+
+// doc §34 Blacklisting/Watchlist — institution-managed list, screened
+// against at customer creation (sets Customer.watchlistFlag for review,
+// does not block onboarding outright).
+model WatchlistEntry {
+  id            String      @id @default(cuid())
+  institution   Institution @relation(fields: [institutionId], references: [id], onDelete: Cascade)
+  institutionId String
+  fullName      String
+  idNumber      String?
+  reason        String?
+  addedById     String?
+  createdAt     DateTime    @default(now())
+
+  @@map("watchlist_entries")
   @@schema("nexus")
 }
 
