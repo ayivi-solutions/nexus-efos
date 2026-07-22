@@ -148,6 +148,8 @@ export const api = {
 
   listLoans: () => request("/loans"),
   getLoan: (id: string) => request(`/loans/${id}`),
+  addLoanHolder: (id: string, data: { customerId: string; role: string }) => request(`/loans/${id}/holders`, { method: "POST", body: JSON.stringify(data) }),
+  removeLoanHolder: (id: string, holderId: string) => request(`/loans/${id}/holders/${holderId}`, { method: "DELETE" }),
   createLoan: (data: { customerId: string; productVersionId: string; principal: number; termMonths: number }) =>
     request("/loans", { method: "POST", body: JSON.stringify(data) }),
   approveLoan: (id: string) => request(`/loans/${id}/approve`, { method: "POST" }),
@@ -157,6 +159,8 @@ export const api = {
 
   listSavingsAccounts: () => request("/savings"),
   getSavingsAccount: (id: string) => request(`/savings/${id}`),
+  addSavingsHolder: (id: string, data: { customerId: string; role: string }) => request(`/savings/${id}/holders`, { method: "POST", body: JSON.stringify(data) }),
+  removeSavingsHolder: (id: string, holderId: string) => request(`/savings/${id}/holders/${holderId}`, { method: "DELETE" }),
   openSavingsAccount: (data: { customerId: string; productVersionId: string }) =>
     request("/savings", { method: "POST", body: JSON.stringify(data) }),
   depositSavings: (id: string, amount: number) =>

@@ -26,12 +26,35 @@ export default function LoanDetailPage() {
   useErrorToast(error);
   const [busy, setBusy] = useState(false);
   const [repayAmount, setRepayAmount] = useState("");
+  const [customers, setCustomers] = useState<any[]>([]);
+  const [holderForm, setHolderForm] = useState({ customerId: "", role: "JOINT" });
 
   function load() {
     api.getLoan(id).then((res) => setLoan(res.loan)).catch((err) => setError(err.message));
   }
 
-  useEffect(() => { load(); }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    load();
+    api.listCustomers().then((res) => setCustomers(res.customers)).catch(() => {});
+  }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function handleAddHolder(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy(true); setError(null);
+    try {
+      await api.addLoanHolder(id, holderForm);
+      setHolderForm({ customerId: "", role: "JOINT" });
+      load();
+    } catch (err: any) { setError(err.message || "Could not add account holder"); }
+    finally { setBusy(false); }
+  }
+
+  async function handleRemoveHolder(holderId: string) {
+    setBusy(true); setError(null);
+    try { await api.removeLoanHolder(id, holderId); load(); }
+    catch (err: any) { setError(err.message || "Could not remove holder"); }
+    finally { setBusy(false); }
+  }
 
   async function handleAction(action: "approve" | "reject" | "disburse") {
     setBusy(true);
@@ -115,6 +138,35 @@ export default function LoanDetailPage() {
                   <p className="text-text-muted text-sm">No further actions available for this loan.</p>
                 )}
               </div>
+            </div>
+
+            {/* Account Holders — doc §36. loan.customer above is the Primary Holder. */}
+            <h2 className="font-display font-semibold text-lg text-ink-900 mb-3">Account holders</h2>
+            <form onSubmit={handleAddHolder} className="card p-5 mb-4">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-3">
+                <select required className="input !py-1.5" value={holderForm.customerId} onChange={(e) => setHolderForm((f) => ({ ...f, customerId: e.target.value }))}>
+                  <option value="">Select customer…</option>
+                  {customers.filter((c) => c.id !== loan.customer.id).map((c) => (<option key={c.id} value={c.id}>{c.fullName}</option>))}
+                </select>
+                <select className="input !py-1.5" value={holderForm.role} onChange={(e) => setHolderForm((f) => ({ ...f, role: e.target.value }))}>
+                  <option value="JOINT">Joint Account Holder</option>
+                  <option value="AUTHORISED_SIGNATORY">Authorised Signatory</option>
+                  <option value="GUARDIAN">Guardian</option>
+                  <option value="NOMINEE">Nominee</option>
+                  <option value="POWER_OF_ATTORNEY">Power of Attorney</option>
+                  <option value="CORPORATE_REPRESENTATIVE">Corporate Representative</option>
+                </select>
+                <button type="submit" disabled={busy} className="btn-text text-gold-600 justify-self-start">+ Add holder</button>
+              </div>
+            </form>
+            <div className="space-y-2 mb-10">
+              {(loan.accountHolders || []).map((h: any) => (
+                <div key={h.id} className="card p-3 flex items-center justify-between text-[13px]">
+                  <span className="text-text-700"><b className="text-text-900">{h.customer.fullName}</b> · {h.role.replaceAll("_", " ")}</span>
+                  <button onClick={() => handleRemoveHolder(h.id)} className="text-rose-600 text-[12px]">Remove</button>
+                </div>
+              ))}
+              {(!loan.accountHolders || loan.accountHolders.length === 0) && <p className="text-text-muted text-sm">No additional holders — {loan.customer.fullName} is the sole (primary) holder.</p>}
             </div>
 
             {loan.installments && loan.installments.length > 0 && (

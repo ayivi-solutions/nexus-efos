@@ -23,14 +23,53 @@ savingsRouter.get("/:id", requirePermission("reports.view"), async (req: AuthedR
       customer: { select: { id: true, fullName: true, phone: true } },
       branch: { select: { name: true } },
       transactions: { orderBy: { createdAt: "desc" } },
+      accountHolders: { include: { customer: { select: { id: true, fullName: true, phone: true } } }, orderBy: { createdAt: "asc" } },
     },
   });
   if (!account) return res.status(404).json({ error: "Account not found" });
   res.json({ account });
 });
 
-// CRUAA — Archive equivalent for a savings account: CLOSED. Standard
-// banking rule — balance must be zero first (withdraw everything, then close).
+const addHolderSchema = z.object({
+  customerId: z.string(),
+  role: z.enum(["JOINT", "AUTHORISED_SIGNATORY", "GUARDIAN", "NOMINEE", "POWER_OF_ATTORNEY", "CORPORATE_REPRESENTATIVE"]),
+});
+
+savingsRouter.post("/:id/holders", requirePermission("savings.approve"), async (req: AuthedRequest, res) => {
+  const parsed = addHolderSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+  const account = await prisma.savingsAccount.findFirst({ where: { id: req.params.id, institutionId: req.auth!.institutionId } });
+  if (!account) return res.status(404).json({ error: "Account not found" });
+  if (parsed.data.customerId === account.customerId) {
+    return res.status(400).json({ error: "This customer is already the primary holder" });
+  }
+  const customer = await prisma.customer.findFirst({ where: { id: parsed.data.customerId, institutionId: req.auth!.institutionId } });
+  if (!customer) return res.status(404).json({ error: "Customer not found" });
+
+  const holder = await prisma.accountHolder.create({
+    data: { institutionId: req.auth!.institutionId, customerId: parsed.data.customerId, role: parsed.data.role, savingsAccountId: account.id, addedById: req.auth!.userId },
+    include: { customer: { select: { id: true, fullName: true, phone: true } } },
+  });
+
+  await prisma.auditLog.create({
+    data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "savings.holder_add", resource: "savings_account", resourceId: account.id, metadata: { customerId: parsed.data.customerId, role: parsed.data.role } },
+  });
+
+  res.status(201).json({ holder });
+});
+
+savingsRouter.delete("/:id/holders/:holderId", requirePermission("savings.approve"), async (req: AuthedRequest, res) => {
+  const account = await prisma.savingsAccount.findFirst({ where: { id: req.params.id, institutionId: req.auth!.institutionId } });
+  if (!account) return res.status(404).json({ error: "Account not found" });
+
+  await prisma.accountHolder.deleteMany({ where: { id: req.params.holderId, savingsAccountId: account.id } });
+  await prisma.auditLog.create({
+    data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "savings.holder_remove", resource: "savings_account", resourceId: account.id, metadata: { holderId: req.params.holderId } },
+  });
+  res.status(204).send();
+});
+
 savingsRouter.post("/:id/close", requirePermission("savings.approve"), async (req: AuthedRequest, res) => {
   const account = await prisma.savingsAccount.findFirst({ where: { id: req.params.id, institutionId: req.auth!.institutionId } });
   if (!account) return res.status(404).json({ error: "Account not found" });
@@ -62,8 +101,6 @@ function generateAccountNumber() {
 
 const openSchema = z.object({ customerId: z.string(), productVersionId: z.string(), branchId: z.string().optional() });
 
-// doc §47 Savings Product Management: "every savings account shall belong
-// to one product." Locks in the specific ProductVersion at opening time.
 savingsRouter.post("/", requirePermission("savings.initiate"), async (req: AuthedRequest, res) => {
   const parsed = openSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });

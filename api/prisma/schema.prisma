@@ -63,6 +63,8 @@ model Institution {
   employees     Employee[]
   products      Product[]
   watchlistEntries WatchlistEntry[]
+  accountHolders   AccountHolder[]
+  documents        Document[]
 
   createdAt     DateTime          @default(now())
   updatedAt     DateTime          @updatedAt
@@ -409,6 +411,8 @@ model Customer {
   notes           CustomerNote[]
   beneficiaries   Beneficiary[]
   beneficialOwners BeneficialOwner[]
+  accountHolderRoles AccountHolder[]
+  documents          Document[]
 
   @@unique([institutionId, phone])
   @@map("customers")
@@ -623,6 +627,7 @@ model Loan {
 
   repayments    LoanRepayment[]
   installments  LoanInstallment[]
+  accountHolders AccountHolder[]
 
   createdAt     DateTime    @default(now())
   updatedAt     DateTime    @updatedAt
@@ -711,11 +716,106 @@ model SavingsAccount {
   status        SavingsAccountStatus @default(ACTIVE)
 
   transactions  SavingsTransaction[]
+  accountHolders AccountHolder[]
 
   createdAt     DateTime             @default(now())
   updatedAt     DateTime             @updatedAt
 
   @@map("savings_accounts")
+  @@schema("nexus")
+}
+
+// doc §36 Customer Account Linking. Loan/SavingsAccount.customerId remains
+// the Primary Account Holder (doc §36.4: "every account has at least one
+// primary owner") — this table adds every OTHER relationship type on top,
+// without touching any existing primary-ownership code path.
+enum AccountHolderRole {
+  JOINT
+  AUTHORISED_SIGNATORY
+  GUARDIAN
+  NOMINEE
+  POWER_OF_ATTORNEY
+  CORPORATE_REPRESENTATIVE
+
+  @@schema("nexus")
+}
+
+model AccountHolder {
+  id            String            @id @default(cuid())
+  institution   Institution       @relation(fields: [institutionId], references: [id], onDelete: Cascade)
+  institutionId String
+  customer      Customer          @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  customerId    String
+  role          AccountHolderRole
+
+  loan             Loan?           @relation(fields: [loanId], references: [id], onDelete: Cascade)
+  loanId           String?
+  savingsAccount   SavingsAccount? @relation(fields: [savingsAccountId], references: [id], onDelete: Cascade)
+  savingsAccountId String?
+
+  addedById  String?
+  createdAt  DateTime @default(now())
+
+  @@map("account_holders")
+  @@schema("nexus")
+}
+
+// doc §30 Customer Document Management, Technical Spec §69 Document Entity
+// Architecture. storageReference points into Supabase Storage — the file
+// bytes never live in Postgres, only this metadata + integrity checksum.
+enum DocumentType {
+  NATIONAL_ID
+  PASSPORT
+  DRIVERS_LICENCE
+  VOTER_ID
+  BUSINESS_REGISTRATION
+  TAX_CERTIFICATE
+  UTILITY_BILL
+  PROOF_OF_ADDRESS
+  PHOTOGRAPH
+  SIGNATURE
+  LOAN_DOCUMENT
+  CONTRACT
+  CONSENT_FORM
+  OTHER
+
+  @@schema("nexus")
+}
+
+enum DocumentStatus {
+  UPLOADED
+  VERIFIED
+  APPROVED
+  ACTIVE
+  ARCHIVED
+  DISPOSED
+
+  @@schema("nexus")
+}
+
+model Document {
+  id               String         @id @default(cuid())
+  institution      Institution    @relation(fields: [institutionId], references: [id], onDelete: Cascade)
+  institutionId    String
+  customer         Customer?      @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  customerId       String?
+
+  documentName     String
+  documentType     DocumentType
+  category         String?
+  storageReference String
+  checksum         String
+  fileSize         Int
+  mimeType         String
+  versionNumber    Int            @default(1)
+  expiryDate       DateTime?
+  status           DocumentStatus @default(UPLOADED)
+  uploadedById     String?
+
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  @@map("documents")
   @@schema("nexus")
 }
 
