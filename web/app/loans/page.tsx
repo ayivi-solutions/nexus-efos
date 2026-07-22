@@ -20,15 +20,17 @@ export default function LoansPage() {
   const router = useRouter();
   const [loans, setLoans] = useState<any[]>([]);
   const [customers, setCustomers] = useState<any[]>([]);
+  const [products, setProducts] = useState<any[]>([]);
   const [error, setError] = useState<string | null>(null);
   useErrorToast(error);
   const [showForm, setShowForm] = useState(false);
-  const [form, setForm] = useState({ customerId: "", principal: "", interestRate: "", interestMethod: "FLAT", termMonths: "" });
+  const [form, setForm] = useState({ customerId: "", productVersionId: "", principal: "", termMonths: "" });
   const [saving, setSaving] = useState(false);
 
   function load() {
     api.listLoans().then((res) => setLoans(res.loans)).catch((err) => setError(err.message));
     api.listCustomers().then((res) => setCustomers(res.customers)).catch(() => {});
+    api.listProducts("LOAN").then((res) => setProducts(res.products.filter((p: any) => p.status === "ACTIVE"))).catch(() => {});
   }
 
   useEffect(() => { load(); }, []);
@@ -40,12 +42,11 @@ export default function LoansPage() {
     try {
       await api.createLoan({
         customerId: form.customerId,
+        productVersionId: form.productVersionId,
         principal: Number(form.principal),
-        interestRate: Number(form.interestRate),
-        interestMethod: form.interestMethod,
         termMonths: Number(form.termMonths),
       });
-      setForm({ customerId: "", principal: "", interestRate: "", interestMethod: "FLAT", termMonths: "" });
+      setForm({ customerId: "", productVersionId: "", principal: "", termMonths: "" });
       setShowForm(false);
       load();
     } catch (err: any) {
@@ -65,7 +66,6 @@ export default function LoansPage() {
           </button>
         </div>
 
-        
         {showForm && (
           <form onSubmit={handleCreate} className="card p-6 mb-8">
             <div className="grid grid-cols-1 sm:grid-cols-4 gap-4 mb-4">
@@ -77,25 +77,18 @@ export default function LoansPage() {
                 </select>
               </label>
               <label className="block">
+                <span className="block text-[13px] text-text-500 mb-1.5">Loan product</span>
+                <select required className="input" value={form.productVersionId} onChange={(e) => setForm((f) => ({ ...f, productVersionId: e.target.value }))}>
+                  <option value="">Select…</option>
+                  {products.map((p) => (<option key={p.id} value={p.currentVersion.id}>{p.currentVersion.name} ({p.currentVersion.interestRate}%, {p.currentVersion.interestMethod === "REDUCING_BALANCE" ? "reducing" : "flat"})</option>))}
+                </select>
+              </label>
+              <label className="block">
                 <span className="block text-[13px] text-text-500 mb-1.5">Principal</span>
                 <div className="relative">
                   <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-[13px] text-text-muted font-mono pointer-events-none">GHS</span>
                   <input required type="number" inputMode="decimal" min="1" step="0.01" className="input pl-12" value={form.principal} onChange={(e) => setForm((f) => ({ ...f, principal: e.target.value }))} />
                 </div>
-              </label>
-              <label className="block">
-                <span className="block text-[13px] text-text-500 mb-1.5">Interest rate (p.a.)</span>
-                <div className="relative">
-                  <input required type="number" inputMode="decimal" min="0" max="100" step="0.1" className="input pr-8" value={form.interestRate} onChange={(e) => setForm((f) => ({ ...f, interestRate: e.target.value }))} />
-                  <span className="absolute right-3.5 top-1/2 -translate-y-1/2 text-[13px] text-text-muted pointer-events-none">%</span>
-                </div>
-              </label>
-              <label className="block">
-                <span className="block text-[13px] text-text-500 mb-1.5">Interest method</span>
-                <select className="input" value={form.interestMethod} onChange={(e) => setForm((f) => ({ ...f, interestMethod: e.target.value }))}>
-                  <option value="FLAT">Flat</option>
-                  <option value="REDUCING_BALANCE">Reducing balance</option>
-                </select>
               </label>
               <label className="block">
                 <span className="block text-[13px] text-text-500 mb-1.5">Term</span>
@@ -105,10 +98,11 @@ export default function LoansPage() {
                 </div>
               </label>
             </div>
-            <button type="submit" disabled={saving || !customers.length} className="btn-primary">
+            <button type="submit" disabled={saving || !customers.length || !products.length} className="btn-primary">
               {saving ? "Saving…" : "Initiate loan"}
             </button>
             {!customers.length && <p className="text-text-muted text-xs mt-2">Add a customer first.</p>}
+            {customers.length > 0 && !products.length && <p className="text-text-muted text-xs mt-2">No active loan products yet — create and activate one on the Products page.</p>}
           </form>
         )}
 

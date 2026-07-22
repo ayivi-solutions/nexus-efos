@@ -87,15 +87,19 @@ loanRouter.get("/:id", requirePermission("reports.view"), async (req: AuthedRequ
 
 const createSchema = z.object({
   customerId: z.string(),
+  productVersionId: z.string(),
   principal: z.number().positive(),
-  interestRate: z.number().min(0),
-  interestMethod: z.enum(["FLAT", "REDUCING_BALANCE"]).default("FLAT"),
   termMonths: z.number().int().positive(),
   branchId: z.string().optional(),
 });
 
 // doc §38.11 segregation of duties: initiating officer != approving officer,
 // enforced at the approve step, not here.
+//
+// doc §62 Loan Product Management: "every loan shall reference one approved
+// loan product." Interest rate/method are now derived from the selected
+// product version, not typed freely — and locked in at origination so a
+// later product revision can't silently change an existing loan's terms.
 loanRouter.post("/", requirePermission("loans.initiate"), async (req: AuthedRequest, res) => {
   const parsed = createSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
@@ -108,11 +112,40 @@ loanRouter.post("/", requirePermission("loans.initiate"), async (req: AuthedRequ
     return res.status(400).json({ error: `Customer must be ACTIVE to receive a loan (currently ${customer.status})` });
   }
 
+  const productVersion = await prisma.productVersion.findFirst({
+    where: { id: parsed.data.productVersionId },
+    include: { product: true },
+  });
+  if (!productVersion || productVersion.product.institutionId !== req.auth!.institutionId || productVersion.product.type !== "LOAN") {
+    return res.status(404).json({ error: "Loan product not found" });
+  }
+  if (productVersion.product.status !== "ACTIVE") {
+    return res.status(400).json({ error: "This loan product is not currently active" });
+  }
+  if (productVersion.minLoanAmount !== null && parsed.data.principal < Number(productVersion.minLoanAmount)) {
+    return res.status(400).json({ error: `Principal must be at least GHS ${Number(productVersion.minLoanAmount).toLocaleString()} for this product` });
+  }
+  if (productVersion.maxLoanAmount !== null && parsed.data.principal > Number(productVersion.maxLoanAmount)) {
+    return res.status(400).json({ error: `Principal cannot exceed GHS ${Number(productVersion.maxLoanAmount).toLocaleString()} for this product` });
+  }
+  if (productVersion.minTenureMonths !== null && parsed.data.termMonths < productVersion.minTenureMonths) {
+    return res.status(400).json({ error: `Term must be at least ${productVersion.minTenureMonths} months for this product` });
+  }
+  if (productVersion.maxTenureMonths !== null && parsed.data.termMonths > productVersion.maxTenureMonths) {
+    return res.status(400).json({ error: `Term cannot exceed ${productVersion.maxTenureMonths} months for this product` });
+  }
+
   const loan = await prisma.loan.create({
     data: {
       institutionId: req.auth!.institutionId,
       initiatedById: req.auth!.userId,
-      ...parsed.data,
+      customerId: parsed.data.customerId,
+      branchId: parsed.data.branchId,
+      productVersionId: productVersion.id,
+      principal: parsed.data.principal,
+      termMonths: parsed.data.termMonths,
+      interestRate: productVersion.interestRate,
+      interestMethod: productVersion.interestMethod,
     },
   });
 

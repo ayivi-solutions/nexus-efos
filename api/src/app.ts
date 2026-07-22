@@ -9,6 +9,7 @@ import { savingsRouter } from "./routes/savings.routes";
 import { auditRouter } from "./routes/audit.routes";
 import { employeeRouter } from "./routes/employee.routes";
 import { reportsRouter } from "./routes/reports.routes";
+import { productsRouter } from "./routes/products.routes";
 
 export const app = express();
 
@@ -26,6 +27,7 @@ app.use("/savings", savingsRouter);
 app.use("/audit-log", auditRouter);
 app.use("/employees", employeeRouter);
 app.use("/reports", reportsRouter);
+app.use("/products", productsRouter);
 
 app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   console.error(err);

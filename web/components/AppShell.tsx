@@ -13,6 +13,7 @@ const NAV_FULL: { label: string; icon: string; href: string; perm: string | null
   { label: "Roles & Permissions", icon: "◈", href: "/roles", perm: "users.administer" },
   { label: "Audit Log", icon: "▥", href: "/audit-log", perm: "audit.view" },
   { label: "Reports", icon: "▧", href: "/reports", perm: "reports.view" },
+  { label: "Products", icon: "◫", href: "/products", perm: "institution.configure" },
 ];
 
 export function AppShell({ active, children }: { active: string; children: React.ReactNode }) {

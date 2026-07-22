@@ -60,8 +60,10 @@ function generateAccountNumber() {
   return "SA" + Date.now().toString().slice(-10);
 }
 
-const openSchema = z.object({ customerId: z.string(), branchId: z.string().optional() });
+const openSchema = z.object({ customerId: z.string(), productVersionId: z.string(), branchId: z.string().optional() });
 
+// doc §47 Savings Product Management: "every savings account shall belong
+// to one product." Locks in the specific ProductVersion at opening time.
 savingsRouter.post("/", requirePermission("savings.initiate"), async (req: AuthedRequest, res) => {
   const parsed = openSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
@@ -74,11 +76,24 @@ savingsRouter.post("/", requirePermission("savings.initiate"), async (req: Authe
     return res.status(400).json({ error: `Customer must be ACTIVE to open a savings account (currently ${customer.status})` });
   }
 
+  const productVersion = await prisma.productVersion.findFirst({
+    where: { id: parsed.data.productVersionId },
+    include: { product: true },
+  });
+  if (!productVersion || productVersion.product.institutionId !== req.auth!.institutionId || productVersion.product.type !== "SAVINGS") {
+    return res.status(404).json({ error: "Savings product not found" });
+  }
+  if (productVersion.product.status !== "ACTIVE") {
+    return res.status(400).json({ error: "This savings product is not currently active" });
+  }
+
   const account = await prisma.savingsAccount.create({
     data: {
       institutionId: req.auth!.institutionId,
       accountNumber: generateAccountNumber(),
-      ...parsed.data,
+      customerId: parsed.data.customerId,
+      branchId: parsed.data.branchId,
+      productVersionId: productVersion.id,
     },
   });
 

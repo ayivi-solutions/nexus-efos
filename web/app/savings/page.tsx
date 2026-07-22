@@ -10,15 +10,18 @@ export default function SavingsPage() {
   const router = useRouter();
   const [accounts, setAccounts] = useState<any[]>([]);
   const [customers, setCustomers] = useState<any[]>([]);
+  const [products, setProducts] = useState<any[]>([]);
   const [error, setError] = useState<string | null>(null);
   useErrorToast(error);
   const [showForm, setShowForm] = useState(false);
   const [newCustomerId, setNewCustomerId] = useState("");
+  const [newProductVersionId, setNewProductVersionId] = useState("");
   const [saving, setSaving] = useState(false);
 
   function load() {
     api.listSavingsAccounts().then((res) => setAccounts(res.accounts)).catch((err) => setError(err.message));
     api.listCustomers().then((res) => setCustomers(res.customers)).catch(() => {});
+    api.listProducts("SAVINGS").then((res) => setProducts(res.products.filter((p: any) => p.status === "ACTIVE"))).catch(() => {});
   }
 
   useEffect(() => { load(); }, []);
@@ -28,8 +31,9 @@ export default function SavingsPage() {
     setSaving(true);
     setError(null);
     try {
-      await api.openSavingsAccount({ customerId: newCustomerId });
+      await api.openSavingsAccount({ customerId: newCustomerId, productVersionId: newProductVersionId });
       setNewCustomerId("");
+      setNewProductVersionId("");
       setShowForm(false);
       load();
     } catch (err: any) {
@@ -49,22 +53,29 @@ export default function SavingsPage() {
           </button>
         </div>
 
-        
         {showForm && (
           <form onSubmit={handleOpen} className="card p-6 mb-8">
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
-              <label className="block col-span-2">
+              <label className="block">
                 <span className="block text-[13px] text-text-500 mb-1.5">Customer</span>
                 <select required className="input" value={newCustomerId} onChange={(e) => setNewCustomerId(e.target.value)}>
                   <option value="">Select…</option>
                   {customers.map((c) => (<option key={c.id} value={c.id}>{c.fullName}</option>))}
                 </select>
               </label>
+              <label className="block sm:col-span-2">
+                <span className="block text-[13px] text-text-500 mb-1.5">Savings product</span>
+                <select required className="input" value={newProductVersionId} onChange={(e) => setNewProductVersionId(e.target.value)}>
+                  <option value="">Select…</option>
+                  {products.map((p) => (<option key={p.id} value={p.currentVersion.id}>{p.currentVersion.name} ({p.currentVersion.interestRate}% p.a.)</option>))}
+                </select>
+              </label>
             </div>
-            <button type="submit" disabled={saving || !customers.length} className="btn-primary">
+            <button type="submit" disabled={saving || !customers.length || !products.length} className="btn-primary">
               {saving ? "Opening…" : "Open account"}
             </button>
             {!customers.length && <p className="text-text-muted text-xs mt-2">Add a customer first.</p>}
+            {customers.length > 0 && !products.length && <p className="text-text-muted text-xs mt-2">No active savings products yet — create and activate one on the Products page.</p>}
           </form>
         )}
 

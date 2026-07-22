@@ -127,7 +127,7 @@ export const api = {
 
   listLoans: () => request("/loans"),
   getLoan: (id: string) => request(`/loans/${id}`),
-  createLoan: (data: { customerId: string; principal: number; interestRate: number; interestMethod?: string; termMonths: number }) =>
+  createLoan: (data: { customerId: string; productVersionId: string; principal: number; termMonths: number }) =>
     request("/loans", { method: "POST", body: JSON.stringify(data) }),
   approveLoan: (id: string) => request(`/loans/${id}/approve`, { method: "POST" }),
   rejectLoan: (id: string) => request(`/loans/${id}/reject`, { method: "POST" }),
@@ -136,7 +136,7 @@ export const api = {
 
   listSavingsAccounts: () => request("/savings"),
   getSavingsAccount: (id: string) => request(`/savings/${id}`),
-  openSavingsAccount: (data: { customerId: string }) =>
+  openSavingsAccount: (data: { customerId: string; productVersionId: string }) =>
     request("/savings", { method: "POST", body: JSON.stringify(data) }),
   depositSavings: (id: string, amount: number) =>
     request(`/savings/${id}/deposit`, { method: "POST", body: JSON.stringify({ amount }) }),
@@ -154,6 +154,14 @@ export const api = {
     const qs = params.toString();
     return request(`/audit-log${qs ? `?${qs}` : ""}`);
   },
+
+  listProducts: (type?: string) => request(`/products${type ? `?type=${type}` : ""}`),
+  getProduct: (id: string) => request(`/products/${id}`),
+  createProduct: (data: any) => request("/products", { method: "POST", body: JSON.stringify(data) }),
+  addProductVersion: (id: string, data: any) => request(`/products/${id}/versions`, { method: "POST", body: JSON.stringify(data) }),
+  activateProduct: (id: string) => request(`/products/${id}/activate`, { method: "POST" }),
+  withdrawProduct: (id: string) => request(`/products/${id}/withdraw`, { method: "POST" }),
+  archiveProduct: (id: string) => request(`/products/${id}/archive`, { method: "POST" }),
 
   getReportsOverview: (months = 6) => request(`/reports/overview?months=${months}`),
   getLoanReport: (from?: string, to?: string) =>
