@@ -69,7 +69,7 @@ export default function LoanDetailPage() {
       <div className="p-5 dt:p-10 overflow-x-auto">
         <button onClick={() => router.push("/loans")} className="text-[13px] text-text-muted hover:text-text-700 mb-4">← Back to Loans</button>
 
-                {!loan && !error && <p className="text-text-muted text-sm">Loading…</p>}
+        {!loan && !error && <p className="text-text-muted text-sm">Loading…</p>}
 
         {loan && (
           <>
@@ -116,6 +116,40 @@ export default function LoanDetailPage() {
                 )}
               </div>
             </div>
+
+            {loan.installments && loan.installments.length > 0 && (
+              <>
+                <h2 className="font-display font-semibold text-lg text-ink-900 mb-3">
+                  Amortization schedule <span className="text-text-muted font-normal text-sm">({loan.interestMethod === "REDUCING_BALANCE" ? "Reducing balance" : "Flat"})</span>
+                </h2>
+                <div className="card overflow-x-auto mb-10">
+                  <table className="w-full min-w-[680px] text-sm table-modern">
+                    <thead><tr><th>#</th><th>Due date</th><th>Principal</th><th>Interest</th><th>Total due</th><th>Paid</th><th>Status</th></tr></thead>
+                    <tbody>
+                      {loan.installments.map((inst: any) => {
+                        const paid = Number(inst.principalPaid) + Number(inst.interestPaid);
+                        const statusColor =
+                          inst.status === "PAID" ? "bg-green-100 text-green-600"
+                          : inst.status === "PARTIALLY_PAID" ? "bg-gold-500/15 text-gold-600"
+                          : inst.status === "OVERDUE" ? "bg-rose-100 text-rose-600"
+                          : "bg-violet-500/15 text-violet-500";
+                        return (
+                          <tr key={inst.id}>
+                            <td className="text-text-700">{inst.installmentNumber}</td>
+                            <td className="text-text-700 whitespace-nowrap">{new Date(inst.dueDate).toLocaleDateString()}</td>
+                            <td className="text-text-700">GHS {Number(inst.principalDue).toLocaleString()}</td>
+                            <td className="text-text-700">GHS {Number(inst.interestDue).toLocaleString()}</td>
+                            <td className="text-text-900 font-medium">GHS {Number(inst.totalDue).toLocaleString()}</td>
+                            <td className="text-green-600 font-mono">GHS {paid.toLocaleString()}</td>
+                            <td><span className={`badge ${statusColor}`}>{inst.status.replaceAll("_", " ")}</span></td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            )}
 
             <h2 className="font-display font-semibold text-lg text-ink-900 mb-3">Repayment history</h2>
             <div className="card overflow-x-auto">

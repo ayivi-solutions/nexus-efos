@@ -23,7 +23,7 @@ export default function LoansPage() {
   const [error, setError] = useState<string | null>(null);
   useErrorToast(error);
   const [showForm, setShowForm] = useState(false);
-  const [form, setForm] = useState({ customerId: "", principal: "", interestRate: "", termMonths: "" });
+  const [form, setForm] = useState({ customerId: "", principal: "", interestRate: "", interestMethod: "FLAT", termMonths: "" });
   const [saving, setSaving] = useState(false);
 
   function load() {
@@ -42,9 +42,10 @@ export default function LoansPage() {
         customerId: form.customerId,
         principal: Number(form.principal),
         interestRate: Number(form.interestRate),
+        interestMethod: form.interestMethod,
         termMonths: Number(form.termMonths),
       });
-      setForm({ customerId: "", principal: "", interestRate: "", termMonths: "" });
+      setForm({ customerId: "", principal: "", interestRate: "", interestMethod: "FLAT", termMonths: "" });
       setShowForm(false);
       load();
     } catch (err: any) {
@@ -88,6 +89,13 @@ export default function LoansPage() {
                   <input required type="number" inputMode="decimal" min="0" max="100" step="0.1" className="input pr-8" value={form.interestRate} onChange={(e) => setForm((f) => ({ ...f, interestRate: e.target.value }))} />
                   <span className="absolute right-3.5 top-1/2 -translate-y-1/2 text-[13px] text-text-muted pointer-events-none">%</span>
                 </div>
+              </label>
+              <label className="block">
+                <span className="block text-[13px] text-text-500 mb-1.5">Interest method</span>
+                <select className="input" value={form.interestMethod} onChange={(e) => setForm((f) => ({ ...f, interestMethod: e.target.value }))}>
+                  <option value="FLAT">Flat</option>
+                  <option value="REDUCING_BALANCE">Reducing balance</option>
+                </select>
               </label>
               <label className="block">
                 <span className="block text-[13px] text-text-500 mb-1.5">Term</span>

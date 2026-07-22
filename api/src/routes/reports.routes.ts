@@ -46,7 +46,7 @@ reportsRouter.get("/overview", async (req: AuthedRequest, res) => {
 
   const [customers, loans, savingsAccounts] = await Promise.all([
     prisma.customer.findMany({ where: { institutionId } }),
-    prisma.loan.findMany({ where: { institutionId }, include: { repayments: true } }),
+    prisma.loan.findMany({ where: { institutionId }, include: { repayments: true, installments: true } }),
     prisma.savingsAccount.findMany({ where: { institutionId }, include: { transactions: true } }),
   ]);
 
@@ -60,12 +60,24 @@ reportsRouter.get("/overview", async (req: AuthedRequest, res) => {
   }
 
   const byStatus: Record<string, number> = {};
-  let totalPrincipal = 0, totalDisbursed = 0, totalRepaid = 0;
+  let totalPrincipal = 0, totalDisbursed = 0, totalRepaid = 0, totalOutstanding = 0;
   for (const l of loans) {
     byStatus[l.status] = (byStatus[l.status] || 0) + 1;
     totalPrincipal += Number(l.principal);
     if (["DISBURSED", "ACTIVE", "CLOSED"].includes(l.status)) totalDisbursed += Number(l.principal);
     for (const r of l.repayments) totalRepaid += Number(r.amount);
+
+    // doc §70 — prefer the real amortization schedule (principal + interest
+    // still outstanding) over the older principal-minus-repayments proxy,
+    // for loans that have one.
+    if (l.installments.length > 0) {
+      for (const inst of l.installments) {
+        totalOutstanding += Math.max(Number(inst.totalDue) - Number(inst.principalPaid) - Number(inst.interestPaid), 0);
+      }
+    } else if (["DISBURSED", "ACTIVE"].includes(l.status)) {
+      const repaid = l.repayments.reduce((s, r) => s + Number(r.amount), 0);
+      totalOutstanding += Math.max(Number(l.principal) - repaid, 0);
+    }
   }
 
   let totalSavingsBalance = 0, totalDeposits = 0, totalWithdrawals = 0;
@@ -97,7 +109,7 @@ reportsRouter.get("/overview", async (req: AuthedRequest, res) => {
 
   res.json({
     customers: { total: customers.length, bySegment, byStage, byKyc },
-    loans: { total: loans.length, byStatus, totalPrincipal, totalDisbursed, totalOutstanding: Math.max(totalDisbursed - totalRepaid, 0) },
+    loans: { total: loans.length, byStatus, totalPrincipal, totalDisbursed, totalOutstanding },
     savings: { totalAccounts: savingsAccounts.length, totalBalance: totalSavingsBalance, totalDeposits, totalWithdrawals },
     trend: monthList.map((m) => ({ month: m, ...trend[m] })),
   });

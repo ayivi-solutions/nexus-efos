@@ -127,7 +127,7 @@ export const api = {
 
   listLoans: () => request("/loans"),
   getLoan: (id: string) => request(`/loans/${id}`),
-  createLoan: (data: { customerId: string; principal: number; interestRate: number; termMonths: number }) =>
+  createLoan: (data: { customerId: string; principal: number; interestRate: number; interestMethod?: string; termMonths: number }) =>
     request("/loans", { method: "POST", body: JSON.stringify(data) }),
   approveLoan: (id: string) => request(`/loans/${id}/approve`, { method: "POST" }),
   rejectLoan: (id: string) => request(`/loans/${id}/reject`, { method: "POST" }),

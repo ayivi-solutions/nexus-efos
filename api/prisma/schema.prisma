@@ -514,6 +514,7 @@ model Loan {
 
   principal     Decimal     @db.Decimal(14, 2)
   interestRate  Decimal     @db.Decimal(5, 2)
+  interestMethod String     @default("FLAT")
   termMonths    Int
   status        LoanStatus  @default(PENDING)
 
@@ -522,6 +523,7 @@ model Loan {
   disbursedAt   DateTime?
 
   repayments    LoanRepayment[]
+  installments  LoanInstallment[]
 
   createdAt     DateTime    @default(now())
   updatedAt     DateTime    @updatedAt
@@ -539,6 +541,37 @@ model LoanRepayment {
   recordedById String?
 
   @@map("loan_repayments")
+  @@schema("nexus")
+}
+
+// doc §70 Loan Interest Management — the amortization schedule generated at
+// disbursement. Repayments allocate against these oldest-first, interest
+// before principal within each installment.
+enum InstallmentStatus {
+  PENDING
+  PARTIALLY_PAID
+  PAID
+  OVERDUE
+
+  @@schema("nexus")
+}
+
+model LoanInstallment {
+  id                String            @id @default(cuid())
+  loan              Loan              @relation(fields: [loanId], references: [id], onDelete: Cascade)
+  loanId            String
+  installmentNumber Int
+  dueDate           DateTime
+  principalDue      Decimal           @db.Decimal(14, 2)
+  interestDue       Decimal           @db.Decimal(14, 2)
+  totalDue          Decimal           @db.Decimal(14, 2)
+  principalPaid     Decimal           @default(0) @db.Decimal(14, 2)
+  interestPaid      Decimal           @default(0) @db.Decimal(14, 2)
+  status            InstallmentStatus @default(PENDING)
+  createdAt         DateTime          @default(now())
+
+  @@unique([loanId, installmentNumber])
+  @@map("loan_installments")
   @@schema("nexus")
 }
 
