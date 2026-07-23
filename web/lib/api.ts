@@ -11,6 +11,22 @@ async function rawFetch(path: string, options: RequestInit, accessToken: string 
   });
 }
 
+// Multipart upload — deliberately does NOT set Content-Type; the browser
+// sets it automatically with the correct multipart boundary for FormData.
+async function requestFormData(path: string, formData: FormData): Promise<any> {
+  const accessToken = typeof window !== "undefined" ? sessionStorage.getItem("nexus_access_token") : null;
+  const res = await fetch(`${API_BASE}${path}`, {
+    method: "POST",
+    headers: { ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}) },
+    body: formData,
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error ? JSON.stringify(body.error) : `Request failed (${res.status})`);
+  }
+  return res.json();
+}
+
 async function request(path: string, options: RequestInit = {}, _retried = false): Promise<any> {
   const accessToken = typeof window !== "undefined" ? sessionStorage.getItem("nexus_access_token") : null;
   const res = await rawFetch(path, options, accessToken);
@@ -139,6 +155,13 @@ export const api = {
   listWatchlist: () => request("/watchlist"),
   addWatchlistEntry: (data: { fullName: string; idNumber?: string; reason?: string }) => request("/watchlist", { method: "POST", body: JSON.stringify(data) }),
   deleteWatchlistEntry: (id: string) => request(`/watchlist/${id}`, { method: "DELETE" }),
+
+  uploadDocument: (formData: FormData) => requestFormData("/documents", formData),
+  listDocuments: (customerId: string) => request(`/documents?customerId=${customerId}`),
+  verifyDocument: (id: string) => request(`/documents/${id}/verify`, { method: "POST" }),
+  archiveDocument: (id: string) => request(`/documents/${id}/archive`, { method: "POST" }),
+  disposeDocument: (id: string) => request(`/documents/${id}`, { method: "DELETE" }),
+
   updateCustomerStage: (id: string, lifecycleStage: string) =>
     request(`/customers/${id}/stage`, { method: "PATCH", body: JSON.stringify({ lifecycleStage }) }),
   updateCustomerKyc: (id: string, kycStatus: string) =>

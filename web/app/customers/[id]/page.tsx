@@ -17,6 +17,7 @@ type TimelineEvent = { date: string; label: string; detail: string; amount?: str
 const emptyKin = { fullName: "", relationship: "", phone: "", email: "", address: "" };
 const emptyBeneficiary = { fullName: "", relationship: "", allocationPct: "", phone: "" };
 const emptyOwner = { fullName: "", ownershipPct: "", idType: "", idNumber: "" };
+const DOCUMENT_TYPES = ["NATIONAL_ID","PASSPORT","DRIVERS_LICENCE","VOTER_ID","BUSINESS_REGISTRATION","TAX_CERTIFICATE","UTILITY_BILL","PROOF_OF_ADDRESS","PHOTOGRAPH","SIGNATURE","LOAN_DOCUMENT","CONTRACT","CONSENT_FORM","OTHER"];
 
 export default function CustomerDetailPage() {
   const params = useParams();
@@ -34,6 +35,12 @@ export default function CustomerDetailPage() {
   const [beneficiaryForm, setBeneficiaryForm] = useState(emptyBeneficiary);
   const [ownerForm, setOwnerForm] = useState(emptyOwner);
 
+  const [documents, setDocuments] = useState<any[]>([]);
+  const [docFile, setDocFile] = useState<File | null>(null);
+  const [docType, setDocType] = useState("NATIONAL_ID");
+  const [docExpiry, setDocExpiry] = useState("");
+  const [uploading, setUploading] = useState(false);
+
   function load() {
     api.getCustomer(id).then((res) => {
       setCustomer(res.customer);
@@ -47,9 +54,56 @@ export default function CustomerDetailPage() {
         preferredLanguage: res.customer.preferredLanguage || "",
       });
     }).catch((err) => setError(err.message));
+    loadDocuments();
+  }
+
+  function loadDocuments() {
+    api.listDocuments(id).then((res) => setDocuments(res.documents)).catch(() => {});
   }
 
   useEffect(() => { load(); }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function handleUploadDocument(e: React.FormEvent) {
+    e.preventDefault();
+    if (!docFile) return;
+    setUploading(true); setError(null);
+    try {
+      const formData = new FormData();
+      formData.append("file", docFile);
+      formData.append("customerId", id);
+      formData.append("documentType", docType);
+      if (docExpiry) formData.append("expiryDate", new Date(docExpiry).toISOString());
+      await api.uploadDocument(formData);
+      setDocFile(null);
+      setDocExpiry("");
+      loadDocuments();
+    } catch (err: any) {
+      setError(err.message || "Upload failed");
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  async function handleVerifyDocument(docId: string) {
+    setBusy(true); setError(null);
+    try { await api.verifyDocument(docId); loadDocuments(); }
+    catch (err: any) { setError(err.message || "Could not verify document"); }
+    finally { setBusy(false); }
+  }
+
+  async function handleArchiveDocument(docId: string) {
+    setBusy(true); setError(null);
+    try { await api.archiveDocument(docId); loadDocuments(); }
+    catch (err: any) { setError(err.message || "Could not archive document"); }
+    finally { setBusy(false); }
+  }
+
+  async function handleDisposeDocument(docId: string) {
+    setBusy(true); setError(null);
+    try { await api.disposeDocument(docId); loadDocuments(); }
+    catch (err: any) { setError(err.message || "Could not dispose document"); }
+    finally { setBusy(false); }
+  }
 
   async function handleStageChange(lifecycleStage: string) {
     setBusy(true); setError(null);
@@ -317,6 +371,45 @@ export default function CustomerDetailPage() {
               <Stat label="Loans" value={String((customer.loans || []).length)} />
               <Stat label="Savings accounts" value={String((customer.savingsAccounts || []).length)} />
               <Stat label="Customer since" value={new Date(customer.createdAt).toLocaleDateString()} />
+            </div>
+
+            {/* Documents — doc §30/§69. Files live in Supabase Storage (private
+                bucket); only metadata + checksum are stored here. */}
+            <h2 className="font-display font-semibold text-lg text-ink-900 mb-3">Documents</h2>
+            <form onSubmit={handleUploadDocument} className="card p-5 mb-4">
+              <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 mb-3">
+                <input required type="file" accept="image/jpeg,image/png,image/webp,application/pdf" className="input !py-1.5 file:mr-3 file:py-1 file:px-2 file:rounded-md file:border-0 file:bg-gold-500/15 file:text-gold-600 file:text-[12px]" onChange={(e) => setDocFile(e.target.files?.[0] || null)} />
+                <select className="input !py-1.5" value={docType} onChange={(e) => setDocType(e.target.value)}>
+                  {DOCUMENT_TYPES.map((t) => (<option key={t} value={t}>{t.replaceAll("_", " ")}</option>))}
+                </select>
+                <input type="date" placeholder="Expiry (optional)" className="input !py-1.5" value={docExpiry} onChange={(e) => setDocExpiry(e.target.value)} />
+                <button type="submit" disabled={uploading || !docFile} className="btn-text text-gold-600 justify-self-start">{uploading ? "Uploading…" : "+ Upload document"}</button>
+              </div>
+              <p className="text-text-muted text-xs">JPEG, PNG, WEBP, or PDF, up to 10MB.</p>
+            </form>
+            <div className="space-y-2 mb-10">
+              {documents.map((d: any) => {
+                const statusColor =
+                  d.status === "VERIFIED" || d.status === "APPROVED" || d.status === "ACTIVE" ? "bg-green-100 text-green-600"
+                  : d.status === "ARCHIVED" ? "bg-paper-100 text-text-muted"
+                  : "bg-violet-500/15 text-violet-500";
+                return (
+                  <div key={d.id} className="card p-3 flex items-center justify-between text-[13px] gap-2 flex-wrap">
+                    <span className="text-text-700">
+                      <b className="text-text-900">{d.documentName}</b> · {d.documentType.replaceAll("_", " ")}
+                      {d.expiryDate && ` · expires ${new Date(d.expiryDate).toLocaleDateString()}`}
+                      {" "}<span className={`badge ${statusColor}`}>{d.status}</span>
+                    </span>
+                    <div className="space-x-2 whitespace-nowrap">
+                      {d.signedUrl && <a href={d.signedUrl} target="_blank" rel="noreferrer" className="text-gold-600 text-[12px] font-semibold">View</a>}
+                      {d.status === "UPLOADED" && <button onClick={() => handleVerifyDocument(d.id)} disabled={busy} className="text-green-600 text-[12px]">Verify</button>}
+                      {d.status !== "ARCHIVED" && <button onClick={() => handleArchiveDocument(d.id)} disabled={busy} className="text-gold-600 text-[12px]">Archive</button>}
+                      <button onClick={() => handleDisposeDocument(d.id)} disabled={busy} className="text-rose-600 text-[12px]">Dispose</button>
+                    </div>
+                  </div>
+                );
+              })}
+              {documents.length === 0 && <p className="text-text-muted text-sm">No documents uploaded yet.</p>}
             </div>
 
             {/* Next of Kin — doc §38 */}
