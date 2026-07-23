@@ -7,7 +7,10 @@ import { requirePermission } from "../middleware/rbac";
 export const customerRouter = Router();
 customerRouter.use(requireAuth);
 
-const LOCKED_STATUSES = ["CLOSED", "ARCHIVED"];
+// PENDING_APPROVAL and BLACKLISTED both lock the record — the former until
+// the pending request resolves, the latter until compliance clears it via
+// the AML_ADJUDICATION approval.
+const LOCKED_STATUSES = ["CLOSED", "ARCHIVED", "BLACKLISTED", "PENDING_APPROVAL"];
 
 function assertNotLocked(status: string) {
   if (LOCKED_STATUSES.includes(status)) {
@@ -19,6 +22,13 @@ function assertNotLocked(status: string) {
 function normalizeName(name: string) {
   return name.trim().toLowerCase().replace(/\s+/g, " ");
 }
+
+const STATUS_VALUES = ["REGISTERED", "PENDING_VERIFICATION", "PENDING_APPROVAL", "VERIFIED", "ACTIVE", "DORMANT", "RESTRICTED", "SUSPENDED", "BLACKLISTED", "CLOSED", "ARCHIVED"] as const;
+// Fields the doc treats as identity-critical (§24.3: "critical updates
+// require approval where configured") — changing these on an already
+// ACTIVE/VERIFIED customer goes through the approval workflow instead of
+// applying immediately.
+const CRITICAL_FIELDS = ["fullName", "idType", "idNumber", "segment"] as const;
 
 customerRouter.get("/", requirePermission("customers.view"), async (req: AuthedRequest, res) => {
   const { segment, stage, includeArchived, search, watchlistFlag, possibleDuplicate } = req.query as {
@@ -74,9 +84,12 @@ const createSchema = z.object({
   segment: z.enum(["INDIVIDUAL", "BUSINESS", "FARMER_GROUP", "WOMENS_GROUP", "YOUTH", "CORPORATE"]).default("INDIVIDUAL"),
 });
 
-// doc §34 Blacklisting/Watchlist + §35 Merge/Duplicate Detection — both are
-// screen-and-flag-for-review, not hard blocks. An authorised officer can
-// still onboard a flagged customer after reviewing the match.
+// doc §34 AML and Sanctions Screening — now a HARD BLOCK, not a soft flag
+// (23 Jul stock-take finding). A watchlist match sets the customer straight
+// to BLACKLISTED and opens an AML_ADJUDICATION approval request; the
+// customer cannot transact or be edited until a compliance officer (who
+// did not create the record) resolves it. Duplicate detection remains a
+// soft flag — §35 doesn't call for a hard block there.
 customerRouter.post("/", requirePermission("customers.create"), async (req: AuthedRequest, res) => {
   const parsed = createSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
@@ -98,10 +111,27 @@ customerRouter.post("/", requirePermission("customers.create"), async (req: Auth
     data: {
       institutionId: req.auth!.institutionId,
       ...parsed.data,
+      status: watchlistMatch ? "BLACKLISTED" : "REGISTERED",
       watchlistFlag: !!watchlistMatch,
       possibleDuplicate: !!duplicateMatch,
     },
   });
+
+  let approvalRequestId: string | null = null;
+  if (watchlistMatch) {
+    const approval = await prisma.approvalRequest.create({
+      data: {
+        institutionId: req.auth!.institutionId,
+        type: "AML_ADJUDICATION",
+        targetType: "Customer",
+        targetId: customer.id,
+        payload: { previousStatus: "REGISTERED" },
+        reason: `Name matches watchlist entry: ${watchlistMatch.reason || "no reason recorded"}`,
+        requestedById: req.auth!.userId,
+      },
+    });
+    approvalRequestId = approval.id;
+  }
 
   await prisma.auditLog.create({
     data: {
@@ -110,14 +140,16 @@ customerRouter.post("/", requirePermission("customers.create"), async (req: Auth
       action: "customer.create",
       resource: "customer",
       resourceId: customer.id,
-      metadata: { watchlistMatch: !!watchlistMatch, possibleDuplicateOf: duplicateMatch?.id || null },
+      metadata: { watchlistMatch: !!watchlistMatch, possibleDuplicateOf: duplicateMatch?.id || null, approvalRequestId },
     },
   });
 
   res.status(201).json({
     customer,
     warnings: {
-      watchlist: watchlistMatch ? `Name matches a watchlist entry: ${watchlistMatch.reason || "no reason recorded"}` : null,
+      watchlist: watchlistMatch
+        ? `Name matches a watchlist entry — customer BLACKLISTED pending compliance adjudication: ${watchlistMatch.reason || "no reason recorded"}`
+        : null,
       duplicate: duplicateMatch ? `Possible duplicate of existing customer: ${duplicateMatch.fullName}` : null,
     },
   });
@@ -134,8 +166,18 @@ const updateSchema = z.object({
   riskRating: z.enum(["LOW", "MEDIUM", "HIGH"]).optional().nullable(),
   preferredChannel: z.string().optional().nullable(),
   preferredLanguage: z.string().optional().nullable(),
+  smsEnabled: z.boolean().optional(),
+  emailEnabled: z.boolean().optional(),
+  whatsappEnabled: z.boolean().optional(),
+  marketingEnabled: z.boolean().optional(),
+  transactionAlertsEnabled: z.boolean().optional(),
+  statementDeliveryEnabled: z.boolean().optional(),
 });
 
+// doc §24.3 "Critical updates require approval where configured" — changing
+// an identity-critical field on an ACTIVE/VERIFIED customer now creates an
+// approval request instead of applying immediately. Everything else
+// (contact info, preferences, risk rating) still applies directly.
 customerRouter.patch("/:id", requirePermission("customers.update"), async (req: AuthedRequest, res) => {
   const parsed = updateSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
@@ -144,6 +186,28 @@ customerRouter.patch("/:id", requirePermission("customers.update"), async (req: 
   if (!existing) return res.status(404).json({ error: "Customer not found" });
   const lockError = assertNotLocked(existing.status);
   if (lockError) return res.status(409).json({ error: lockError });
+
+  const touchesCriticalField = CRITICAL_FIELDS.some((f) => parsed.data[f] !== undefined);
+  const needsApproval = touchesCriticalField && ["ACTIVE", "VERIFIED"].includes(existing.status);
+
+  if (needsApproval) {
+    const approval = await prisma.approvalRequest.create({
+      data: {
+        institutionId: req.auth!.institutionId,
+        type: "CUSTOMER_PROFILE_UPDATE",
+        targetType: "Customer",
+        targetId: existing.id,
+        payload: parsed.data,
+        reason: "Critical field change on an active/verified customer",
+        requestedById: req.auth!.userId,
+      },
+    });
+    await prisma.customer.update({ where: { id: existing.id }, data: { status: "PENDING_APPROVAL" } });
+    await prisma.auditLog.create({
+      data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "customer.update_requested", resource: "customer", resourceId: existing.id, metadata: { approvalRequestId: approval.id, previousStatus: existing.status } },
+    });
+    return res.status(202).json({ pendingApproval: true, approvalRequestId: approval.id });
+  }
 
   const customer = await prisma.customer.update({ where: { id: existing.id }, data: parsed.data });
 
@@ -188,10 +252,13 @@ customerRouter.patch("/:id/stage", requirePermission("customers.update"), async 
   res.json({ ok: true });
 });
 
-const statusSchema = z.object({
-  status: z.enum(["REGISTERED", "PENDING_VERIFICATION", "VERIFIED", "ACTIVE", "DORMANT", "RESTRICTED", "SUSPENDED", "CLOSED", "ARCHIVED"]),
-});
+const statusSchema = z.object({ status: z.enum(STATUS_VALUES) });
 
+// doc §24.3 pattern applied to status changes too: changing an ACTIVE
+// customer's status is inherently sensitive, so it now routes through
+// approval rather than applying immediately. Status changes on any other
+// current status (REGISTERED, VERIFIED, DORMANT, etc.) still apply
+// directly — those customers aren't yet fully onboarded/active.
 customerRouter.patch("/:id/status", requirePermission("customers.update"), async (req: AuthedRequest, res) => {
   const parsed = statusSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
@@ -203,6 +270,25 @@ customerRouter.patch("/:id/status", requirePermission("customers.update"), async
 
   if (["VERIFIED", "ACTIVE"].includes(parsed.data.status) && existing.kycStatus !== "VERIFIED") {
     return res.status(409).json({ error: `Cannot set status to ${parsed.data.status} — KYC must be VERIFIED first (currently ${existing.kycStatus})` });
+  }
+
+  if (existing.status === "ACTIVE" && parsed.data.status !== "ACTIVE") {
+    const approval = await prisma.approvalRequest.create({
+      data: {
+        institutionId: req.auth!.institutionId,
+        type: "CUSTOMER_STATUS_CHANGE",
+        targetType: "Customer",
+        targetId: existing.id,
+        payload: { status: parsed.data.status, previousStatus: existing.status },
+        reason: "Status change requested on an ACTIVE customer",
+        requestedById: req.auth!.userId,
+      },
+    });
+    await prisma.customer.update({ where: { id: existing.id }, data: { status: "PENDING_APPROVAL" } });
+    await prisma.auditLog.create({
+      data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "customer.status_change_requested", resource: "customer", resourceId: existing.id, metadata: { approvalRequestId: approval.id, requestedStatus: parsed.data.status } },
+    });
+    return res.status(202).json({ pendingApproval: true, approvalRequestId: approval.id });
   }
 
   await prisma.customer.update({ where: { id: existing.id }, data: { status: parsed.data.status } });
@@ -232,7 +318,17 @@ customerRouter.patch("/:id/kyc", requirePermission("customers.update"), async (r
   res.json({ ok: true });
 });
 
+const archiveSchema = z.object({
+  closureReason: z.enum(["CUSTOMER_REQUEST", "DEATH", "BUSINESS_CLOSURE", "FRAUD", "REGULATORY_DIRECTIVE", "DUPLICATE_MERGE", "MIGRATION", "INACTIVITY", "INSTITUTIONAL_DECISION", "COURT_ORDER", "OTHER"]),
+  closureNote: z.string().optional(),
+});
+
+// doc §45.3/§45.4 — closure reason now captured (was previously not asked
+// at all); active-obligations check unchanged.
 customerRouter.post("/:id/archive", requirePermission("customers.delete"), async (req: AuthedRequest, res) => {
+  const parsed = archiveSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
   const customer = await prisma.customer.findFirst({
     where: { id: req.params.id, institutionId: req.auth!.institutionId },
     include: { loans: true, savingsAccounts: true },
@@ -247,10 +343,20 @@ customerRouter.post("/:id/archive", requirePermission("customers.delete"), async
     });
   }
 
-  await prisma.customer.update({ where: { id: customer.id }, data: { archived: true, archivedAt: new Date() } });
+  await prisma.customer.update({
+    where: { id: customer.id },
+    data: {
+      archived: true,
+      archivedAt: new Date(),
+      closureReason: parsed.data.closureReason,
+      closureNote: parsed.data.closureNote,
+      closedById: req.auth!.userId,
+      closedAt: new Date(),
+    },
+  });
 
   await prisma.auditLog.create({
-    data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "customer.archive", resource: "customer", resourceId: req.params.id },
+    data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "customer.archive", resource: "customer", resourceId: req.params.id, metadata: { closureReason: parsed.data.closureReason } },
   });
 
   res.json({ ok: true });
@@ -313,17 +419,27 @@ customerRouter.post("/:id/notes", requirePermission("customers.update"), async (
 
 const beneficiarySchema = z.object({ fullName: z.string().min(2), relationship: z.string().min(1), allocationPct: z.number().min(0).max(100), phone: z.string().optional() });
 
+// doc §37.4 "Total allocation equals 100% where applicable" — enforced as
+// "the running total across all of a customer's beneficiaries can never
+// exceed 100%" (was previously not validated at all).
 customerRouter.post("/:id/beneficiaries", requirePermission("customers.update"), async (req: AuthedRequest, res) => {
   const parsed = beneficiarySchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
   const customer = await findOwnedCustomer(req.params.id, req.auth!.institutionId);
   if (!customer) return res.status(404).json({ error: "Customer not found" });
 
+  const existingBeneficiaries = await prisma.beneficiary.findMany({ where: { customerId: customer.id } });
+  const currentTotal = existingBeneficiaries.reduce((sum, b) => sum + Number(b.allocationPct), 0);
+  const newTotal = currentTotal + parsed.data.allocationPct;
+  if (newTotal > 100) {
+    return res.status(400).json({ error: `Total beneficiary allocation cannot exceed 100% (currently ${currentTotal}%, this would bring it to ${newTotal}%)` });
+  }
+
   const beneficiary = await prisma.beneficiary.create({ data: { customerId: customer.id, ...parsed.data } });
   await prisma.auditLog.create({
     data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "customer.beneficiary_add", resource: "customer", resourceId: customer.id },
   });
-  res.status(201).json({ beneficiary });
+  res.status(201).json({ beneficiary, totalAllocation: newTotal });
 });
 
 customerRouter.delete("/:id/beneficiaries/:beneficiaryId", requirePermission("customers.update"), async (req: AuthedRequest, res) => {

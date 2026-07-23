@@ -102,16 +102,30 @@ productsRouter.post("/:id/versions", requirePermission("institution.configure"),
   res.status(201).json({ version });
 });
 
+// doc §47.4/§62.4 "Approval is required before activation where
+// configured" — activation now opens an ApprovalRequest instead of
+// applying immediately; a different authorised user must approve it.
 productsRouter.post("/:id/activate", requirePermission("institution.configure"), async (req: AuthedRequest, res) => {
-  const product = await prisma.product.updateMany({
-    where: { id: req.params.id, institutionId: req.auth!.institutionId },
-    data: { status: "ACTIVE" },
+  const product = await prisma.product.findFirst({ where: { id: req.params.id, institutionId: req.auth!.institutionId } });
+  if (!product) return res.status(404).json({ error: "Product not found" });
+
+  const approval = await prisma.approvalRequest.create({
+    data: {
+      institutionId: req.auth!.institutionId,
+      type: "PRODUCT_ACTIVATION",
+      targetType: "Product",
+      targetId: product.id,
+      payload: {},
+      reason: `Activate product ${product.code}`,
+      requestedById: req.auth!.userId,
+    },
   });
-  if (product.count === 0) return res.status(404).json({ error: "Product not found" });
+
   await prisma.auditLog.create({
-    data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "product.activate", resource: "product", resourceId: req.params.id },
+    data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "product.activation_requested", resource: "product", resourceId: req.params.id, metadata: { approvalRequestId: approval.id } },
   });
-  res.json({ ok: true });
+
+  res.status(202).json({ pendingApproval: true, approvalRequestId: approval.id });
 });
 
 productsRouter.post("/:id/withdraw", requirePermission("institution.configure"), async (req: AuthedRequest, res) => {

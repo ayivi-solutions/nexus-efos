@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { api } from "@/lib/api";
-import { useErrorToast } from "@/components/Toast";
+import { useErrorToast, useToast } from "@/components/Toast";
 import { AppShell } from "@/components/AppShell";
 
 const STATUS_COLOR: Record<string, string> = {
@@ -24,6 +24,7 @@ export default function LoanDetailPage() {
   const [loan, setLoan] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
   useErrorToast(error);
+  const toast = useToast();
   const [busy, setBusy] = useState(false);
   const [repayAmount, setRepayAmount] = useState("");
   const [customers, setCustomers] = useState<any[]>([]);
@@ -42,7 +43,8 @@ export default function LoanDetailPage() {
     e.preventDefault();
     setBusy(true); setError(null);
     try {
-      await api.addLoanHolder(id, holderForm);
+      const res = await api.addLoanHolder(id, holderForm);
+      if (res?.pendingApproval) toast.info("Holder addition submitted for approval — a different authorised user must approve it.");
       setHolderForm({ customerId: "", role: "JOINT" });
       load();
     } catch (err: any) { setError(err.message || "Could not add account holder"); }

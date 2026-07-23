@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { api } from "@/lib/api";
-import { useErrorToast } from "@/components/Toast";
+import { useErrorToast, useToast } from "@/components/Toast";
 import { AppShell } from "@/components/AppShell";
 
 export default function SavingsDetailPage() {
@@ -14,6 +14,7 @@ export default function SavingsDetailPage() {
   const [account, setAccount] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
   useErrorToast(error);
+  const toast = useToast();
   const [busy, setBusy] = useState(false);
   const [amount, setAmount] = useState("");
   const [customers, setCustomers] = useState<any[]>([]);
@@ -32,7 +33,8 @@ export default function SavingsDetailPage() {
     e.preventDefault();
     setBusy(true); setError(null);
     try {
-      await api.addSavingsHolder(id, holderForm);
+      const res = await api.addSavingsHolder(id, holderForm);
+      if (res?.pendingApproval) toast.info("Holder addition submitted for approval — a different authorised user must approve it.");
       setHolderForm({ customerId: "", role: "JOINT" });
       load();
     } catch (err: any) { setError(err.message || "Could not add account holder"); }

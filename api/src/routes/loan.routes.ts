@@ -89,6 +89,9 @@ const addHolderSchema = z.object({
   role: z.enum(["JOINT", "AUTHORISED_SIGNATORY", "GUARDIAN", "NOMINEE", "POWER_OF_ATTORNEY", "CORPORATE_REPRESENTATIVE"]),
 });
 
+// doc §36.4 "Ownership changes require approval" — adding a holder no
+// longer applies immediately; it opens an ApprovalRequest that a different
+// authorised user must approve.
 loanRouter.post("/:id/holders", requirePermission("loans.approve"), async (req: AuthedRequest, res) => {
   const parsed = addHolderSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
@@ -101,16 +104,23 @@ loanRouter.post("/:id/holders", requirePermission("loans.approve"), async (req: 
   const customer = await prisma.customer.findFirst({ where: { id: parsed.data.customerId, institutionId: req.auth!.institutionId } });
   if (!customer) return res.status(404).json({ error: "Customer not found" });
 
-  const holder = await prisma.accountHolder.create({
-    data: { institutionId: req.auth!.institutionId, customerId: parsed.data.customerId, role: parsed.data.role, loanId: loan.id, addedById: req.auth!.userId },
-    include: { customer: { select: { id: true, fullName: true, phone: true } } },
+  const approval = await prisma.approvalRequest.create({
+    data: {
+      institutionId: req.auth!.institutionId,
+      type: "ACCOUNT_HOLDER_ADD",
+      targetType: "Loan",
+      targetId: loan.id,
+      payload: { customerId: parsed.data.customerId, role: parsed.data.role, loanId: loan.id },
+      reason: `Add ${parsed.data.role} holder to loan`,
+      requestedById: req.auth!.userId,
+    },
   });
 
   await prisma.auditLog.create({
-    data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "loan.holder_add", resource: "loan", resourceId: loan.id, metadata: { customerId: parsed.data.customerId, role: parsed.data.role } },
+    data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "loan.holder_add_requested", resource: "loan", resourceId: loan.id, metadata: { customerId: parsed.data.customerId, role: parsed.data.role, approvalRequestId: approval.id } },
   });
 
-  res.status(201).json({ holder });
+  res.status(202).json({ pendingApproval: true, approvalRequestId: approval.id });
 });
 
 loanRouter.delete("/:id/holders/:holderId", requirePermission("loans.approve"), async (req: AuthedRequest, res) => {

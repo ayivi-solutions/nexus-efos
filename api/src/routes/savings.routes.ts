@@ -35,6 +35,7 @@ const addHolderSchema = z.object({
   role: z.enum(["JOINT", "AUTHORISED_SIGNATORY", "GUARDIAN", "NOMINEE", "POWER_OF_ATTORNEY", "CORPORATE_REPRESENTATIVE"]),
 });
 
+// doc §36.4 "Ownership changes require approval" — same as loans.
 savingsRouter.post("/:id/holders", requirePermission("savings.approve"), async (req: AuthedRequest, res) => {
   const parsed = addHolderSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
@@ -47,16 +48,23 @@ savingsRouter.post("/:id/holders", requirePermission("savings.approve"), async (
   const customer = await prisma.customer.findFirst({ where: { id: parsed.data.customerId, institutionId: req.auth!.institutionId } });
   if (!customer) return res.status(404).json({ error: "Customer not found" });
 
-  const holder = await prisma.accountHolder.create({
-    data: { institutionId: req.auth!.institutionId, customerId: parsed.data.customerId, role: parsed.data.role, savingsAccountId: account.id, addedById: req.auth!.userId },
-    include: { customer: { select: { id: true, fullName: true, phone: true } } },
+  const approval = await prisma.approvalRequest.create({
+    data: {
+      institutionId: req.auth!.institutionId,
+      type: "ACCOUNT_HOLDER_ADD",
+      targetType: "SavingsAccount",
+      targetId: account.id,
+      payload: { customerId: parsed.data.customerId, role: parsed.data.role, savingsAccountId: account.id },
+      reason: `Add ${parsed.data.role} holder to savings account`,
+      requestedById: req.auth!.userId,
+    },
   });
 
   await prisma.auditLog.create({
-    data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "savings.holder_add", resource: "savings_account", resourceId: account.id, metadata: { customerId: parsed.data.customerId, role: parsed.data.role } },
+    data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "savings.holder_add_requested", resource: "savings_account", resourceId: account.id, metadata: { customerId: parsed.data.customerId, role: parsed.data.role, approvalRequestId: approval.id } },
   });
 
-  res.status(201).json({ holder });
+  res.status(202).json({ pendingApproval: true, approvalRequestId: approval.id });
 });
 
 savingsRouter.delete("/:id/holders/:holderId", requirePermission("savings.approve"), async (req: AuthedRequest, res) => {

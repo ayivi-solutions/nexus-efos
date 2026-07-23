@@ -3,14 +3,15 @@
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { api } from "@/lib/api";
-import { useErrorToast } from "@/components/Toast";
+import { useErrorToast, useToast } from "@/components/Toast";
 import { AppShell } from "@/components/AppShell";
 
 const STAGES = ["AWARENESS", "ACQUISITION", "ONBOARDING", "ACTIVATION", "GROWTH", "RETENTION", "ADVOCACY", "RE_ENGAGEMENT"];
-const STATUSES = ["REGISTERED", "PENDING_VERIFICATION", "VERIFIED", "ACTIVE", "DORMANT", "RESTRICTED", "SUSPENDED", "CLOSED", "ARCHIVED"];
+const STATUSES = ["REGISTERED", "PENDING_VERIFICATION", "PENDING_APPROVAL", "VERIFIED", "ACTIVE", "DORMANT", "RESTRICTED", "SUSPENDED", "BLACKLISTED", "CLOSED", "ARCHIVED"];
 const KYC_STATUSES = ["PENDING", "VERIFIED", "REJECTED"];
 const SEGMENTS = ["INDIVIDUAL", "BUSINESS", "FARMER_GROUP", "WOMENS_GROUP", "YOUTH", "CORPORATE"];
 const RISK_RATINGS = ["LOW", "MEDIUM", "HIGH"];
+const CLOSURE_REASONS = ["CUSTOMER_REQUEST", "DEATH", "BUSINESS_CLOSURE", "FRAUD", "REGULATORY_DIRECTIVE", "DUPLICATE_MERGE", "MIGRATION", "INACTIVITY", "INSTITUTIONAL_DECISION", "COURT_ORDER", "OTHER"];
 
 type TimelineEvent = { date: string; label: string; detail: string; amount?: string };
 
@@ -22,13 +23,17 @@ const DOCUMENT_TYPES = ["NATIONAL_ID","PASSPORT","DRIVERS_LICENCE","VOTER_ID","B
 export default function CustomerDetailPage() {
   const params = useParams();
   const router = useRouter();
+  const toast = useToast();
   const id = params.id as string;
   const [customer, setCustomer] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
   useErrorToast(error);
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState(false);
-  const [editForm, setEditForm] = useState({ fullName: "", phone: "", email: "", segment: "INDIVIDUAL", riskRating: "", preferredChannel: "", preferredLanguage: "" });
+  const [editForm, setEditForm] = useState({
+    fullName: "", phone: "", email: "", segment: "INDIVIDUAL", riskRating: "", preferredChannel: "", preferredLanguage: "",
+    smsEnabled: true, emailEnabled: true, whatsappEnabled: true, marketingEnabled: false, transactionAlertsEnabled: true, statementDeliveryEnabled: true,
+  });
 
   const [kinForm, setKinForm] = useState(emptyKin);
   const [noteText, setNoteText] = useState("");
@@ -41,6 +46,10 @@ export default function CustomerDetailPage() {
   const [docExpiry, setDocExpiry] = useState("");
   const [uploading, setUploading] = useState(false);
 
+  const [showCloseForm, setShowCloseForm] = useState(false);
+  const [closureReason, setClosureReason] = useState("CUSTOMER_REQUEST");
+  const [closureNote, setClosureNote] = useState("");
+
   function load() {
     api.getCustomer(id).then((res) => {
       setCustomer(res.customer);
@@ -52,6 +61,12 @@ export default function CustomerDetailPage() {
         riskRating: res.customer.riskRating || "",
         preferredChannel: res.customer.preferredChannel || "",
         preferredLanguage: res.customer.preferredLanguage || "",
+        smsEnabled: res.customer.smsEnabled,
+        emailEnabled: res.customer.emailEnabled,
+        whatsappEnabled: res.customer.whatsappEnabled,
+        marketingEnabled: res.customer.marketingEnabled,
+        transactionAlertsEnabled: res.customer.transactionAlertsEnabled,
+        statementDeliveryEnabled: res.customer.statementDeliveryEnabled,
       });
     }).catch((err) => setError(err.message));
     loadDocuments();
@@ -81,6 +96,21 @@ export default function CustomerDetailPage() {
       setError(err.message || "Upload failed");
     } finally {
       setUploading(false);
+    }
+  }
+
+  async function handleReplaceDocument(docId: string, file: File) {
+    setBusy(true); setError(null);
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      await api.replaceDocument(docId, formData);
+      toast.success("Document replaced — previous version archived.");
+      loadDocuments();
+    } catch (err: any) {
+      setError(err.message || "Could not replace document");
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -114,7 +144,11 @@ export default function CustomerDetailPage() {
 
   async function handleStatusChange(status: string) {
     setBusy(true); setError(null);
-    try { await api.updateCustomerStatus(id, status); load(); }
+    try {
+      const res = await api.updateCustomerStatus(id, status);
+      if (res?.pendingApproval) toast.info("Status change submitted for approval — a different authorised user must approve it.");
+      load();
+    }
     catch (err: any) { setError(err.message || "Could not update status"); }
     finally { setBusy(false); }
   }
@@ -129,26 +163,35 @@ export default function CustomerDetailPage() {
   async function saveEdit() {
     setBusy(true); setError(null);
     try {
-      await api.updateCustomer(id, {
+      const res = await api.updateCustomer(id, {
         ...editForm,
         email: editForm.email || null,
         riskRating: editForm.riskRating || null,
         preferredChannel: editForm.preferredChannel || null,
         preferredLanguage: editForm.preferredLanguage || null,
       });
+      if (res?.pendingApproval) toast.info("Critical field change submitted for approval — a different authorised user must approve it.");
       setEditing(false);
       load();
     } catch (err: any) { setError(err.message || "Could not update customer"); }
     finally { setBusy(false); }
   }
 
-  async function toggleArchive() {
+  async function handleArchive(e: React.FormEvent) {
+    e.preventDefault();
     setBusy(true); setError(null);
     try {
-      if (customer.archived) await api.unarchiveCustomer(id);
-      else await api.archiveCustomer(id);
+      await api.archiveCustomer(id, { closureReason, closureNote: closureNote || undefined });
+      setShowCloseForm(false);
       load();
     } catch (err: any) { setError(err.message || "Action failed"); }
+    finally { setBusy(false); }
+  }
+
+  async function handleUnarchive() {
+    setBusy(true); setError(null);
+    try { await api.unarchiveCustomer(id); load(); }
+    catch (err: any) { setError(err.message || "Action failed"); }
     finally { setBusy(false); }
   }
 
@@ -260,8 +303,10 @@ export default function CustomerDetailPage() {
             <div className="flex items-center justify-between flex-wrap gap-2 mb-1">
               <div className="font-mono text-[11.5px] tracking-[0.1em] uppercase text-rose-600">{customer.segment.replaceAll("_", " ")}</div>
               <div className="flex gap-2">
-                {customer.archived && <span className="badge bg-rose-100 text-rose-600">Archived</span>}
-                {customer.watchlistFlag && <span className="badge bg-rose-100 text-rose-600">Watchlist match</span>}
+                {customer.archived && <span className="badge bg-rose-100 text-rose-600">Archived{customer.closureReason ? ` · ${customer.closureReason.replaceAll("_", " ")}` : ""}</span>}
+                {customer.status === "BLACKLISTED" && <span className="badge bg-rose-100 text-rose-600">Blacklisted — pending AML adjudication</span>}
+                {customer.status === "PENDING_APPROVAL" && <span className="badge bg-violet-500/15 text-violet-500">Pending approval</span>}
+                {customer.watchlistFlag && customer.status !== "BLACKLISTED" && <span className="badge bg-rose-100 text-rose-600">Watchlist match</span>}
                 {customer.possibleDuplicate && (
                   <button onClick={clearDuplicateFlag} disabled={busy} className="badge bg-gold-500/15 text-gold-600">Possible duplicate — clear?</button>
                 )}
@@ -282,13 +327,28 @@ export default function CustomerDetailPage() {
                   ) : (
                     <>
                       <button onClick={() => setEditing(true)} className="text-[12.5px] text-gold-600 font-semibold">Edit</button>
-                      <button onClick={toggleArchive} disabled={busy} className={`text-[12.5px] font-semibold ${customer.archived ? "text-green-600" : "text-rose-600"}`}>
-                        {customer.archived ? "Unarchive" : "Archive"}
-                      </button>
+                      {customer.archived ? (
+                        <button onClick={handleUnarchive} disabled={busy} className="text-[12.5px] font-semibold text-green-600">Unarchive</button>
+                      ) : (
+                        <button onClick={() => setShowCloseForm((s) => !s)} disabled={busy} className="text-[12.5px] font-semibold text-rose-600">Archive</button>
+                      )}
                     </>
                   )}
                 </div>
               </div>
+
+              {showCloseForm && !customer.archived && (
+                <form onSubmit={handleArchive} className="mb-4 p-4 rounded-[10px] bg-rose-100/40 border border-rose-600/20">
+                  <p className="text-[12.5px] text-text-700 mb-3 font-medium">doc §45.3 — closure reason is required to archive a customer.</p>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
+                    <select className="input !py-1.5" value={closureReason} onChange={(e) => setClosureReason(e.target.value)}>
+                      {CLOSURE_REASONS.map((r) => (<option key={r} value={r}>{r.replaceAll("_", " ")}</option>))}
+                    </select>
+                    <input placeholder="Note (optional)" className="input !py-1.5" value={closureNote} onChange={(e) => setClosureNote(e.target.value)} />
+                  </div>
+                  <button type="submit" disabled={busy} className="btn-text text-rose-600 font-semibold">Confirm archive</button>
+                </form>
+              )}
 
               {editing ? (
                 <>
@@ -312,7 +372,7 @@ export default function CustomerDetailPage() {
                       </select>
                     </label>
                   </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
                     <label className="block">
                       <span className="block text-[13px] text-text-500 mb-1.5">Risk rating</span>
                       <select className="input" value={editForm.riskRating} onChange={(e) => setEditForm((f) => ({ ...f, riskRating: e.target.value }))}>
@@ -334,6 +394,15 @@ export default function CustomerDetailPage() {
                       <span className="block text-[13px] text-text-500 mb-1.5">Preferred language</span>
                       <input className="input" value={editForm.preferredLanguage} onChange={(e) => setEditForm((f) => ({ ...f, preferredLanguage: e.target.value }))} placeholder="e.g. Ewe, Twi, English" />
                     </label>
+                  </div>
+                  <span className="block text-[13px] text-text-500 mb-2">Communication preferences (doc §39.2)</span>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-[12.5px] text-text-700">
+                    <label className="flex items-center gap-1.5"><input type="checkbox" checked={editForm.smsEnabled} onChange={(e) => setEditForm((f) => ({ ...f, smsEnabled: e.target.checked }))} /> SMS</label>
+                    <label className="flex items-center gap-1.5"><input type="checkbox" checked={editForm.emailEnabled} onChange={(e) => setEditForm((f) => ({ ...f, emailEnabled: e.target.checked }))} /> Email</label>
+                    <label className="flex items-center gap-1.5"><input type="checkbox" checked={editForm.whatsappEnabled} onChange={(e) => setEditForm((f) => ({ ...f, whatsappEnabled: e.target.checked }))} /> WhatsApp</label>
+                    <label className="flex items-center gap-1.5"><input type="checkbox" checked={editForm.transactionAlertsEnabled} onChange={(e) => setEditForm((f) => ({ ...f, transactionAlertsEnabled: e.target.checked }))} /> Transaction alerts</label>
+                    <label className="flex items-center gap-1.5"><input type="checkbox" checked={editForm.statementDeliveryEnabled} onChange={(e) => setEditForm((f) => ({ ...f, statementDeliveryEnabled: e.target.checked }))} /> Statement delivery</label>
+                    <label className="flex items-center gap-1.5"><input type="checkbox" checked={editForm.marketingEnabled} onChange={(e) => setEditForm((f) => ({ ...f, marketingEnabled: e.target.checked }))} /> Marketing (opt-in)</label>
                   </div>
                 </>
               ) : (
@@ -396,14 +465,20 @@ export default function CustomerDetailPage() {
                 return (
                   <div key={d.id} className="card p-3 flex items-center justify-between text-[13px] gap-2 flex-wrap">
                     <span className="text-text-700">
-                      <b className="text-text-900">{d.documentName}</b> · {d.documentType.replaceAll("_", " ")}
+                      <b className="text-text-900">{d.documentName}</b> · {d.documentType.replaceAll("_", " ")} · v{d.versionNumber}
                       {d.expiryDate && ` · expires ${new Date(d.expiryDate).toLocaleDateString()}`}
                       {" "}<span className={`badge ${statusColor}`}>{d.status}</span>
                     </span>
-                    <div className="space-x-2 whitespace-nowrap">
+                    <div className="space-x-2 whitespace-nowrap flex items-center">
                       {d.signedUrl && <a href={d.signedUrl} target="_blank" rel="noreferrer" className="text-gold-600 text-[12px] font-semibold">View</a>}
                       {d.status === "UPLOADED" && <button onClick={() => handleVerifyDocument(d.id)} disabled={busy} className="text-green-600 text-[12px]">Verify</button>}
-                      {d.status !== "ARCHIVED" && <button onClick={() => handleArchiveDocument(d.id)} disabled={busy} className="text-gold-600 text-[12px]">Archive</button>}
+                      {d.status !== "ARCHIVED" && (
+                        <label className="text-gold-600 text-[12px] cursor-pointer">
+                          Replace
+                          <input type="file" accept="image/jpeg,image/png,image/webp,application/pdf" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) handleReplaceDocument(d.id, f); }} />
+                        </label>
+                      )}
+                      {d.status !== "ARCHIVED" && <button onClick={() => handleArchiveDocument(d.id)} disabled={busy} className="text-text-muted text-[12px]">Archive</button>}
                       <button onClick={() => handleDisposeDocument(d.id)} disabled={busy} className="text-rose-600 text-[12px]">Dispose</button>
                     </div>
                   </div>
@@ -444,6 +519,9 @@ export default function CustomerDetailPage() {
                 <input type="tel" placeholder="Phone (optional)" className="input !py-1.5" value={beneficiaryForm.phone} onChange={(e) => setBeneficiaryForm((f) => ({ ...f, phone: e.target.value }))} />
               </div>
               <button type="submit" disabled={busy} className="btn-text text-gold-600">+ Add beneficiary</button>
+              {customer.beneficiaries && customer.beneficiaries.length > 0 && (
+                <p className="text-text-muted text-xs mt-2">Current total allocation: {customer.beneficiaries.reduce((s: number, b: any) => s + Number(b.allocationPct), 0)}%</p>
+              )}
             </form>
             <div className="space-y-2 mb-8">
               {(customer.beneficiaries || []).map((b: any) => (

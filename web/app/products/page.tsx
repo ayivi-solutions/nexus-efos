@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
-import { useErrorToast } from "@/components/Toast";
+import { useErrorToast, useToast } from "@/components/Toast";
 import { AppShell } from "@/components/AppShell";
 
 const STATUS_COLOR: Record<string, string> = {
@@ -34,6 +34,7 @@ export default function ProductsPage() {
   const [products, setProducts] = useState<any[]>([]);
   const [error, setError] = useState<string | null>(null);
   useErrorToast(error);
+  const toast = useToast();
 
   const [showForm, setShowForm] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -91,7 +92,10 @@ export default function ProductsPage() {
     setBusyId(id);
     setError(null);
     try {
-      if (action === "activate") await api.activateProduct(id);
+      if (action === "activate") {
+        const res = await api.activateProduct(id);
+        if (res?.pendingApproval) toast.info("Activation submitted for approval — a different authorised user must approve it.");
+      }
       if (action === "withdraw") await api.withdrawProduct(id);
       if (action === "archive") await api.archiveProduct(id);
       load();

@@ -65,6 +65,7 @@ model Institution {
   watchlistEntries WatchlistEntry[]
   accountHolders   AccountHolder[]
   documents        Document[]
+  approvalRequests ApprovalRequest[]
 
   createdAt     DateTime          @default(now())
   updatedAt     DateTime          @updatedAt
@@ -349,16 +350,43 @@ enum LifecycleStage {
 // marketing journey). Gates whether a customer can actually transact
 // (Technical Spec sections 26.4, 57.6, 59.6). A customer can be in
 // "Retention" from a marketing standpoint while operationally "Dormant".
+// Merged from EFS §41.3 (11 values) + Technical Spec §57.6 (9 values) — the
+// two documents disagreed on the status set; this reconciles them with
+// explicit workflow meaning per value (23 Jul stock-take). PROSPECTIVE
+// dropped (no pre-registration lead pipeline exists — a Customer row only
+// exists once real registration happens). INACTIVE dropped (a near-
+// duplicate of DORMANT with no distinct operational meaning here).
+// PENDING_APPROVAL and BLACKLISTED are new, load-bearing additions that
+// the approval workflow and AML hard-block below actually depend on.
 enum AccountStatus {
   REGISTERED
   PENDING_VERIFICATION
+  PENDING_APPROVAL
   VERIFIED
   ACTIVE
   DORMANT
   RESTRICTED
   SUSPENDED
+  BLACKLISTED
   CLOSED
   ARCHIVED
+
+  @@schema("nexus")
+}
+
+// doc §45.3 Customer Offboarding closure reasons
+enum ClosureReason {
+  CUSTOMER_REQUEST
+  DEATH
+  BUSINESS_CLOSURE
+  FRAUD
+  REGULATORY_DIRECTIVE
+  DUPLICATE_MERGE
+  MIGRATION
+  INACTIVITY
+  INSTITUTIONAL_DECISION
+  COURT_ORDER
+  OTHER
 
   @@schema("nexus")
 }
@@ -398,6 +426,23 @@ model Customer {
   preferredLanguage  String?
   watchlistFlag      Boolean     @default(false)
   possibleDuplicate  Boolean     @default(false)
+
+  // doc §39.2 — granular per-channel opt-in/out, replacing the single
+  // preferredChannel dropdown as the actual controls (preferredChannel
+  // stays as a "primary" hint for UI ordering, not the enforcement point).
+  smsEnabled               Boolean @default(true)
+  emailEnabled             Boolean @default(true)
+  whatsappEnabled          Boolean @default(true)
+  marketingEnabled         Boolean @default(false)
+  transactionAlertsEnabled Boolean @default(true)
+  statementDeliveryEnabled Boolean @default(true)
+
+  // doc §45.3 — closure reason, captured at archive time (was previously
+  // not recorded at all).
+  closureReason   ClosureReason?
+  closureNote     String?
+  closedById      String?
+  closedAt        DateTime?
 
   archived      Boolean         @default(false)
   archivedAt    DateTime?
@@ -500,6 +545,58 @@ model WatchlistEntry {
   createdAt     DateTime    @default(now())
 
   @@map("watchlist_entries")
+  @@schema("nexus")
+}
+
+// ---------------------------------------------------------------------------
+// APPROVAL WORKFLOW — a single shared capability underneath four separate
+// doc requirements that each said "requires approval where configured":
+// §24 critical customer profile updates, §36 account holder ownership
+// changes, §47/§62 product activation, and AML adjudication (§34). Rather
+// than building four bespoke approval mechanisms, every one of them creates
+// an ApprovalRequest; approving/rejecting it is a single generic action
+// that then applies (or discards) whatever `payload` describes against
+// `targetType`/`targetId`. Segregation of duties applies uniformly:
+// requestedById and resolvedById can never be the same user.
+// ---------------------------------------------------------------------------
+
+enum ApprovalRequestType {
+  CUSTOMER_STATUS_CHANGE
+  CUSTOMER_PROFILE_UPDATE
+  ACCOUNT_HOLDER_ADD
+  PRODUCT_ACTIVATION
+  AML_ADJUDICATION
+
+  @@schema("nexus")
+}
+
+enum ApprovalRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+
+  @@schema("nexus")
+}
+
+model ApprovalRequest {
+  id            String                 @id @default(cuid())
+  institution   Institution            @relation(fields: [institutionId], references: [id], onDelete: Cascade)
+  institutionId String
+  type          ApprovalRequestType
+  status        ApprovalRequestStatus  @default(PENDING)
+
+  targetType    String
+  targetId      String
+  payload       Json
+  reason        String?
+
+  requestedById String
+  requestedAt   DateTime               @default(now())
+  resolvedById  String?
+  resolvedAt    DateTime?
+  resolutionNote String?
+
+  @@map("approval_requests")
   @@schema("nexus")
 }
 
@@ -811,6 +908,13 @@ model Document {
   expiryDate       DateTime?
   status           DocumentStatus @default(UPLOADED)
   uploadedById     String?
+
+  // doc §30.3 "Replace documents... support version history" — Replace
+  // creates a new Document row linked back to the one it supersedes, and
+  // auto-archives the old one, rather than each upload being independent.
+  replacesDocument   Document?  @relation("DocumentVersionChain", fields: [replacesDocumentId], references: [id])
+  replacesDocumentId String?    @unique
+  replacedBy         Document?  @relation("DocumentVersionChain")
 
   createdAt        DateTime       @default(now())
   updatedAt        DateTime       @updatedAt

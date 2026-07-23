@@ -88,6 +88,64 @@ documentsRouter.post("/", requirePermission("customers.update"), upload.single("
   res.status(201).json({ document });
 });
 
+// doc §30.3 "Replace documents... support version history" — creates a new
+// Document linked back to the one it supersedes (versionNumber + 1) and
+// auto-archives the old one, rather than each upload being an unrelated
+// independent record.
+documentsRouter.post("/:id/replace", requirePermission("customers.update"), upload.single("file"), async (req: AuthedRequest, res) => {
+  if (!req.file) return res.status(400).json({ error: "No file uploaded" });
+
+  const oldDocument = await prisma.document.findFirst({ where: { id: req.params.id, institutionId: req.auth!.institutionId } });
+  if (!oldDocument) return res.status(404).json({ error: "Document not found" });
+
+  const checksum = crypto.createHash("sha256").update(req.file.buffer).digest("hex");
+  const documentId = crypto.randomUUID();
+  const safeName = req.file.originalname.replace(/[^a-zA-Z0-9._-]/g, "_");
+  const storageReference = `${req.auth!.institutionId}/${oldDocument.customerId}/${documentId}-${safeName}`;
+
+  const { error: uploadError } = await supabase.storage.from(DOCUMENTS_BUCKET).upload(storageReference, req.file.buffer, {
+    contentType: req.file.mimetype,
+    upsert: false,
+  });
+  if (uploadError) return res.status(500).json({ error: `Storage upload failed: ${uploadError.message}` });
+
+  const [newDocument] = await prisma.$transaction([
+    prisma.document.create({
+      data: {
+        id: documentId,
+        institutionId: req.auth!.institutionId,
+        customerId: oldDocument.customerId,
+        documentName: oldDocument.documentName,
+        documentType: oldDocument.documentType,
+        category: oldDocument.category,
+        storageReference,
+        checksum,
+        fileSize: req.file.size,
+        mimeType: req.file.mimetype,
+        versionNumber: oldDocument.versionNumber + 1,
+        expiryDate: oldDocument.expiryDate,
+        status: "UPLOADED",
+        uploadedById: req.auth!.userId,
+        replacesDocumentId: oldDocument.id,
+      },
+    }),
+    prisma.document.update({ where: { id: oldDocument.id }, data: { status: "ARCHIVED" } }),
+  ]);
+
+  await prisma.auditLog.create({
+    data: {
+      institutionId: req.auth!.institutionId,
+      userId: req.auth!.userId,
+      action: "document.replace",
+      resource: "document",
+      resourceId: newDocument.id,
+      metadata: { replacesDocumentId: oldDocument.id, versionNumber: newDocument.versionNumber, checksum },
+    },
+  });
+
+  res.status(201).json({ document: newDocument });
+});
+
 // Signed URLs are generated fresh on every list call (5-minute expiry) —
 // nothing about document access is ever a permanent public link.
 documentsRouter.get("/", requirePermission("customers.view"), async (req: AuthedRequest, res) => {
