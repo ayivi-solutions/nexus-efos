@@ -140,7 +140,7 @@ export const api = {
   createCustomer: (data: { fullName: string; phone: string; email?: string; segment: string }) =>
     request("/customers", { method: "POST", body: JSON.stringify(data) }),
   updateCustomer: (id: string, data: any) => request(`/customers/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
-  archiveCustomer: (id: string) => request(`/customers/${id}/archive`, { method: "POST" }),
+  archiveCustomer: (id: string, data: { closureReason: string; closureNote?: string }) => request(`/customers/${id}/archive`, { method: "POST", body: JSON.stringify(data) }),
   unarchiveCustomer: (id: string) => request(`/customers/${id}/unarchive`, { method: "POST" }),
   clearDuplicateFlag: (id: string) => request(`/customers/${id}/clear-duplicate-flag`, { method: "POST" }),
 
@@ -152,11 +152,16 @@ export const api = {
   addBeneficialOwner: (customerId: string, data: any) => request(`/customers/${customerId}/beneficial-owners`, { method: "POST", body: JSON.stringify(data) }),
   deleteBeneficialOwner: (customerId: string, ownerId: string) => request(`/customers/${customerId}/beneficial-owners/${ownerId}`, { method: "DELETE" }),
 
+  listApprovals: (status?: string) => request(`/approvals${status ? `?status=${status}` : ""}`),
+  approveRequest: (id: string, resolutionNote?: string) => request(`/approvals/${id}/approve`, { method: "POST", body: JSON.stringify({ resolutionNote }) }),
+  rejectRequest: (id: string, resolutionNote?: string) => request(`/approvals/${id}/reject`, { method: "POST", body: JSON.stringify({ resolutionNote }) }),
+
   listWatchlist: () => request("/watchlist"),
   addWatchlistEntry: (data: { fullName: string; idNumber?: string; reason?: string }) => request("/watchlist", { method: "POST", body: JSON.stringify(data) }),
   deleteWatchlistEntry: (id: string) => request(`/watchlist/${id}`, { method: "DELETE" }),
 
   uploadDocument: (formData: FormData) => requestFormData("/documents", formData),
+  replaceDocument: (id: string, formData: FormData) => requestFormData(`/documents/${id}/replace`, formData),
   listDocuments: (customerId: string) => request(`/documents?customerId=${customerId}`),
   verifyDocument: (id: string) => request(`/documents/${id}/verify`, { method: "POST" }),
   archiveDocument: (id: string) => request(`/documents/${id}/archive`, { method: "POST" }),

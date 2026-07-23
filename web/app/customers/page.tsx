@@ -22,11 +22,13 @@ const STAGE_COLOR: Record<string, string> = {
 const STATUS_COLOR: Record<string, string> = {
   REGISTERED: "bg-violet-500/15 text-violet-500",
   PENDING_VERIFICATION: "bg-violet-500/15 text-violet-500",
+  PENDING_APPROVAL: "bg-violet-500/15 text-violet-500",
   VERIFIED: "bg-gold-500/15 text-gold-600",
   ACTIVE: "bg-green-100 text-green-600",
   DORMANT: "bg-paper-100 text-text-muted",
   RESTRICTED: "bg-rose-100 text-rose-600",
   SUSPENDED: "bg-rose-100 text-rose-600",
+  BLACKLISTED: "bg-rose-100 text-rose-600",
   CLOSED: "bg-paper-100 text-text-muted",
   ARCHIVED: "bg-paper-100 text-text-muted",
 };

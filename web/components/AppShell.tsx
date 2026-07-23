@@ -15,6 +15,7 @@ const NAV_FULL: { label: string; icon: string; href: string; perm: string | null
   { label: "Reports", icon: "▧", href: "/reports", perm: "reports.view" },
   { label: "Products", icon: "◫", href: "/products", perm: "institution.configure" },
   { label: "Watchlist", icon: "▨", href: "/watchlist", perm: "institution.configure" },
+  { label: "Approvals", icon: "✓", href: "/approvals", perm: "institution.configure" },
 ];
 
 export function AppShell({ active, children }: { active: string; children: React.ReactNode }) {
