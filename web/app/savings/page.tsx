@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
-import { useErrorToast } from "@/components/Toast";
+import { useErrorToast, useToast } from "@/components/Toast";
 import { AppShell } from "@/components/AppShell";
 
 export default function SavingsPage() {
@@ -13,7 +13,9 @@ export default function SavingsPage() {
   const [products, setProducts] = useState<any[]>([]);
   const [error, setError] = useState<string | null>(null);
   useErrorToast(error);
+  const toast = useToast();
   const [showForm, setShowForm] = useState(false);
+  const [batchBusy, setBatchBusy] = useState(false);
   const [newCustomerId, setNewCustomerId] = useState("");
   const [newProductVersionId, setNewProductVersionId] = useState("");
   const [saving, setSaving] = useState(false);
@@ -25,6 +27,26 @@ export default function SavingsPage() {
   }
 
   useEffect(() => { load(); }, []);
+
+  async function handleAccrueAll() {
+    setBatchBusy(true); setError(null);
+    try {
+      const res = await api.accrueInterestAll();
+      toast.success(`Accrued interest for ${res.accountsProcessed} account(s), ${res.accrualRowsCreated} period(s) total.`);
+      load();
+    } catch (err: any) { setError(err.message || "Batch accrual failed"); }
+    finally { setBatchBusy(false); }
+  }
+
+  async function handlePostAll() {
+    setBatchBusy(true); setError(null);
+    try {
+      const res = await api.postInterestAll();
+      toast.success(`Posted GHS ${Number(res.totalPosted).toLocaleString()} across ${res.accountsPosted} account(s).`);
+      load();
+    } catch (err: any) { setError(err.message || "Batch posting failed"); }
+    finally { setBatchBusy(false); }
+  }
 
   async function handleOpen(e: React.FormEvent) {
     e.preventDefault();
@@ -46,11 +68,17 @@ export default function SavingsPage() {
   return (
     <AppShell active="Savings">
       <div className="p-5 dt:p-10 overflow-x-auto">
-        <div className="flex items-center justify-between mb-8 gap-3">
+        <div className="flex items-center justify-between mb-4 gap-3 flex-wrap">
           <h1 className="font-display font-semibold text-2xl dt:text-3xl text-ink-900">Savings</h1>
           <button onClick={() => setShowForm((s) => !s)} className="btn-dark shrink-0">
             {showForm ? "Cancel" : "+ Open account"}
           </button>
+        </div>
+
+        <div className="card p-4 mb-8 flex flex-wrap items-center gap-3">
+          <span className="text-[12.5px] text-text-500">doc §52/§119 — institution-wide interest processing:</span>
+          <button onClick={handleAccrueAll} disabled={batchBusy} className="btn-text text-gold-600">Run accrual for all accounts</button>
+          <button onClick={handlePostAll} disabled={batchBusy} className="btn-text text-green-600">Post interest for all accounts</button>
         </div>
 
         {showForm && (

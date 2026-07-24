@@ -66,6 +66,8 @@ model Institution {
   accountHolders   AccountHolder[]
   documents        Document[]
   approvalRequests ApprovalRequest[]
+  savingsInterestAccruals SavingsInterestAccrual[]
+  savingsInterestPostings SavingsInterestPosting[]
 
   createdAt     DateTime          @default(now())
   updatedAt     DateTime          @updatedAt
@@ -672,12 +674,22 @@ model ProductVersion {
   interestRate   Decimal @db.Decimal(5, 2)
   feeStructure   Json?
 
+  // doc §52.3/§52.4 Savings Interest Management — interestMethod for
+  // SAVINGS products additionally takes DAILY_BALANCE, AVERAGE_DAILY_BALANCE,
+  // or MINIMUM_MONTHLY_BALANCE (Loan products keep FLAT/REDUCING_BALANCE).
+  // interestRateType distinguishes FIXED / TIERED / VARIABLE / PROMOTIONAL —
+  // all four named as required functional capabilities, not optional.
+  interestRateType  String   @default("FIXED")
+  promoInterestRate Decimal? @db.Decimal(6, 3)
+  promoDurationDays Int?
+
   effectiveDate  DateTime @default(now())
   createdAt      DateTime @default(now())
 
   currentForProduct Product? @relation("CurrentVersion")
   loans             Loan[]
   savingsAccounts   SavingsAccount[]
+  interestRateTiers InterestRateTier[]
 
   @@unique([productId, versionNumber])
   @@map("product_versions")
@@ -791,6 +803,7 @@ enum SavingsAccountStatus {
 enum SavingsTxnType {
   DEPOSIT
   WITHDRAWAL
+  INTEREST
 
   @@schema("nexus")
 }
@@ -812,13 +825,92 @@ model SavingsAccount {
   ledgerBalance Decimal              @default(0) @db.Decimal(14, 2)
   status        SavingsAccountStatus @default(ACTIVE)
 
-  transactions  SavingsTransaction[]
-  accountHolders AccountHolder[]
+  // doc §52.3 Interest Suspension — accrual pauses without closing the account.
+  interestSuspended       Boolean   @default(false)
+  interestSuspendedReason String?
+  interestSuspendedAt     DateTime?
+
+  // §52.4 Promotional Interest Rates — applied to THIS account instance at
+  // opening time from the product's promo configuration, decoupled from the
+  // shared product definition so each account's promo window is its own.
+  promoInterestRate Decimal?  @db.Decimal(6, 3)
+  promoExpiresAt    DateTime?
+
+  lastAccrualDate DateTime?
+
+  transactions     SavingsTransaction[]
+  accountHolders   AccountHolder[]
+  interestAccruals SavingsInterestAccrual[]
+  interestPostings SavingsInterestPosting[]
 
   createdAt     DateTime             @default(now())
   updatedAt     DateTime             @updatedAt
 
   @@map("savings_accounts")
+  @@schema("nexus")
+}
+
+// doc §52 Savings Interest Management, full fidelity.
+
+// §52.4 Tiered Interest Rates — balance-bracket rate structure.
+model InterestRateTier {
+  id               String         @id @default(cuid())
+  productVersion   ProductVersion @relation(fields: [productVersionId], references: [id], onDelete: Cascade)
+  productVersionId String
+  minBalance       Decimal        @db.Decimal(14, 2)
+  maxBalance       Decimal?       @db.Decimal(14, 2)
+  interestRate     Decimal        @db.Decimal(6, 3)
+  createdAt        DateTime       @default(now())
+
+  @@map("interest_rate_tiers")
+  @@schema("nexus")
+}
+
+// §52.3 Interest Accrual — a real tracked relationship (§59.5), not a
+// throwaway live number. Accrual does NOT change balance; only Posting does.
+// §52.5 "every posting is auditable" — accrual itself is the audit trail
+// for how each posted amount was actually derived, day by day.
+model SavingsInterestAccrual {
+  id            String        @id @default(cuid())
+  institution   Institution   @relation(fields: [institutionId], references: [id], onDelete: Cascade)
+  institutionId String
+  account       SavingsAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  accountId     String
+  accrualDate   DateTime
+  balanceUsed   Decimal       @db.Decimal(14, 2)
+  rateApplied   Decimal       @db.Decimal(6, 3)
+  method        String
+  amountAccrued Decimal       @db.Decimal(14, 2)
+  posted        Boolean       @default(false)
+  postingId     String?
+  createdAt     DateTime      @default(now())
+
+  @@unique([accountId, accrualDate])
+  @@map("savings_interest_accruals")
+  @@schema("nexus")
+}
+
+// §52.3 Interest Posting + §52.3 Interest Reversal where authorised —
+// one row per posting event, whether triggered per-account or as part of
+// a batch (§119 Ledger Posting Management supports both patterns).
+model SavingsInterestPosting {
+  id              String        @id @default(cuid())
+  institution     Institution   @relation(fields: [institutionId], references: [id], onDelete: Cascade)
+  institutionId   String
+  account         SavingsAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  accountId       String
+  periodStart     DateTime
+  periodEnd       DateTime
+  totalAmount     Decimal       @db.Decimal(14, 2)
+  transactionId   String?
+  batchId         String?
+  postedById      String
+  reversedAt      DateTime?
+  reversedById    String?
+  reversalReason  String?
+  createdAt       DateTime      @default(now())
+
+  @@map("savings_interest_postings")
   @@schema("nexus")
 }
 

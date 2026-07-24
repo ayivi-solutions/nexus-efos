@@ -24,6 +24,7 @@ savingsRouter.get("/:id", requirePermission("reports.view"), async (req: AuthedR
       branch: { select: { name: true } },
       transactions: { orderBy: { createdAt: "desc" } },
       accountHolders: { include: { customer: { select: { id: true, fullName: true, phone: true } } }, orderBy: { createdAt: "asc" } },
+      productVersion: true,
     },
   });
   if (!account) return res.status(404).json({ error: "Account not found" });
@@ -132,6 +133,17 @@ savingsRouter.post("/", requirePermission("savings.initiate"), async (req: Authe
     return res.status(400).json({ error: "This savings product is not currently active" });
   }
 
+  // doc §52.4 Promotional Interest Rates — applied to this account instance
+  // at opening from the product's promo configuration, so each account's
+  // promo window runs from ITS OWN opening date, not a shared calendar date.
+  const promoFields =
+    productVersion.interestRateType === "PROMOTIONAL" && productVersion.promoInterestRate && productVersion.promoDurationDays
+      ? {
+          promoInterestRate: productVersion.promoInterestRate,
+          promoExpiresAt: new Date(Date.now() + productVersion.promoDurationDays * 24 * 60 * 60 * 1000),
+        }
+      : {};
+
   const account = await prisma.savingsAccount.create({
     data: {
       institutionId: req.auth!.institutionId,
@@ -139,6 +151,7 @@ savingsRouter.post("/", requirePermission("savings.initiate"), async (req: Authe
       customerId: parsed.data.customerId,
       branchId: parsed.data.branchId,
       productVersionId: productVersion.id,
+      ...promoFields,
     },
   });
 

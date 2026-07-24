@@ -32,6 +32,12 @@ productsRouter.get("/:id", requirePermission("reports.view"), async (req: Authed
   res.json({ product });
 });
 
+// doc §52.4 — Savings interestMethod values added alongside Loan's
+// FLAT/REDUCING_BALANCE. interestRateType (§52.3) distinguishes how the
+// rate itself is determined: FIXED, TIERED (via InterestRateTier rows),
+// VARIABLE (current ProductVersion's rate — versioning already gives
+// "changes over time" meaning), or PROMOTIONAL (base config for the
+// account-level promo applied at opening).
 const versionFieldsSchema = z.object({
   name: z.string().min(2),
   description: z.string().optional(),
@@ -45,8 +51,11 @@ const versionFieldsSchema = z.object({
   maxLoanAmount: z.number().optional(),
   minTenureMonths: z.number().int().optional(),
   maxTenureMonths: z.number().int().optional(),
-  interestMethod: z.enum(["FLAT", "REDUCING_BALANCE"]).default("FLAT"),
+  interestMethod: z.enum(["FLAT", "REDUCING_BALANCE", "DAILY_BALANCE", "AVERAGE_DAILY_BALANCE", "MINIMUM_MONTHLY_BALANCE"]).default("FLAT"),
   interestRate: z.number().min(0),
+  interestRateType: z.enum(["FIXED", "TIERED", "VARIABLE", "PROMOTIONAL"]).default("FIXED"),
+  promoInterestRate: z.number().min(0).optional(),
+  promoDurationDays: z.number().int().positive().optional(),
 });
 
 const createProductSchema = z.object({
@@ -100,6 +109,55 @@ productsRouter.post("/:id/versions", requirePermission("institution.configure"),
   });
 
   res.status(201).json({ version });
+});
+
+// doc §52.4 Tiered Interest Rates — managed against the product's CURRENT
+// version. Existing accounts already opened under an older version keep
+// referencing that version's own tiers (or lack thereof), untouched.
+const tierSchema = z.object({
+  minBalance: z.number().min(0),
+  maxBalance: z.number().min(0).optional(),
+  interestRate: z.number().min(0),
+});
+
+productsRouter.get("/:id/tiers", requirePermission("reports.view"), async (req: AuthedRequest, res) => {
+  const product = await prisma.product.findFirst({ where: { id: req.params.id, institutionId: req.auth!.institutionId } });
+  if (!product || !product.currentVersionId) return res.status(404).json({ error: "Product or current version not found" });
+
+  const tiers = await prisma.interestRateTier.findMany({
+    where: { productVersionId: product.currentVersionId },
+    orderBy: { minBalance: "asc" },
+  });
+  res.json({ tiers });
+});
+
+productsRouter.post("/:id/tiers", requirePermission("institution.configure"), async (req: AuthedRequest, res) => {
+  const parsed = tierSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+  const product = await prisma.product.findFirst({ where: { id: req.params.id, institutionId: req.auth!.institutionId } });
+  if (!product || !product.currentVersionId) return res.status(404).json({ error: "Product or current version not found" });
+
+  const tier = await prisma.interestRateTier.create({
+    data: { productVersionId: product.currentVersionId, ...parsed.data },
+  });
+
+  await prisma.auditLog.create({
+    data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "product.tier_add", resource: "product", resourceId: product.id, metadata: { tierId: tier.id } },
+  });
+
+  res.status(201).json({ tier });
+});
+
+productsRouter.delete("/:id/tiers/:tierId", requirePermission("institution.configure"), async (req: AuthedRequest, res) => {
+  const product = await prisma.product.findFirst({ where: { id: req.params.id, institutionId: req.auth!.institutionId } });
+  if (!product || !product.currentVersionId) return res.status(404).json({ error: "Product or current version not found" });
+
+  await prisma.interestRateTier.deleteMany({ where: { id: req.params.tierId, productVersionId: product.currentVersionId } });
+  await prisma.auditLog.create({
+    data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "product.tier_remove", resource: "product", resourceId: product.id, metadata: { tierId: req.params.tierId } },
+  });
+  res.status(204).send();
 });
 
 // doc §47.4/§62.4 "Approval is required before activation where

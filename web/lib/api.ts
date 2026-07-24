@@ -212,6 +212,25 @@ export const api = {
   getProduct: (id: string) => request(`/products/${id}`),
   createProduct: (data: any) => request("/products", { method: "POST", body: JSON.stringify(data) }),
   addProductVersion: (id: string, data: any) => request(`/products/${id}/versions`, { method: "POST", body: JSON.stringify(data) }),
+  listTiers: (productId: string) => request(`/products/${productId}/tiers`),
+  addTier: (productId: string, data: { minBalance: number; maxBalance?: number; interestRate: number }) => request(`/products/${productId}/tiers`, { method: "POST", body: JSON.stringify(data) }),
+  deleteTier: (productId: string, tierId: string) => request(`/products/${productId}/tiers/${tierId}`, { method: "DELETE" }),
+
+  accrueInterest: (accountId: string, date?: string) => request(`/savings-interest/${accountId}/accrue`, { method: "POST", body: JSON.stringify({ date }) }),
+  accrueInterestAll: (date?: string) => request(`/savings-interest/accrue-all`, { method: "POST", body: JSON.stringify({ date }) }),
+  postInterest: (accountId: string) => request(`/savings-interest/${accountId}/post`, { method: "POST" }),
+  postInterestAll: () => request(`/savings-interest/post-all`, { method: "POST" }),
+  reverseInterestPosting: (postingId: string, reason: string) => request(`/savings-interest/postings/${postingId}/reverse`, { method: "POST", body: JSON.stringify({ reason }) }),
+  suspendInterest: (accountId: string, reason?: string) => request(`/savings-interest/${accountId}/suspend`, { method: "POST", body: JSON.stringify({ reason }) }),
+  resumeInterest: (accountId: string) => request(`/savings-interest/${accountId}/resume`, { method: "POST" }),
+  getInterestAccruals: (accountId: string) => request(`/savings-interest/${accountId}/accruals`),
+  getInterestReport: (from?: string, to?: string) => {
+    const params = new URLSearchParams();
+    if (from) params.set("from", from);
+    if (to) params.set("to", to);
+    const qs = params.toString();
+    return request(`/savings-interest/report${qs ? `?${qs}` : ""}`);
+  },
   activateProduct: (id: string) => request(`/products/${id}/activate`, { method: "POST" }),
   withdrawProduct: (id: string) => request(`/products/${id}/withdraw`, { method: "POST" }),
   archiveProduct: (id: string) => request(`/products/${id}/archive`, { method: "POST" }),

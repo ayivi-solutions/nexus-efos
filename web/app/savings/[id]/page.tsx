@@ -20,8 +20,18 @@ export default function SavingsDetailPage() {
   const [customers, setCustomers] = useState<any[]>([]);
   const [holderForm, setHolderForm] = useState({ customerId: "", role: "JOINT" });
 
+  const [accruals, setAccruals] = useState<any[]>([]);
+  const [postings, setPostings] = useState<any[]>([]);
+  const [suspendReason, setSuspendReason] = useState("");
+  const [showSuspendForm, setShowSuspendForm] = useState(false);
+
   function load() {
     api.getSavingsAccount(id).then((res) => setAccount(res.account)).catch((err) => setError(err.message));
+    loadInterest();
+  }
+
+  function loadInterest() {
+    api.getInterestAccruals(id).then((res) => { setAccruals(res.accruals); setPostings(res.postings); }).catch(() => {});
   }
 
   useEffect(() => {
@@ -91,6 +101,64 @@ export default function SavingsDetailPage() {
     }
   }
 
+  async function handleAccrue() {
+    setBusy(true); setError(null);
+    try {
+      const res = await api.accrueInterest(id);
+      if (res.skipped) toast.info(`Accrual skipped: ${res.skipped}`);
+      else toast.success(`Accrued ${res.accruals?.length || 0} period(s).`);
+      loadInterest();
+      load();
+    } catch (err: any) { setError(err.message || "Could not run accrual"); }
+    finally { setBusy(false); }
+  }
+
+  async function handlePost() {
+    setBusy(true); setError(null);
+    try {
+      const res = await api.postInterest(id);
+      toast.success(`Posted GHS ${Number(res.posting.totalAmount).toLocaleString()} interest.`);
+      loadInterest();
+      load();
+    } catch (err: any) { setError(err.message || "Could not post interest"); }
+    finally { setBusy(false); }
+  }
+
+  async function handleReverse(postingId: string) {
+    const reason = window.prompt("Reason for reversing this posting?");
+    if (!reason) return;
+    setBusy(true); setError(null);
+    try {
+      await api.reverseInterestPosting(postingId, reason);
+      toast.success("Posting reversed.");
+      loadInterest();
+      load();
+    } catch (err: any) { setError(err.message || "Could not reverse posting"); }
+    finally { setBusy(false); }
+  }
+
+  async function handleSuspend(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy(true); setError(null);
+    try {
+      await api.suspendInterest(id, suspendReason || undefined);
+      setShowSuspendForm(false);
+      setSuspendReason("");
+      load();
+    } catch (err: any) { setError(err.message || "Could not suspend interest"); }
+    finally { setBusy(false); }
+  }
+
+  async function handleResume() {
+    setBusy(true); setError(null);
+    try { await api.resumeInterest(id); load(); }
+    catch (err: any) { setError(err.message || "Could not resume interest"); }
+    finally { setBusy(false); }
+  }
+
+  const unpostedTotal = accruals.filter((a) => !a.posted).reduce((s, a) => s + Number(a.amountAccrued), 0);
+  const promoActive = account?.promoExpiresAt && new Date(account.promoExpiresAt) > new Date();
+
   return (
     <AppShell active="Savings">
       <div className="p-5 dt:p-10 overflow-x-auto">
@@ -107,12 +175,18 @@ export default function SavingsDetailPage() {
                 </Link>
                 <div className="text-text-muted text-sm mt-1 font-mono selectable">{account.accountNumber} · {account.branch?.name || "Unassigned branch"}</div>
               </div>
-              <span className="badge bg-green-100 text-green-600">{account.status}</span>
+              <div className="flex gap-2">
+                {account.interestSuspended && <span className="badge bg-rose-100 text-rose-600">Interest suspended</span>}
+                {promoActive && <span className="badge bg-gold-500/15 text-gold-600">Promo rate active</span>}
+                <span className="badge bg-green-100 text-green-600">{account.status}</span>
+              </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-3 mb-8">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-8">
               <Stat label="Balance" value={`GHS ${Number(account.balance).toLocaleString()}`} />
               <Stat label="Opened" value={new Date(account.createdAt).toLocaleDateString()} />
+              <Stat label="Unposted interest" value={`GHS ${unpostedTotal.toFixed(2)}`} />
+              <Stat label="Method" value={account.productVersion?.interestMethod?.replaceAll("_", " ") || "—"} />
             </div>
 
             <div className="card p-6 mb-8">
@@ -139,6 +213,65 @@ export default function SavingsDetailPage() {
                   </>
                 )}
               </div>
+            </div>
+
+            {/* Interest — doc §52, full fidelity */}
+            <h2 className="font-display font-semibold text-lg text-ink-900 mb-3">Interest</h2>
+            <div className="card p-6 mb-4">
+              <div className="flex flex-wrap items-center gap-3 mb-4">
+                <button onClick={handleAccrue} disabled={busy || account.interestSuspended} className="btn-dark !py-2">Run accrual</button>
+                <button onClick={handlePost} disabled={busy || unpostedTotal <= 0} className="btn-primary !py-2">Post interest {unpostedTotal > 0 ? `(GHS ${unpostedTotal.toFixed(2)})` : ""}</button>
+                {account.interestSuspended ? (
+                  <button onClick={handleResume} disabled={busy} className="text-[13px] text-green-600 font-semibold ml-auto">Resume interest</button>
+                ) : (
+                  <button onClick={() => setShowSuspendForm((s) => !s)} disabled={busy} className="text-[13px] text-rose-600 font-semibold ml-auto">Suspend interest</button>
+                )}
+              </div>
+              {account.interestSuspended && account.interestSuspendedReason && (
+                <p className="text-text-muted text-xs mb-3">Suspended: {account.interestSuspendedReason}</p>
+              )}
+              {showSuspendForm && (
+                <form onSubmit={handleSuspend} className="flex gap-2 mb-3">
+                  <input placeholder="Reason (optional)" className="input !py-1.5" value={suspendReason} onChange={(e) => setSuspendReason(e.target.value)} />
+                  <button type="submit" disabled={busy} className="btn-text text-rose-600 shrink-0">Confirm suspend</button>
+                </form>
+              )}
+              {promoActive && (
+                <p className="text-[12.5px] text-gold-600 mb-3">Promotional rate {Number(account.promoInterestRate)}% active until {new Date(account.promoExpiresAt).toLocaleDateString()}.</p>
+              )}
+
+              <table className="w-full min-w-[520px] text-sm table-modern mb-4">
+                <thead><tr><th>Period</th><th>Balance used</th><th>Rate</th><th>Amount</th><th>Status</th></tr></thead>
+                <tbody>
+                  {accruals.map((a: any) => (
+                    <tr key={a.id}>
+                      <td className="text-text-700 whitespace-nowrap">{new Date(a.accrualDate).toLocaleDateString()}</td>
+                      <td className="text-text-700">GHS {Number(a.balanceUsed).toLocaleString()}</td>
+                      <td className="text-text-700">{Number(a.rateApplied)}%</td>
+                      <td className="text-text-900 font-medium">GHS {Number(a.amountAccrued).toFixed(2)}</td>
+                      <td><span className={`badge ${a.posted ? "bg-green-100 text-green-600" : "bg-violet-500/15 text-violet-500"}`}>{a.posted ? "Posted" : "Unposted"}</span></td>
+                    </tr>
+                  ))}
+                  {accruals.length === 0 && <tr><td colSpan={5} className="text-center text-text-muted text-sm py-6">No accrual recorded yet — run accrual to begin.</td></tr>}
+                </tbody>
+              </table>
+
+              {postings.length > 0 && (
+                <>
+                  <h3 className="font-display font-semibold text-[13px] text-ink-900 mb-2">Posting history</h3>
+                  <div className="space-y-1.5">
+                    {postings.map((p: any) => (
+                      <div key={p.id} className="flex items-center justify-between text-[12.5px] card !shadow-none p-2">
+                        <span className="text-text-700">
+                          {new Date(p.createdAt).toLocaleDateString()} · GHS {Number(p.totalAmount).toLocaleString()}
+                          {p.reversedAt && <span className="text-rose-600"> · reversed ({p.reversalReason})</span>}
+                        </span>
+                        {!p.reversedAt && <button onClick={() => handleReverse(p.id)} className="text-rose-600 text-[12px]">Reverse</button>}
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
             </div>
 
             {/* Account Holders — doc §36. account.customer above is the Primary Holder. */}
@@ -175,16 +308,19 @@ export default function SavingsDetailPage() {
               <table className="w-full min-w-[480px] text-sm table-modern">
                 <thead><tr><th>Date</th><th>Type</th><th>Amount</th><th>Balance after</th></tr></thead>
                 <tbody>
-                  {account.transactions.map((t: any) => (
-                    <tr key={t.id}>
-                      <td className="text-text-700">{new Date(t.createdAt).toLocaleString()}</td>
-                      <td className="text-text-700">{t.type}</td>
-                      <td className={`font-mono ${t.type === "DEPOSIT" ? "text-green-600" : "text-rose-600"}`}>
-                        {t.type === "DEPOSIT" ? "+" : "-"}GHS {Number(t.amount).toLocaleString()}
-                      </td>
-                      <td className="text-text-700">GHS {Number(t.balanceAfter).toLocaleString()}</td>
-                    </tr>
-                  ))}
+                  {account.transactions.map((t: any) => {
+                    const positive = Number(t.amount) >= 0;
+                    return (
+                      <tr key={t.id}>
+                        <td className="text-text-700">{new Date(t.createdAt).toLocaleString()}</td>
+                        <td className="text-text-700">{t.type}</td>
+                        <td className={`font-mono ${positive ? "text-green-600" : "text-rose-600"}`}>
+                          {positive ? "+" : ""}GHS {Number(t.amount).toLocaleString()}
+                        </td>
+                        <td className="text-text-700">GHS {Number(t.balanceAfter).toLocaleString()}</td>
+                      </tr>
+                    );
+                  })}
                   {account.transactions.length === 0 && (
                     <tr><td colSpan={4} className="text-center text-text-muted text-sm py-8">No transactions yet.</td></tr>
                   )}

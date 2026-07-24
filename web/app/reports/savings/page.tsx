@@ -14,11 +14,13 @@ export default function SavingsReportPage() {
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const [data, setData] = useState<any>(null);
+  const [interestData, setInterestData] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
   useErrorToast(error);
 
   function load() {
     api.getSavingsReport(from || undefined, to || undefined).then(setData).catch((err) => setError(err.message));
+    api.getInterestReport(from || undefined, to || undefined).then(setInterestData).catch(() => {});
   }
 
   useEffect(() => { load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -73,6 +75,38 @@ export default function SavingsReportPage() {
                 ))}
               </div>
             </div>
+
+            {interestData && (
+              <>
+                <h2 className="font-display font-semibold text-lg text-ink-900 mb-3">Interest (doc §52.3 Interest Reporting)</h2>
+                <div className="grid grid-cols-2 dt:grid-cols-4 gap-3 mb-6">
+                  <div className="card p-3.5"><div className="font-display font-semibold text-lg text-gold-600">{money(interestData.totalAccrued)}</div><div className="text-[10.5px] text-text-muted uppercase tracking-wide">Total accrued</div></div>
+                  <div className="card p-3.5"><div className="font-display font-semibold text-lg text-green-600">{money(interestData.totalPosted)}</div><div className="text-[10.5px] text-text-muted uppercase tracking-wide">Total posted</div></div>
+                  <div className="card p-3.5"><div className="font-display font-semibold text-lg text-rose-600">{money(interestData.totalReversed)}</div><div className="text-[10.5px] text-text-muted uppercase tracking-wide">Total reversed</div></div>
+                  <div className="card p-3.5"><div className="font-display font-semibold text-lg text-gold-600">{interestData.postingCount}</div><div className="text-[10.5px] text-text-muted uppercase tracking-wide">Postings</div></div>
+                </div>
+                <div className="grid grid-cols-1 dt:grid-cols-2 gap-4 mb-6">
+                  <div className="card p-4">
+                    <div className="font-display font-semibold text-sm text-ink-900 mb-2">By calculation method</div>
+                    {Object.entries(interestData.byMethod).map(([method, amt]: any) => (
+                      <div key={method} className="flex justify-between text-[13px] text-text-700 py-1 border-t border-paper-100 first:border-0">
+                        <span>{method.replaceAll("_", " ")}</span><span>{money(amt)}</span>
+                      </div>
+                    ))}
+                    {Object.keys(interestData.byMethod).length === 0 && <p className="text-text-muted text-xs">No accrual recorded in range.</p>}
+                  </div>
+                  <div className="card p-4">
+                    <div className="font-display font-semibold text-sm text-ink-900 mb-2">Top interest earners</div>
+                    {interestData.topAccounts.map((a: any, i: number) => (
+                      <div key={i} className="flex justify-between text-[13px] text-text-700 py-1 border-t border-paper-100 first:border-0">
+                        <span>{a.customer}</span><span>{money(a.amount)}</span>
+                      </div>
+                    ))}
+                    {interestData.topAccounts.length === 0 && <p className="text-text-muted text-xs">No postings in range.</p>}
+                  </div>
+                </div>
+              </>
+            )}
 
             <div className="card overflow-x-auto">
               <table className="w-full min-w-[640px] text-sm table-modern">
