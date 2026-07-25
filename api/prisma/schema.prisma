@@ -41,61 +41,61 @@ enum InstitutionStatus {
 }
 
 model Institution {
-  id            String            @id @default(cuid())
-  legalName     String
-  tradingName   String?
-  type          InstitutionType
-  status        InstitutionStatus @default(PENDING_ONBOARDING)
-  regulatorId   String?           // e.g. BoG license / registration number
-  country       String            @default("GH")
-  region        String?
-  phone         String?
-  email         String?
-  onboardingStep Int              @default(1) // 1..5, drives onboarding wizard
+  id             String            @id @default(cuid())
+  legalName      String
+  tradingName    String?
+  type           InstitutionType
+  status         InstitutionStatus @default(PENDING_ONBOARDING)
+  regulatorId    String? // e.g. BoG license / registration number
+  country        String            @default("GH")
+  region         String?
+  phone          String?
+  email          String?
+  onboardingStep Int               @default(1) // 1..5, drives onboarding wizard
 
-  branches      Branch[]
-  users         User[]
-  roles         Role[]
-  customers     Customer[]
-  loans         Loan[]
-  savingsAccounts SavingsAccount[]
-  auditLogs     AuditLog[]
-  employees     Employee[]
-  products      Product[]
-  watchlistEntries WatchlistEntry[]
-  accountHolders   AccountHolder[]
-  documents        Document[]
-  approvalRequests ApprovalRequest[]
+  branches                Branch[]
+  users                   User[]
+  roles                   Role[]
+  customers               Customer[]
+  loans                   Loan[]
+  savingsAccounts         SavingsAccount[]
+  auditLogs               AuditLog[]
+  employees               Employee[]
+  products                Product[]
+  watchlistEntries        WatchlistEntry[]
+  accountHolders          AccountHolder[]
+  documents               Document[]
+  approvalRequests        ApprovalRequest[]
   savingsInterestAccruals SavingsInterestAccrual[]
   savingsInterestPostings SavingsInterestPosting[]
 
-  createdAt     DateTime          @default(now())
-  updatedAt     DateTime          @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@map("institutions")
   @@schema("nexus")
 }
 
 model Branch {
-  id            String       @id @default(cuid())
-  institution   Institution  @relation(fields: [institutionId], references: [id], onDelete: Cascade)
+  id            String      @id @default(cuid())
+  institution   Institution @relation(fields: [institutionId], references: [id], onDelete: Cascade)
   institutionId String
   name          String
   code          String
   region        String?
-  isHeadOffice  Boolean      @default(false)
+  isHeadOffice  Boolean     @default(false)
 
-  userRoles     UserRole[]
-  customers     Customer[]
-  loans         Loan[]
+  userRoles       UserRole[]
+  customers       Customer[]
+  loans           Loan[]
   savingsAccounts SavingsAccount[]
-  employees     Employee[]
+  employees       Employee[]
 
-  archived      Boolean      @default(false)
-  archivedAt    DateTime?
+  archived   Boolean   @default(false)
+  archivedAt DateTime?
 
-  createdAt     DateTime     @default(now())
-  updatedAt     DateTime     @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@unique([institutionId, code])
   @@map("branches")
@@ -123,28 +123,28 @@ enum UserStatus {
 }
 
 model User {
-  id            String        @id @default(cuid())
-  institution   Institution   @relation(fields: [institutionId], references: [id], onDelete: Cascade)
+  id            String      @id @default(cuid())
+  institution   Institution @relation(fields: [institutionId], references: [id], onDelete: Cascade)
   institutionId String
 
-  fullName      String
-  email         String
-  phone         String?
-  passwordHash  String
-  category      UserCategory  @default(INTERNAL)
-  status        UserStatus    @default(INVITED)
-  mfaEnabled    Boolean       @default(false)
+  fullName     String
+  email        String
+  phone        String?
+  passwordHash String
+  category     UserCategory @default(INTERNAL)
+  status       UserStatus   @default(INVITED)
+  mfaEnabled   Boolean      @default(false)
 
   userRoles     UserRole[]
   refreshTokens RefreshToken[]
   auditLogs     AuditLog[]
   employee      Employee?
 
-  inviteToken           String?   @unique
-  inviteTokenExpiresAt  DateTime?
+  inviteToken          String?   @unique
+  inviteTokenExpiresAt DateTime?
 
-  createdAt     DateTime      @default(now())
-  updatedAt     DateTime      @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@unique([institutionId, email])
   @@map("users")
@@ -166,19 +166,19 @@ enum RoleCategory {
 }
 
 model Role {
-  id            String        @id @default(cuid())
-  institution   Institution?  @relation(fields: [institutionId], references: [id], onDelete: Cascade)
-  institutionId String?       // null = system/global template role
+  id            String       @id @default(cuid())
+  institution   Institution? @relation(fields: [institutionId], references: [id], onDelete: Cascade)
+  institutionId String? // null = system/global template role
   name          String
   category      RoleCategory
   description   String?
-  isSystem      Boolean       @default(false) // seeded template vs institution-defined
+  isSystem      Boolean      @default(false) // seeded template vs institution-defined
 
   rolePermissions RolePermission[]
   userRoles       UserRole[]
 
-  createdAt     DateTime      @default(now())
-  updatedAt     DateTime      @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@unique([institutionId, name])
   @@map("roles")
@@ -213,11 +213,11 @@ enum PermissionAction {
 }
 
 model Permission {
-  id        String              @id @default(cuid())
-  code      String              @unique // e.g. "loans.approve", "users.administer"
-  category  PermissionCategory
-  action    PermissionAction
-  resource  String              // e.g. "loans", "savings", "users", "reports"
+  id          String             @id @default(cuid())
+  code        String             @unique // e.g. "loans.approve", "users.administer"
+  category    PermissionCategory
+  action      PermissionAction
+  resource    String // e.g. "loans", "savings", "users", "reports"
   description String?
 
   rolePermissions RolePermission[]
@@ -240,20 +240,20 @@ model RolePermission {
 
 // doc §38.12 — Temporary Delegation: time-limited, auto-expiring role assignment
 model UserRole {
-  id            String    @id @default(cuid())
-  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  userId        String
-  role          Role      @relation(fields: [roleId], references: [id], onDelete: Cascade)
-  roleId        String
-  branch        Branch?   @relation(fields: [branchId], references: [id], onDelete: SetNull)
-  branchId      String?   // resource-level scoping (doc §39.8)
+  id       String  @id @default(cuid())
+  user     User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId   String
+  role     Role    @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  roleId   String
+  branch   Branch? @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  branchId String? // resource-level scoping (doc §39.8)
 
-  isDelegated   Boolean   @default(false)
+  isDelegated         Boolean   @default(false)
   delegatedFromUserId String?
-  startsAt      DateTime  @default(now())
-  expiresAt     DateTime? // null = permanent
+  startsAt            DateTime  @default(now())
+  expiresAt           DateTime? // null = permanent
 
-  createdAt     DateTime  @default(now())
+  createdAt DateTime @default(now())
 
   @@unique([userId, roleId, branchId])
   @@map("user_roles")
@@ -285,34 +285,34 @@ enum EmploymentType {
 }
 
 model Employee {
-  id            String           @id @default(cuid())
-  institution   Institution      @relation(fields: [institutionId], references: [id], onDelete: Cascade)
+  id            String      @id @default(cuid())
+  institution   Institution @relation(fields: [institutionId], references: [id], onDelete: Cascade)
   institutionId String
-  branch        Branch?          @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  branch        Branch?     @relation(fields: [branchId], references: [id], onDelete: SetNull)
   branchId      String?
 
-  employeeNumber String?
-  fullName      String
-  email         String
-  employmentType EmploymentType  @default(PERMANENT)
-  department    String?
-  division      String?
-  position      String?
-  grade         String?
-  employmentDate    DateTime?
-  confirmationDate  DateTime?
+  employeeNumber   String?
+  fullName         String
+  email            String
+  employmentType   EmploymentType @default(PERMANENT)
+  department       String?
+  division         String?
+  position         String?
+  grade            String?
+  employmentDate   DateTime?
+  confirmationDate DateTime?
 
-  reportingManager   Employee?   @relation("ReportingLine", fields: [reportingManagerId], references: [id], onDelete: SetNull)
+  reportingManager   Employee?  @relation("ReportingLine", fields: [reportingManagerId], references: [id], onDelete: SetNull)
   reportingManagerId String?
-  directReports      Employee[]  @relation("ReportingLine")
+  directReports      Employee[] @relation("ReportingLine")
 
-  status        EmploymentStatus @default(ACTIVE)
+  status EmploymentStatus @default(ACTIVE)
 
-  user          User?            @relation(fields: [userId], references: [id], onDelete: SetNull)
-  userId        String?          @unique
+  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+  userId String? @unique
 
-  createdAt     DateTime         @default(now())
-  updatedAt     DateTime         @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@unique([institutionId, email])
   @@unique([institutionId, employeeNumber])
@@ -402,32 +402,32 @@ enum KycStatus {
 }
 
 model Customer {
-  id            String          @id @default(cuid())
-  institution   Institution     @relation(fields: [institutionId], references: [id], onDelete: Cascade)
+  id            String      @id @default(cuid())
+  institution   Institution @relation(fields: [institutionId], references: [id], onDelete: Cascade)
   institutionId String
-  branch        Branch?         @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  branch        Branch?     @relation(fields: [branchId], references: [id], onDelete: SetNull)
   branchId      String?
 
-  fullName      String
-  phone         String
-  email         String?
-  idType        String?
-  idNumber      String?
+  fullName String
+  phone    String
+  email    String?
+  idType   String?
+  idNumber String?
 
-  segment       CustomerSegment @default(INDIVIDUAL)
-  lifecycleStage LifecycleStage @default(ONBOARDING)
-  status         AccountStatus  @default(REGISTERED)
-  kycStatus     KycStatus       @default(PENDING)
+  segment        CustomerSegment @default(INDIVIDUAL)
+  lifecycleStage LifecycleStage  @default(ONBOARDING)
+  status         AccountStatus   @default(REGISTERED)
+  kycStatus      KycStatus       @default(PENDING)
 
   // Technical Spec §57 — Risk Rating is a Core Attribute; Communication
   // Preferences from doc §39; watchlist/duplicate are review flags, not
   // hard blocks — a screened-positive customer can still be onboarded by
   // an authorised officer after review.
-  riskRating         RiskRating? 
-  preferredChannel   String?
-  preferredLanguage  String?
-  watchlistFlag      Boolean     @default(false)
-  possibleDuplicate  Boolean     @default(false)
+  riskRating        RiskRating?
+  preferredChannel  String?
+  preferredLanguage String?
+  watchlistFlag     Boolean     @default(false)
+  possibleDuplicate Boolean     @default(false)
 
   // doc §39.2 — granular per-channel opt-in/out, replacing the single
   // preferredChannel dropdown as the actual controls (preferredChannel
@@ -441,23 +441,23 @@ model Customer {
 
   // doc §45.3 — closure reason, captured at archive time (was previously
   // not recorded at all).
-  closureReason   ClosureReason?
-  closureNote     String?
-  closedById      String?
-  closedAt        DateTime?
+  closureReason ClosureReason?
+  closureNote   String?
+  closedById    String?
+  closedAt      DateTime?
 
-  archived      Boolean         @default(false)
-  archivedAt    DateTime?
+  archived   Boolean   @default(false)
+  archivedAt DateTime?
 
-  createdAt     DateTime        @default(now())
-  updatedAt     DateTime        @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  loans           Loan[]
-  savingsAccounts SavingsAccount[]
-  nextOfKin       NextOfKin[]
-  notes           CustomerNote[]
-  beneficiaries   Beneficiary[]
-  beneficialOwners BeneficialOwner[]
+  loans              Loan[]
+  savingsAccounts    SavingsAccount[]
+  nextOfKin          NextOfKin[]
+  notes              CustomerNote[]
+  beneficiaries      Beneficiary[]
+  beneficialOwners   BeneficialOwner[]
   accountHolderRoles AccountHolder[]
   documents          Document[]
 
@@ -581,21 +581,21 @@ enum ApprovalRequestStatus {
 }
 
 model ApprovalRequest {
-  id            String                 @id @default(cuid())
-  institution   Institution            @relation(fields: [institutionId], references: [id], onDelete: Cascade)
+  id            String                @id @default(cuid())
+  institution   Institution           @relation(fields: [institutionId], references: [id], onDelete: Cascade)
   institutionId String
   type          ApprovalRequestType
-  status        ApprovalRequestStatus  @default(PENDING)
+  status        ApprovalRequestStatus @default(PENDING)
 
-  targetType    String
-  targetId      String
-  payload       Json
-  reason        String?
+  targetType String
+  targetId   String
+  payload    Json
+  reason     String?
 
-  requestedById String
-  requestedAt   DateTime               @default(now())
-  resolvedById  String?
-  resolvedAt    DateTime?
+  requestedById  String
+  requestedAt    DateTime  @default(now())
+  resolvedById   String?
+  resolvedAt     DateTime?
   resolutionNote String?
 
   @@map("approval_requests")
@@ -635,12 +635,12 @@ model Product {
   type          ProductType
   status        ProductStatus @default(DRAFT)
 
-  versions          ProductVersion[] @relation("AllVersions")
-  currentVersion    ProductVersion?  @relation("CurrentVersion", fields: [currentVersionId], references: [id])
-  currentVersionId  String?          @unique
+  versions         ProductVersion[] @relation("AllVersions")
+  currentVersion   ProductVersion?  @relation("CurrentVersion", fields: [currentVersionId], references: [id])
+  currentVersionId String?          @unique
 
-  createdAt     DateTime      @default(now())
-  updatedAt     DateTime      @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@unique([institutionId, code])
   @@map("products")
@@ -648,14 +648,14 @@ model Product {
 }
 
 model ProductVersion {
-  id            String   @id @default(cuid())
-  product       Product  @relation("AllVersions", fields: [productId], references: [id], onDelete: Cascade)
+  id            String  @id @default(cuid())
+  product       Product @relation("AllVersions", fields: [productId], references: [id], onDelete: Cascade)
   productId     String
   versionNumber Int
 
-  name          String
-  description   String?
-  currency      String   @default("GHS")
+  name        String
+  description String?
+  currency    String  @default("GHS")
 
   // Savings-specific (null for LOAN products)
   minOpeningBalance   Decimal? @db.Decimal(14, 2)
@@ -683,10 +683,10 @@ model ProductVersion {
   promoInterestRate Decimal? @db.Decimal(6, 3)
   promoDurationDays Int?
 
-  effectiveDate  DateTime @default(now())
-  createdAt      DateTime @default(now())
+  effectiveDate DateTime @default(now())
+  createdAt     DateTime @default(now())
 
-  currentForProduct Product? @relation("CurrentVersion")
+  currentForProduct Product?           @relation("CurrentVersion")
   loans             Loan[]
   savingsAccounts   SavingsAccount[]
   interestRateTiers InterestRateTier[]
@@ -724,22 +724,22 @@ model Loan {
   productVersion   ProductVersion? @relation(fields: [productVersionId], references: [id])
   productVersionId String?
 
-  principal     Decimal     @db.Decimal(14, 2)
-  interestRate  Decimal     @db.Decimal(5, 2)
+  principal      Decimal    @db.Decimal(14, 2)
+  interestRate   Decimal    @db.Decimal(5, 2)
   interestMethod String     @default("FLAT")
-  termMonths    Int
-  status        LoanStatus  @default(PENDING)
+  termMonths     Int
+  status         LoanStatus @default(PENDING)
 
   initiatedById String?
   approvedById  String?
   disbursedAt   DateTime?
 
-  repayments    LoanRepayment[]
-  installments  LoanInstallment[]
+  repayments     LoanRepayment[]
+  installments   LoanInstallment[]
   accountHolders AccountHolder[]
 
-  createdAt     DateTime    @default(now())
-  updatedAt     DateTime    @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@map("loans")
   @@schema("nexus")
@@ -809,12 +809,12 @@ enum SavingsTxnType {
 }
 
 model SavingsAccount {
-  id            String               @id @default(cuid())
-  institution   Institution          @relation(fields: [institutionId], references: [id], onDelete: Cascade)
+  id            String      @id @default(cuid())
+  institution   Institution @relation(fields: [institutionId], references: [id], onDelete: Cascade)
   institutionId String
-  customer      Customer             @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  customer      Customer    @relation(fields: [customerId], references: [id], onDelete: Cascade)
   customerId    String
-  branch        Branch?              @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  branch        Branch?     @relation(fields: [branchId], references: [id], onDelete: SetNull)
   branchId      String?
 
   productVersion   ProductVersion? @relation(fields: [productVersionId], references: [id])
@@ -843,8 +843,8 @@ model SavingsAccount {
   interestAccruals SavingsInterestAccrual[]
   interestPostings SavingsInterestPosting[]
 
-  createdAt     DateTime             @default(now())
-  updatedAt     DateTime             @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@map("savings_accounts")
   @@schema("nexus")
@@ -871,19 +871,19 @@ model InterestRateTier {
 // §52.5 "every posting is auditable" — accrual itself is the audit trail
 // for how each posted amount was actually derived, day by day.
 model SavingsInterestAccrual {
-  id            String        @id @default(cuid())
-  institution   Institution   @relation(fields: [institutionId], references: [id], onDelete: Cascade)
+  id            String         @id @default(cuid())
+  institution   Institution    @relation(fields: [institutionId], references: [id], onDelete: Cascade)
   institutionId String
   account       SavingsAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
   accountId     String
   accrualDate   DateTime
-  balanceUsed   Decimal       @db.Decimal(14, 2)
-  rateApplied   Decimal       @db.Decimal(6, 3)
+  balanceUsed   Decimal        @db.Decimal(14, 2)
+  rateApplied   Decimal        @db.Decimal(6, 3)
   method        String
-  amountAccrued Decimal       @db.Decimal(14, 2)
-  posted        Boolean       @default(false)
+  amountAccrued Decimal        @db.Decimal(14, 2)
+  posted        Boolean        @default(false)
   postingId     String?
-  createdAt     DateTime      @default(now())
+  createdAt     DateTime       @default(now())
 
   @@unique([accountId, accrualDate])
   @@map("savings_interest_accruals")
@@ -894,21 +894,21 @@ model SavingsInterestAccrual {
 // one row per posting event, whether triggered per-account or as part of
 // a batch (§119 Ledger Posting Management supports both patterns).
 model SavingsInterestPosting {
-  id              String        @id @default(cuid())
-  institution     Institution   @relation(fields: [institutionId], references: [id], onDelete: Cascade)
-  institutionId   String
-  account         SavingsAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
-  accountId       String
-  periodStart     DateTime
-  periodEnd       DateTime
-  totalAmount     Decimal       @db.Decimal(14, 2)
-  transactionId   String?
-  batchId         String?
-  postedById      String
-  reversedAt      DateTime?
-  reversedById    String?
-  reversalReason  String?
-  createdAt       DateTime      @default(now())
+  id             String         @id @default(cuid())
+  institution    Institution    @relation(fields: [institutionId], references: [id], onDelete: Cascade)
+  institutionId  String
+  account        SavingsAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  accountId      String
+  periodStart    DateTime
+  periodEnd      DateTime
+  totalAmount    Decimal        @db.Decimal(14, 2)
+  transactionId  String?
+  batchId        String?
+  postedById     String
+  reversedAt     DateTime?
+  reversedById   String?
+  reversalReason String?
+  createdAt      DateTime       @default(now())
 
   @@map("savings_interest_postings")
   @@schema("nexus")
@@ -942,8 +942,8 @@ model AccountHolder {
   savingsAccount   SavingsAccount? @relation(fields: [savingsAccountId], references: [id], onDelete: Cascade)
   savingsAccountId String?
 
-  addedById  String?
-  createdAt  DateTime @default(now())
+  addedById String?
+  createdAt DateTime @default(now())
 
   @@map("account_holders")
   @@schema("nexus")
@@ -983,11 +983,11 @@ enum DocumentStatus {
 }
 
 model Document {
-  id               String         @id @default(cuid())
-  institution      Institution    @relation(fields: [institutionId], references: [id], onDelete: Cascade)
-  institutionId    String
-  customer         Customer?      @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  customerId       String?
+  id            String      @id @default(cuid())
+  institution   Institution @relation(fields: [institutionId], references: [id], onDelete: Cascade)
+  institutionId String
+  customer      Customer?   @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  customerId    String?
 
   documentName     String
   documentType     DocumentType
@@ -1004,12 +1004,12 @@ model Document {
   // doc §30.3 "Replace documents... support version history" — Replace
   // creates a new Document row linked back to the one it supersedes, and
   // auto-archives the old one, rather than each upload being independent.
-  replacesDocument   Document?  @relation("DocumentVersionChain", fields: [replacesDocumentId], references: [id])
-  replacesDocumentId String?    @unique
-  replacedBy         Document?  @relation("DocumentVersionChain")
+  replacesDocument   Document? @relation("DocumentVersionChain", fields: [replacesDocumentId], references: [id])
+  replacesDocumentId String?   @unique
+  replacedBy         Document? @relation("DocumentVersionChain")
 
-  createdAt        DateTime       @default(now())
-  updatedAt        DateTime       @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@map("documents")
   @@schema("nexus")
@@ -1034,15 +1034,15 @@ model SavingsTransaction {
 // ---------------------------------------------------------------------------
 
 model RefreshToken {
-  id          String   @id @default(cuid())
-  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  userId      String
-  tokenHash   String   @unique
-  userAgent   String?
-  ipAddress   String?
-  expiresAt   DateTime
-  revokedAt   DateTime?
-  createdAt   DateTime @default(now())
+  id        String    @id @default(cuid())
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    String
+  tokenHash String    @unique
+  userAgent String?
+  ipAddress String?
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
 
   @@map("refresh_tokens")
   @@schema("nexus")
@@ -1055,7 +1055,7 @@ model AuditLog {
   institutionId String
   user          User?       @relation(fields: [userId], references: [id], onDelete: SetNull)
   userId        String?
-  action        String      // e.g. "auth.login", "role.assign", "loan.approve"
+  action        String // e.g. "auth.login", "role.assign", "loan.approve"
   resource      String?
   resourceId    String?
   metadata      Json?
