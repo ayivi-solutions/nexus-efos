@@ -170,6 +170,12 @@ savingsRouter.post("/", requirePermission("savings.initiate"), async (req: Authe
 
 const txnSchema = z.object({ amount: z.number().positive() });
 
+// Both deposit and withdraw were missing audit log entries entirely — every
+// other mutating action in the app logs, these two didn't. Also neither was
+// keeping ledgerBalance in sync with balance (only balance was updated),
+// silently drifting the two apart despite ledgerBalance being added
+// specifically to stay mirrored with balance until a real Holds feature
+// exists. Both found via a live smoke test's audit-log completeness check.
 savingsRouter.post("/:id/deposit", requirePermission("savings.initiate"), async (req: AuthedRequest, res) => {
   const parsed = txnSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
@@ -182,7 +188,7 @@ savingsRouter.post("/:id/deposit", requirePermission("savings.initiate"), async 
   const newBalance = Number(account.balance) + parsed.data.amount;
 
   const [updated, txn] = await prisma.$transaction([
-    prisma.savingsAccount.update({ where: { id: account.id }, data: { balance: newBalance } }),
+    prisma.savingsAccount.update({ where: { id: account.id }, data: { balance: newBalance, ledgerBalance: newBalance } }),
     prisma.savingsTransaction.create({
       data: {
         accountId: account.id,
@@ -193,6 +199,10 @@ savingsRouter.post("/:id/deposit", requirePermission("savings.initiate"), async 
       },
     }),
   ]);
+
+  await prisma.auditLog.create({
+    data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "savings.deposit", resource: "savings_account", resourceId: account.id, metadata: { amount: parsed.data.amount } },
+  });
 
   res.status(201).json({ account: updated, transaction: txn });
 });
@@ -212,7 +222,7 @@ savingsRouter.post("/:id/withdraw", requirePermission("savings.approve"), async 
   const newBalance = Number(account.balance) - parsed.data.amount;
 
   const [updated, txn] = await prisma.$transaction([
-    prisma.savingsAccount.update({ where: { id: account.id }, data: { balance: newBalance } }),
+    prisma.savingsAccount.update({ where: { id: account.id }, data: { balance: newBalance, ledgerBalance: newBalance } }),
     prisma.savingsTransaction.create({
       data: {
         accountId: account.id,
@@ -223,6 +233,10 @@ savingsRouter.post("/:id/withdraw", requirePermission("savings.approve"), async 
       },
     }),
   ]);
+
+  await prisma.auditLog.create({
+    data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "savings.withdraw", resource: "savings_account", resourceId: account.id, metadata: { amount: parsed.data.amount } },
+  });
 
   res.status(201).json({ account: updated, transaction: txn });
 });
