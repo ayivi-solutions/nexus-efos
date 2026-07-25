@@ -19,6 +19,11 @@ function startOfDay(d: Date) {
   x.setHours(0, 0, 0, 0);
   return x;
 }
+function endOfDay(d: Date) {
+  const x = new Date(d);
+  x.setHours(23, 59, 59, 999);
+  return x;
+}
 function startOfMonth(d: Date) {
   return new Date(d.getFullYear(), d.getMonth(), 1);
 }
@@ -130,7 +135,11 @@ async function runAccrualForAccount(accountId: string, institutionId: string, th
       });
       if (existing?.posted) continue;
 
-      const balanceUsed = await getBalanceAsOf(accountId, accrualDate);
+      // Closing balance for the day, not opening — a same-day deposit should
+      // earn that day's interest, matching how Daily Balance methods are
+      // conventionally applied in practice. accrualDate itself stays at
+      // midnight as the dedup key; only the balance lookup uses end-of-day.
+      const balanceUsed = await getBalanceAsOf(accountId, endOfDay(accrualDate));
       const rate = await resolveEffectiveRate(account, productVersion, balanceUsed);
       const amountAccrued = round2(balanceUsed * (rate / 100) / 365);
 
