@@ -41,17 +41,17 @@ enum InstitutionStatus {
 }
 
 model Institution {
-  id             String            @id @default(cuid())
-  legalName      String
-  tradingName    String?
+  id             String            @id(map: "pk_institution") @default(uuid())
+  legalName      String            @map("legal_name")
+  tradingName    String?           @map("trading_name")
   type           InstitutionType
   status         InstitutionStatus @default(PENDING_ONBOARDING)
-  regulatorId    String? // e.g. BoG license / registration number
+  regulatorId    String?           @map("regulator_id") // e.g. BoG license / registration number
   country        String            @default("GH")
   region         String?
   phone          String?
   email          String?
-  onboardingStep Int               @default(1) // 1..5, drives onboarding wizard
+  onboardingStep Int               @default(1) @map("onboarding_step") // 1..5, drives onboarding wizard
 
   branches                Branch[]
   users                   User[]
@@ -69,21 +69,21 @@ model Institution {
   savingsInterestAccruals SavingsInterestAccrual[]
   savingsInterestPostings SavingsInterestPosting[]
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
-  @@map("institutions")
+  @@map("institution")
   @@schema("nexus")
 }
 
 model Branch {
-  id            String      @id @default(cuid())
-  institution   Institution @relation(fields: [institutionId], references: [id], onDelete: Cascade)
-  institutionId String
+  id            String      @id(map: "pk_branch") @default(uuid())
+  institution   Institution @relation(fields: [institutionId], references: [id], onDelete: Cascade, map: "fk_branch_institution")
+  institutionId String      @map("institution_id")
   name          String
   code          String
   region        String?
-  isHeadOffice  Boolean     @default(false)
+  isHeadOffice  Boolean     @default(false) @map("is_head_office")
 
   userRoles       UserRole[]
   customers       Customer[]
@@ -92,13 +92,13 @@ model Branch {
   employees       Employee[]
 
   archived   Boolean   @default(false)
-  archivedAt DateTime?
+  archivedAt DateTime? @map("archived_at")
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
-  @@unique([institutionId, code])
-  @@map("branches")
+  @@unique([institutionId, code], map: "uq_branch_institution_id_code")
+  @@map("branch")
   @@schema("nexus")
 }
 
@@ -123,31 +123,31 @@ enum UserStatus {
 }
 
 model User {
-  id            String      @id @default(cuid())
-  institution   Institution @relation(fields: [institutionId], references: [id], onDelete: Cascade)
-  institutionId String
+  id            String      @id(map: "pk_user") @default(uuid())
+  institution   Institution @relation(fields: [institutionId], references: [id], onDelete: Cascade, map: "fk_user_institution")
+  institutionId String      @map("institution_id")
 
-  fullName     String
+  fullName     String       @map("full_name")
   email        String
   phone        String?
-  passwordHash String
+  passwordHash String       @map("password_hash")
   category     UserCategory @default(INTERNAL)
   status       UserStatus   @default(INVITED)
-  mfaEnabled   Boolean      @default(false)
+  mfaEnabled   Boolean      @default(false) @map("mfa_enabled")
 
   userRoles     UserRole[]
   refreshTokens RefreshToken[]
   auditLogs     AuditLog[]
   employee      Employee?
 
-  inviteToken          String?   @unique
-  inviteTokenExpiresAt DateTime?
+  inviteToken          String?   @unique @map("invite_token")
+  inviteTokenExpiresAt DateTime? @map("invite_token_expires_at")
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
-  @@unique([institutionId, email])
-  @@map("users")
+  @@unique([institutionId, email], map: "uq_user_institution_id_email")
+  @@map("user")
   @@schema("nexus")
 }
 
@@ -166,22 +166,22 @@ enum RoleCategory {
 }
 
 model Role {
-  id            String       @id @default(cuid())
-  institution   Institution? @relation(fields: [institutionId], references: [id], onDelete: Cascade)
-  institutionId String? // null = system/global template role
+  id            String       @id(map: "pk_role") @default(uuid())
+  institution   Institution? @relation(fields: [institutionId], references: [id], onDelete: Cascade, map: "fk_role_institution")
+  institutionId String?      @map("institution_id") // null = system/global template role
   name          String
   category      RoleCategory
   description   String?
-  isSystem      Boolean      @default(false) // seeded template vs institution-defined
+  isSystem      Boolean      @default(false) @map("is_system") // seeded template vs institution-defined
 
   rolePermissions RolePermission[]
   userRoles       UserRole[]
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
-  @@unique([institutionId, name])
-  @@map("roles")
+  @@unique([institutionId, name], map: "uq_role_institution_id_name")
+  @@map("role")
   @@schema("nexus")
 }
 
@@ -213,7 +213,7 @@ enum PermissionAction {
 }
 
 model Permission {
-  id          String             @id @default(cuid())
+  id          String             @id(map: "pk_permission") @default(uuid())
   code        String             @unique // e.g. "loans.approve", "users.administer"
   category    PermissionCategory
   action      PermissionAction
@@ -222,41 +222,41 @@ model Permission {
 
   rolePermissions RolePermission[]
 
-  @@map("permissions")
+  @@map("permission")
   @@schema("nexus")
 }
 
 model RolePermission {
-  id           String     @id @default(cuid())
-  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
-  roleId       String
-  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
-  permissionId String
+  id           String     @id(map: "pk_role_permission") @default(uuid())
+  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade, map: "fk_role_permission_role")
+  roleId       String     @map("role_id")
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade, map: "fk_role_permission_permission")
+  permissionId String     @map("permission_id")
 
-  @@unique([roleId, permissionId])
-  @@map("role_permissions")
+  @@unique([roleId, permissionId], map: "uq_role_permission_role_id_permission_id")
+  @@map("role_permission")
   @@schema("nexus")
 }
 
 // doc §38.12 — Temporary Delegation: time-limited, auto-expiring role assignment
 model UserRole {
-  id       String  @id @default(cuid())
-  user     User    @relation(fields: [userId], references: [id], onDelete: Cascade)
-  userId   String
-  role     Role    @relation(fields: [roleId], references: [id], onDelete: Cascade)
-  roleId   String
-  branch   Branch? @relation(fields: [branchId], references: [id], onDelete: SetNull)
-  branchId String? // resource-level scoping (doc §39.8)
+  id       String  @id(map: "pk_user_role") @default(uuid())
+  user     User    @relation(fields: [userId], references: [id], onDelete: Cascade, map: "fk_user_role_user")
+  userId   String  @map("user_id")
+  role     Role    @relation(fields: [roleId], references: [id], onDelete: Cascade, map: "fk_user_role_role")
+  roleId   String  @map("role_id")
+  branch   Branch? @relation(fields: [branchId], references: [id], onDelete: SetNull, map: "fk_user_role_branch")
+  branchId String? @map("branch_id") // resource-level scoping (doc §39.8)
 
-  isDelegated         Boolean   @default(false)
-  delegatedFromUserId String?
-  startsAt            DateTime  @default(now())
-  expiresAt           DateTime? // null = permanent
+  isDelegated         Boolean   @default(false) @map("is_delegated")
+  delegatedFromUserId String?   @map("delegated_from_user_id")
+  startsAt            DateTime  @default(now()) @map("starts_at")
+  expiresAt           DateTime? @map("expires_at") // null = permanent
 
-  createdAt DateTime @default(now())
+  createdAt DateTime @default(now()) @map("created_at")
 
-  @@unique([userId, roleId, branchId])
-  @@map("user_roles")
+  @@unique([userId, roleId, branchId], map: "uq_user_role_user_id_role_id_branch_id")
+  @@map("user_role")
   @@schema("nexus")
 }
 
@@ -285,38 +285,38 @@ enum EmploymentType {
 }
 
 model Employee {
-  id            String      @id @default(cuid())
-  institution   Institution @relation(fields: [institutionId], references: [id], onDelete: Cascade)
-  institutionId String
-  branch        Branch?     @relation(fields: [branchId], references: [id], onDelete: SetNull)
-  branchId      String?
+  id            String      @id(map: "pk_employee") @default(uuid())
+  institution   Institution @relation(fields: [institutionId], references: [id], onDelete: Cascade, map: "fk_employee_institution")
+  institutionId String      @map("institution_id")
+  branch        Branch?     @relation(fields: [branchId], references: [id], onDelete: SetNull, map: "fk_employee_branch")
+  branchId      String?     @map("branch_id")
 
-  employeeNumber   String?
-  fullName         String
+  employeeNumber   String?        @map("employee_number")
+  fullName         String         @map("full_name")
   email            String
-  employmentType   EmploymentType @default(PERMANENT)
+  employmentType   EmploymentType @default(PERMANENT) @map("employment_type")
   department       String?
   division         String?
   position         String?
   grade            String?
-  employmentDate   DateTime?
-  confirmationDate DateTime?
+  employmentDate   DateTime?      @map("employment_date")
+  confirmationDate DateTime?      @map("confirmation_date")
 
-  reportingManager   Employee?  @relation("ReportingLine", fields: [reportingManagerId], references: [id], onDelete: SetNull)
-  reportingManagerId String?
+  reportingManager   Employee?  @relation("ReportingLine", fields: [reportingManagerId], references: [id], onDelete: SetNull, map: "fk_employee_reporting_manager")
+  reportingManagerId String?    @map("reporting_manager_id")
   directReports      Employee[] @relation("ReportingLine")
 
   status EmploymentStatus @default(ACTIVE)
 
-  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
-  userId String? @unique
+  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull, map: "fk_employee_user")
+  userId String? @unique @map("user_id")
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
-  @@unique([institutionId, email])
-  @@unique([institutionId, employeeNumber])
-  @@map("employees")
+  @@unique([institutionId, email], map: "uq_employee_institution_id_email")
+  @@unique([institutionId, employeeNumber], map: "uq_employee_institution_id_employee_number")
+  @@map("employee")
   @@schema("nexus")
 }
 
@@ -402,55 +402,55 @@ enum KycStatus {
 }
 
 model Customer {
-  id            String      @id @default(cuid())
-  institution   Institution @relation(fields: [institutionId], references: [id], onDelete: Cascade)
-  institutionId String
-  branch        Branch?     @relation(fields: [branchId], references: [id], onDelete: SetNull)
-  branchId      String?
+  id            String      @id(map: "pk_customer") @default(uuid())
+  institution   Institution @relation(fields: [institutionId], references: [id], onDelete: Cascade, map: "fk_customer_institution")
+  institutionId String      @map("institution_id")
+  branch        Branch?     @relation(fields: [branchId], references: [id], onDelete: SetNull, map: "fk_customer_branch")
+  branchId      String?     @map("branch_id")
 
-  fullName String
+  fullName String  @map("full_name")
   phone    String
   email    String?
-  idType   String?
-  idNumber String?
+  idType   String? @map("id_type")
+  idNumber String? @map("id_number")
 
   segment        CustomerSegment @default(INDIVIDUAL)
-  lifecycleStage LifecycleStage  @default(ONBOARDING)
+  lifecycleStage LifecycleStage  @default(ONBOARDING) @map("lifecycle_stage")
   status         AccountStatus   @default(REGISTERED)
-  kycStatus      KycStatus       @default(PENDING)
+  kycStatus      KycStatus       @default(PENDING) @map("kyc_status")
 
   // Technical Spec §57 — Risk Rating is a Core Attribute; Communication
   // Preferences from doc §39; watchlist/duplicate are review flags, not
   // hard blocks — a screened-positive customer can still be onboarded by
   // an authorised officer after review.
-  riskRating        RiskRating?
-  preferredChannel  String?
-  preferredLanguage String?
-  watchlistFlag     Boolean     @default(false)
-  possibleDuplicate Boolean     @default(false)
+  riskRating        RiskRating? @map("risk_rating")
+  preferredChannel  String?     @map("preferred_channel")
+  preferredLanguage String?     @map("preferred_language")
+  watchlistFlag     Boolean     @default(false) @map("watchlist_flag")
+  possibleDuplicate Boolean     @default(false) @map("possible_duplicate")
 
   // doc §39.2 — granular per-channel opt-in/out, replacing the single
   // preferredChannel dropdown as the actual controls (preferredChannel
   // stays as a "primary" hint for UI ordering, not the enforcement point).
-  smsEnabled               Boolean @default(true)
-  emailEnabled             Boolean @default(true)
-  whatsappEnabled          Boolean @default(true)
-  marketingEnabled         Boolean @default(false)
-  transactionAlertsEnabled Boolean @default(true)
-  statementDeliveryEnabled Boolean @default(true)
+  smsEnabled               Boolean @default(true) @map("sms_enabled")
+  emailEnabled             Boolean @default(true) @map("email_enabled")
+  whatsappEnabled          Boolean @default(true) @map("whatsapp_enabled")
+  marketingEnabled         Boolean @default(false) @map("marketing_enabled")
+  transactionAlertsEnabled Boolean @default(true) @map("transaction_alerts_enabled")
+  statementDeliveryEnabled Boolean @default(true) @map("statement_delivery_enabled")
 
   // doc §45.3 — closure reason, captured at archive time (was previously
   // not recorded at all).
-  closureReason ClosureReason?
-  closureNote   String?
-  closedById    String?
-  closedAt      DateTime?
+  closureReason ClosureReason? @map("closure_reason")
+  closureNote   String?        @map("closure_note")
+  closedById    String?        @map("closed_by_id")
+  closedAt      DateTime?      @map("closed_at")
 
   archived   Boolean   @default(false)
-  archivedAt DateTime?
+  archivedAt DateTime? @map("archived_at")
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
   loans              Loan[]
   savingsAccounts    SavingsAccount[]
@@ -461,8 +461,8 @@ model Customer {
   accountHolderRoles AccountHolder[]
   documents          Document[]
 
-  @@unique([institutionId, phone])
-  @@map("customers")
+  @@unique([institutionId, phone], map: "uq_customer_institution_id_phone")
+  @@map("customer")
   @@schema("nexus")
 }
 
@@ -476,15 +476,15 @@ enum RiskRating {
 
 // doc §38 Next of Kin
 model NextOfKin {
-  id           String   @id @default(cuid())
-  customer     Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  customerId   String
-  fullName     String
+  id           String   @id(map: "pk_next_of_kin") @default(uuid())
+  customer     Customer @relation(fields: [customerId], references: [id], onDelete: Cascade, map: "fk_next_of_kin_customer")
+  customerId   String   @map("customer_id")
+  fullName     String   @map("full_name")
   relationship String
   phone        String
   email        String?
   address      String?
-  createdAt    DateTime @default(now())
+  createdAt    DateTime @default(now()) @map("created_at")
 
   @@map("next_of_kin")
   @@schema("nexus")
@@ -492,44 +492,44 @@ model NextOfKin {
 
 // doc §28/§40 — CRM interaction/notes history
 model CustomerNote {
-  id         String   @id @default(cuid())
-  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  customerId String
-  authorId   String?
+  id         String   @id(map: "pk_customer_note") @default(uuid())
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade, map: "fk_customer_note_customer")
+  customerId String   @map("customer_id")
+  authorId   String?  @map("author_id")
   note       String
-  createdAt  DateTime @default(now())
+  createdAt  DateTime @default(now()) @map("created_at")
 
-  @@map("customer_notes")
+  @@map("customer_note")
   @@schema("nexus")
 }
 
 // doc §37 Beneficiary Management (savings)
 model Beneficiary {
-  id            String   @id @default(cuid())
-  customer      Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  customerId    String
-  fullName      String
+  id            String   @id(map: "pk_beneficiary") @default(uuid())
+  customer      Customer @relation(fields: [customerId], references: [id], onDelete: Cascade, map: "fk_beneficiary_customer")
+  customerId    String   @map("customer_id")
+  fullName      String   @map("full_name")
   relationship  String
-  allocationPct Decimal  @db.Decimal(5, 2)
+  allocationPct Decimal  @map("allocation_pct") @db.Decimal(5, 2)
   phone         String?
-  createdAt     DateTime @default(now())
+  createdAt     DateTime @default(now()) @map("created_at")
 
-  @@map("beneficiaries")
+  @@map("beneficiary")
   @@schema("nexus")
 }
 
 // doc §32 Beneficial Ownership (BUSINESS/CORPORATE customers)
 model BeneficialOwner {
-  id           String   @id @default(cuid())
-  customer     Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  customerId   String
-  fullName     String
-  ownershipPct Decimal  @db.Decimal(5, 2)
-  idType       String?
-  idNumber     String?
-  createdAt    DateTime @default(now())
+  id           String   @id(map: "pk_beneficial_owner") @default(uuid())
+  customer     Customer @relation(fields: [customerId], references: [id], onDelete: Cascade, map: "fk_beneficial_owner_customer")
+  customerId   String   @map("customer_id")
+  fullName     String   @map("full_name")
+  ownershipPct Decimal  @map("ownership_pct") @db.Decimal(5, 2)
+  idType       String?  @map("id_type")
+  idNumber     String?  @map("id_number")
+  createdAt    DateTime @default(now()) @map("created_at")
 
-  @@map("beneficial_owners")
+  @@map("beneficial_owner")
   @@schema("nexus")
 }
 
@@ -537,16 +537,16 @@ model BeneficialOwner {
 // against at customer creation (sets Customer.watchlistFlag for review,
 // does not block onboarding outright).
 model WatchlistEntry {
-  id            String      @id @default(cuid())
-  institution   Institution @relation(fields: [institutionId], references: [id], onDelete: Cascade)
-  institutionId String
-  fullName      String
-  idNumber      String?
+  id            String      @id(map: "pk_watchlist_entry") @default(uuid())
+  institution   Institution @relation(fields: [institutionId], references: [id], onDelete: Cascade, map: "fk_watchlist_entry_institution")
+  institutionId String      @map("institution_id")
+  fullName      String      @map("full_name")
+  idNumber      String?     @map("id_number")
   reason        String?
-  addedById     String?
-  createdAt     DateTime    @default(now())
+  addedById     String?     @map("added_by_id")
+  createdAt     DateTime    @default(now()) @map("created_at")
 
-  @@map("watchlist_entries")
+  @@map("watchlist_entry")
   @@schema("nexus")
 }
 
@@ -581,24 +581,24 @@ enum ApprovalRequestStatus {
 }
 
 model ApprovalRequest {
-  id            String                @id @default(cuid())
-  institution   Institution           @relation(fields: [institutionId], references: [id], onDelete: Cascade)
-  institutionId String
+  id            String                @id(map: "pk_approval_request") @default(uuid())
+  institution   Institution           @relation(fields: [institutionId], references: [id], onDelete: Cascade, map: "fk_approval_request_institution")
+  institutionId String                @map("institution_id")
   type          ApprovalRequestType
   status        ApprovalRequestStatus @default(PENDING)
 
-  targetType String
-  targetId   String
+  targetType String  @map("target_type")
+  targetId   String  @map("target_id")
   payload    Json
   reason     String?
 
-  requestedById  String
-  requestedAt    DateTime  @default(now())
-  resolvedById   String?
-  resolvedAt     DateTime?
-  resolutionNote String?
+  requestedById  String    @map("requested_by_id")
+  requestedAt    DateTime  @default(now()) @map("requested_at")
+  resolvedById   String?   @map("resolved_by_id")
+  resolvedAt     DateTime? @map("resolved_at")
+  resolutionNote String?   @map("resolution_note")
 
-  @@map("approval_requests")
+  @@map("approval_request")
   @@schema("nexus")
 }
 
@@ -628,71 +628,71 @@ enum ProductStatus {
 }
 
 model Product {
-  id            String        @id @default(cuid())
-  institution   Institution   @relation(fields: [institutionId], references: [id], onDelete: Cascade)
-  institutionId String
+  id            String        @id(map: "pk_product") @default(uuid())
+  institution   Institution   @relation(fields: [institutionId], references: [id], onDelete: Cascade, map: "fk_product_institution")
+  institutionId String        @map("institution_id")
   code          String
   type          ProductType
   status        ProductStatus @default(DRAFT)
 
   versions         ProductVersion[] @relation("AllVersions")
-  currentVersion   ProductVersion?  @relation("CurrentVersion", fields: [currentVersionId], references: [id])
-  currentVersionId String?          @unique
+  currentVersion   ProductVersion?  @relation("CurrentVersion", fields: [currentVersionId], references: [id], map: "fk_product_current_version")
+  currentVersionId String?          @unique @map("current_version_id")
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
-  @@unique([institutionId, code])
-  @@map("products")
+  @@unique([institutionId, code], map: "uq_product_institution_id_code")
+  @@map("product")
   @@schema("nexus")
 }
 
 model ProductVersion {
-  id            String  @id @default(cuid())
-  product       Product @relation("AllVersions", fields: [productId], references: [id], onDelete: Cascade)
-  productId     String
-  versionNumber Int
+  id            String  @id(map: "pk_product_version") @default(uuid())
+  product       Product @relation("AllVersions", fields: [productId], references: [id], onDelete: Cascade, map: "fk_product_version_product")
+  productId     String  @map("product_id")
+  versionNumber Int     @map("version_number")
 
   name        String
   description String?
   currency    String  @default("GHS")
 
   // Savings-specific (null for LOAN products)
-  minOpeningBalance   Decimal? @db.Decimal(14, 2)
-  minOperatingBalance Decimal? @db.Decimal(14, 2)
-  maxBalance          Decimal? @db.Decimal(14, 2)
-  minDeposit          Decimal? @db.Decimal(14, 2)
-  maxDeposit          Decimal? @db.Decimal(14, 2)
+  minOpeningBalance   Decimal? @map("min_opening_balance") @db.Decimal(14, 2)
+  minOperatingBalance Decimal? @map("min_operating_balance") @db.Decimal(14, 2)
+  maxBalance          Decimal? @map("max_balance") @db.Decimal(14, 2)
+  minDeposit          Decimal? @map("min_deposit") @db.Decimal(14, 2)
+  maxDeposit          Decimal? @map("max_deposit") @db.Decimal(14, 2)
 
   // Loan-specific (null for SAVINGS products)
-  minLoanAmount   Decimal? @db.Decimal(14, 2)
-  maxLoanAmount   Decimal? @db.Decimal(14, 2)
-  minTenureMonths Int?
-  maxTenureMonths Int?
+  minLoanAmount   Decimal? @map("min_loan_amount") @db.Decimal(14, 2)
+  maxLoanAmount   Decimal? @map("max_loan_amount") @db.Decimal(14, 2)
+  minTenureMonths Int?     @map("min_tenure_months")
+  maxTenureMonths Int?     @map("max_tenure_months")
 
-  interestMethod String  @default("FLAT")
-  interestRate   Decimal @db.Decimal(5, 2)
-  feeStructure   Json?
+  interestMethod String  @default("FLAT") @map("interest_method")
+  interestRate   Decimal @map("interest_rate") @db.Decimal(5, 2)
+  feeStructure   Json?   @map("fee_structure")
 
   // doc §52.3/§52.4 Savings Interest Management — interestMethod for
   // SAVINGS products additionally takes DAILY_BALANCE, AVERAGE_DAILY_BALANCE,
   // or MINIMUM_MONTHLY_BALANCE (Loan products keep FLAT/REDUCING_BALANCE).
   // interestRateType distinguishes FIXED / TIERED / VARIABLE / PROMOTIONAL —
   // all four named as required functional capabilities, not optional.
-  interestRateType  String   @default("FIXED")
-  promoInterestRate Decimal? @db.Decimal(6, 3)
-  promoDurationDays Int?
+  interestRateType  String   @default("FIXED") @map("interest_rate_type")
+  promoInterestRate Decimal? @map("promo_interest_rate") @db.Decimal(6, 3)
+  promoDurationDays Int?     @map("promo_duration_days")
 
-  effectiveDate DateTime @default(now())
-  createdAt     DateTime @default(now())
+  effectiveDate DateTime @default(now()) @map("effective_date")
+  createdAt     DateTime @default(now()) @map("created_at")
 
   currentForProduct Product?           @relation("CurrentVersion")
   loans             Loan[]
   savingsAccounts   SavingsAccount[]
   interestRateTiers InterestRateTier[]
 
-  @@unique([productId, versionNumber])
-  @@map("product_versions")
+  @@unique([productId, versionNumber], map: "uq_product_version_product_id_version_number")
+  @@map("product_version")
   @@schema("nexus")
 }
 
@@ -713,47 +713,47 @@ enum LoanStatus {
 }
 
 model Loan {
-  id            String      @id @default(cuid())
-  institution   Institution @relation(fields: [institutionId], references: [id], onDelete: Cascade)
-  institutionId String
-  customer      Customer    @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  customerId    String
-  branch        Branch?     @relation(fields: [branchId], references: [id], onDelete: SetNull)
-  branchId      String?
+  id            String      @id(map: "pk_loan") @default(uuid())
+  institution   Institution @relation(fields: [institutionId], references: [id], onDelete: Cascade, map: "fk_loan_institution")
+  institutionId String      @map("institution_id")
+  customer      Customer    @relation(fields: [customerId], references: [id], onDelete: Cascade, map: "fk_loan_customer")
+  customerId    String      @map("customer_id")
+  branch        Branch?     @relation(fields: [branchId], references: [id], onDelete: SetNull, map: "fk_loan_branch")
+  branchId      String?     @map("branch_id")
 
-  productVersion   ProductVersion? @relation(fields: [productVersionId], references: [id])
-  productVersionId String?
+  productVersion   ProductVersion? @relation(fields: [productVersionId], references: [id], map: "fk_loan_product_version")
+  productVersionId String?         @map("product_version_id")
 
   principal      Decimal    @db.Decimal(14, 2)
-  interestRate   Decimal    @db.Decimal(5, 2)
-  interestMethod String     @default("FLAT")
-  termMonths     Int
+  interestRate   Decimal    @map("interest_rate") @db.Decimal(5, 2)
+  interestMethod String     @default("FLAT") @map("interest_method")
+  termMonths     Int        @map("term_months")
   status         LoanStatus @default(PENDING)
 
-  initiatedById String?
-  approvedById  String?
-  disbursedAt   DateTime?
+  initiatedById String?   @map("initiated_by_id")
+  approvedById  String?   @map("approved_by_id")
+  disbursedAt   DateTime? @map("disbursed_at")
 
   repayments     LoanRepayment[]
   installments   LoanInstallment[]
   accountHolders AccountHolder[]
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
-  @@map("loans")
+  @@map("loan")
   @@schema("nexus")
 }
 
 model LoanRepayment {
-  id           String   @id @default(cuid())
-  loan         Loan     @relation(fields: [loanId], references: [id], onDelete: Cascade)
-  loanId       String
+  id           String   @id(map: "pk_loan_repayment") @default(uuid())
+  loan         Loan     @relation(fields: [loanId], references: [id], onDelete: Cascade, map: "fk_loan_repayment_loan")
+  loanId       String   @map("loan_id")
   amount       Decimal  @db.Decimal(14, 2)
-  paidAt       DateTime @default(now())
-  recordedById String?
+  paidAt       DateTime @default(now()) @map("paid_at")
+  recordedById String?  @map("recorded_by_id")
 
-  @@map("loan_repayments")
+  @@map("loan_repayment")
   @@schema("nexus")
 }
 
@@ -770,21 +770,21 @@ enum InstallmentStatus {
 }
 
 model LoanInstallment {
-  id                String            @id @default(cuid())
-  loan              Loan              @relation(fields: [loanId], references: [id], onDelete: Cascade)
-  loanId            String
-  installmentNumber Int
-  dueDate           DateTime
-  principalDue      Decimal           @db.Decimal(14, 2)
-  interestDue       Decimal           @db.Decimal(14, 2)
-  totalDue          Decimal           @db.Decimal(14, 2)
-  principalPaid     Decimal           @default(0) @db.Decimal(14, 2)
-  interestPaid      Decimal           @default(0) @db.Decimal(14, 2)
+  id                String            @id(map: "pk_loan_installment") @default(uuid())
+  loan              Loan              @relation(fields: [loanId], references: [id], onDelete: Cascade, map: "fk_loan_installment_loan")
+  loanId            String            @map("loan_id")
+  installmentNumber Int               @map("installment_number")
+  dueDate           DateTime          @map("due_date")
+  principalDue      Decimal           @map("principal_due") @db.Decimal(14, 2)
+  interestDue       Decimal           @map("interest_due") @db.Decimal(14, 2)
+  totalDue          Decimal           @map("total_due") @db.Decimal(14, 2)
+  principalPaid     Decimal           @default(0) @map("principal_paid") @db.Decimal(14, 2)
+  interestPaid      Decimal           @default(0) @map("interest_paid") @db.Decimal(14, 2)
   status            InstallmentStatus @default(PENDING)
-  createdAt         DateTime          @default(now())
+  createdAt         DateTime          @default(now()) @map("created_at")
 
-  @@unique([loanId, installmentNumber])
-  @@map("loan_installments")
+  @@unique([loanId, installmentNumber], map: "uq_loan_installment_loan_id_installment_number")
+  @@map("loan_installment")
   @@schema("nexus")
 }
 
@@ -809,44 +809,44 @@ enum SavingsTxnType {
 }
 
 model SavingsAccount {
-  id            String      @id @default(cuid())
-  institution   Institution @relation(fields: [institutionId], references: [id], onDelete: Cascade)
-  institutionId String
-  customer      Customer    @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  customerId    String
-  branch        Branch?     @relation(fields: [branchId], references: [id], onDelete: SetNull)
-  branchId      String?
+  id            String      @id(map: "pk_savings_account") @default(uuid())
+  institution   Institution @relation(fields: [institutionId], references: [id], onDelete: Cascade, map: "fk_savings_account_institution")
+  institutionId String      @map("institution_id")
+  customer      Customer    @relation(fields: [customerId], references: [id], onDelete: Cascade, map: "fk_savings_account_customer")
+  customerId    String      @map("customer_id")
+  branch        Branch?     @relation(fields: [branchId], references: [id], onDelete: SetNull, map: "fk_savings_account_branch")
+  branchId      String?     @map("branch_id")
 
-  productVersion   ProductVersion? @relation(fields: [productVersionId], references: [id])
-  productVersionId String?
+  productVersion   ProductVersion? @relation(fields: [productVersionId], references: [id], map: "fk_savings_account_product_version")
+  productVersionId String?         @map("product_version_id")
 
-  accountNumber String               @unique
+  accountNumber String               @unique @map("account_number")
   balance       Decimal              @default(0) @db.Decimal(14, 2)
-  ledgerBalance Decimal              @default(0) @db.Decimal(14, 2)
+  ledgerBalance Decimal              @default(0) @map("ledger_balance") @db.Decimal(14, 2)
   status        SavingsAccountStatus @default(ACTIVE)
 
   // doc §52.3 Interest Suspension — accrual pauses without closing the account.
-  interestSuspended       Boolean   @default(false)
-  interestSuspendedReason String?
-  interestSuspendedAt     DateTime?
+  interestSuspended       Boolean   @default(false) @map("interest_suspended")
+  interestSuspendedReason String?   @map("interest_suspended_reason")
+  interestSuspendedAt     DateTime? @map("interest_suspended_at")
 
   // §52.4 Promotional Interest Rates — applied to THIS account instance at
   // opening time from the product's promo configuration, decoupled from the
   // shared product definition so each account's promo window is its own.
-  promoInterestRate Decimal?  @db.Decimal(6, 3)
-  promoExpiresAt    DateTime?
+  promoInterestRate Decimal?  @map("promo_interest_rate") @db.Decimal(6, 3)
+  promoExpiresAt    DateTime? @map("promo_expires_at")
 
-  lastAccrualDate DateTime?
+  lastAccrualDate DateTime? @map("last_accrual_date")
 
   transactions     SavingsTransaction[]
   accountHolders   AccountHolder[]
   interestAccruals SavingsInterestAccrual[]
   interestPostings SavingsInterestPosting[]
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
-  @@map("savings_accounts")
+  @@map("savings_account")
   @@schema("nexus")
 }
 
@@ -854,15 +854,15 @@ model SavingsAccount {
 
 // §52.4 Tiered Interest Rates — balance-bracket rate structure.
 model InterestRateTier {
-  id               String         @id @default(cuid())
-  productVersion   ProductVersion @relation(fields: [productVersionId], references: [id], onDelete: Cascade)
-  productVersionId String
-  minBalance       Decimal        @db.Decimal(14, 2)
-  maxBalance       Decimal?       @db.Decimal(14, 2)
-  interestRate     Decimal        @db.Decimal(6, 3)
-  createdAt        DateTime       @default(now())
+  id               String         @id(map: "pk_interest_rate_tier") @default(uuid())
+  productVersion   ProductVersion @relation(fields: [productVersionId], references: [id], onDelete: Cascade, map: "fk_interest_rate_tier_product_version")
+  productVersionId String         @map("product_version_id")
+  minBalance       Decimal        @map("min_balance") @db.Decimal(14, 2)
+  maxBalance       Decimal?       @map("max_balance") @db.Decimal(14, 2)
+  interestRate     Decimal        @map("interest_rate") @db.Decimal(6, 3)
+  createdAt        DateTime       @default(now()) @map("created_at")
 
-  @@map("interest_rate_tiers")
+  @@map("interest_rate_tier")
   @@schema("nexus")
 }
 
@@ -871,22 +871,22 @@ model InterestRateTier {
 // §52.5 "every posting is auditable" — accrual itself is the audit trail
 // for how each posted amount was actually derived, day by day.
 model SavingsInterestAccrual {
-  id            String         @id @default(cuid())
-  institution   Institution    @relation(fields: [institutionId], references: [id], onDelete: Cascade)
-  institutionId String
-  account       SavingsAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
-  accountId     String
-  accrualDate   DateTime
-  balanceUsed   Decimal        @db.Decimal(14, 2)
-  rateApplied   Decimal        @db.Decimal(6, 3)
+  id            String         @id(map: "pk_savings_interest_accrual") @default(uuid())
+  institution   Institution    @relation(fields: [institutionId], references: [id], onDelete: Cascade, map: "fk_savings_interest_accrual_institution")
+  institutionId String         @map("institution_id")
+  account       SavingsAccount @relation(fields: [accountId], references: [id], onDelete: Cascade, map: "fk_savings_interest_accrual_account")
+  accountId     String         @map("account_id")
+  accrualDate   DateTime       @map("accrual_date")
+  balanceUsed   Decimal        @map("balance_used") @db.Decimal(14, 2)
+  rateApplied   Decimal        @map("rate_applied") @db.Decimal(6, 3)
   method        String
-  amountAccrued Decimal        @db.Decimal(14, 2)
+  amountAccrued Decimal        @map("amount_accrued") @db.Decimal(14, 2)
   posted        Boolean        @default(false)
-  postingId     String?
-  createdAt     DateTime       @default(now())
+  postingId     String?        @map("posting_id")
+  createdAt     DateTime       @default(now()) @map("created_at")
 
-  @@unique([accountId, accrualDate])
-  @@map("savings_interest_accruals")
+  @@unique([accountId, accrualDate], map: "uq_savings_interest_accrual_account_id_accrual_date")
+  @@map("savings_interest_accrual")
   @@schema("nexus")
 }
 
@@ -894,23 +894,23 @@ model SavingsInterestAccrual {
 // one row per posting event, whether triggered per-account or as part of
 // a batch (§119 Ledger Posting Management supports both patterns).
 model SavingsInterestPosting {
-  id             String         @id @default(cuid())
-  institution    Institution    @relation(fields: [institutionId], references: [id], onDelete: Cascade)
-  institutionId  String
-  account        SavingsAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
-  accountId      String
-  periodStart    DateTime
-  periodEnd      DateTime
-  totalAmount    Decimal        @db.Decimal(14, 2)
-  transactionId  String?
-  batchId        String?
-  postedById     String
-  reversedAt     DateTime?
-  reversedById   String?
-  reversalReason String?
-  createdAt      DateTime       @default(now())
+  id             String         @id(map: "pk_savings_interest_posting") @default(uuid())
+  institution    Institution    @relation(fields: [institutionId], references: [id], onDelete: Cascade, map: "fk_savings_interest_posting_institution")
+  institutionId  String         @map("institution_id")
+  account        SavingsAccount @relation(fields: [accountId], references: [id], onDelete: Cascade, map: "fk_savings_interest_posting_account")
+  accountId      String         @map("account_id")
+  periodStart    DateTime       @map("period_start")
+  periodEnd      DateTime       @map("period_end")
+  totalAmount    Decimal        @map("total_amount") @db.Decimal(14, 2)
+  transactionId  String?        @map("transaction_id")
+  batchId        String?        @map("batch_id")
+  postedById     String         @map("posted_by_id")
+  reversedAt     DateTime?      @map("reversed_at")
+  reversedById   String?        @map("reversed_by_id")
+  reversalReason String?        @map("reversal_reason")
+  createdAt      DateTime       @default(now()) @map("created_at")
 
-  @@map("savings_interest_postings")
+  @@map("savings_interest_posting")
   @@schema("nexus")
 }
 
@@ -930,22 +930,22 @@ enum AccountHolderRole {
 }
 
 model AccountHolder {
-  id            String            @id @default(cuid())
-  institution   Institution       @relation(fields: [institutionId], references: [id], onDelete: Cascade)
-  institutionId String
-  customer      Customer          @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  customerId    String
+  id            String            @id(map: "pk_account_holder") @default(uuid())
+  institution   Institution       @relation(fields: [institutionId], references: [id], onDelete: Cascade, map: "fk_account_holder_institution")
+  institutionId String            @map("institution_id")
+  customer      Customer          @relation(fields: [customerId], references: [id], onDelete: Cascade, map: "fk_account_holder_customer")
+  customerId    String            @map("customer_id")
   role          AccountHolderRole
 
-  loan             Loan?           @relation(fields: [loanId], references: [id], onDelete: Cascade)
-  loanId           String?
-  savingsAccount   SavingsAccount? @relation(fields: [savingsAccountId], references: [id], onDelete: Cascade)
-  savingsAccountId String?
+  loan             Loan?           @relation(fields: [loanId], references: [id], onDelete: Cascade, map: "fk_account_holder_loan")
+  loanId           String?         @map("loan_id")
+  savingsAccount   SavingsAccount? @relation(fields: [savingsAccountId], references: [id], onDelete: Cascade, map: "fk_account_holder_savings_account")
+  savingsAccountId String?         @map("savings_account_id")
 
-  addedById String?
-  createdAt DateTime @default(now())
+  addedById String?  @map("added_by_id")
+  createdAt DateTime @default(now()) @map("created_at")
 
-  @@map("account_holders")
+  @@map("account_holder")
   @@schema("nexus")
 }
 
@@ -983,49 +983,49 @@ enum DocumentStatus {
 }
 
 model Document {
-  id            String      @id @default(cuid())
-  institution   Institution @relation(fields: [institutionId], references: [id], onDelete: Cascade)
-  institutionId String
-  customer      Customer?   @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  customerId    String?
+  id            String      @id(map: "pk_document") @default(uuid())
+  institution   Institution @relation(fields: [institutionId], references: [id], onDelete: Cascade, map: "fk_document_institution")
+  institutionId String      @map("institution_id")
+  customer      Customer?   @relation(fields: [customerId], references: [id], onDelete: Cascade, map: "fk_document_customer")
+  customerId    String?     @map("customer_id")
 
-  documentName     String
-  documentType     DocumentType
+  documentName     String         @map("document_name")
+  documentType     DocumentType   @map("document_type")
   category         String?
-  storageReference String
+  storageReference String         @map("storage_reference")
   checksum         String
-  fileSize         Int
-  mimeType         String
-  versionNumber    Int            @default(1)
-  expiryDate       DateTime?
+  fileSize         Int            @map("file_size")
+  mimeType         String         @map("mime_type")
+  versionNumber    Int            @default(1) @map("version_number")
+  expiryDate       DateTime?      @map("expiry_date")
   status           DocumentStatus @default(UPLOADED)
-  uploadedById     String?
+  uploadedById     String?        @map("uploaded_by_id")
 
   // doc §30.3 "Replace documents... support version history" — Replace
   // creates a new Document row linked back to the one it supersedes, and
   // auto-archives the old one, rather than each upload being independent.
-  replacesDocument   Document? @relation("DocumentVersionChain", fields: [replacesDocumentId], references: [id])
-  replacesDocumentId String?   @unique
+  replacesDocument   Document? @relation("DocumentVersionChain", fields: [replacesDocumentId], references: [id], map: "fk_document_replaces_document")
+  replacesDocumentId String?   @unique @map("replaces_document_id")
   replacedBy         Document? @relation("DocumentVersionChain")
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
-  @@map("documents")
+  @@map("document")
   @@schema("nexus")
 }
 
 model SavingsTransaction {
-  id           String         @id @default(cuid())
-  account      SavingsAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
-  accountId    String
+  id           String         @id(map: "pk_savings_transaction") @default(uuid())
+  account      SavingsAccount @relation(fields: [accountId], references: [id], onDelete: Cascade, map: "fk_savings_transaction_account")
+  accountId    String         @map("account_id")
   type         SavingsTxnType
   amount       Decimal        @db.Decimal(14, 2)
-  balanceAfter Decimal        @db.Decimal(14, 2)
-  recordedById String?
-  createdAt    DateTime       @default(now())
+  balanceAfter Decimal        @map("balance_after") @db.Decimal(14, 2)
+  recordedById String?        @map("recorded_by_id")
+  createdAt    DateTime       @default(now()) @map("created_at")
 
-  @@map("savings_transactions")
+  @@map("savings_transaction")
   @@schema("nexus")
 }
 
@@ -1034,34 +1034,34 @@ model SavingsTransaction {
 // ---------------------------------------------------------------------------
 
 model RefreshToken {
-  id        String    @id @default(cuid())
-  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  userId    String
-  tokenHash String    @unique
-  userAgent String?
-  ipAddress String?
-  expiresAt DateTime
-  revokedAt DateTime?
-  createdAt DateTime  @default(now())
+  id        String    @id(map: "pk_refresh_token") @default(uuid())
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade, map: "fk_refresh_token_user")
+  userId    String    @map("user_id")
+  tokenHash String    @unique @map("token_hash")
+  userAgent String?   @map("user_agent")
+  ipAddress String?   @map("ip_address")
+  expiresAt DateTime  @map("expires_at")
+  revokedAt DateTime? @map("revoked_at")
+  createdAt DateTime  @default(now()) @map("created_at")
 
-  @@map("refresh_tokens")
+  @@map("refresh_token")
   @@schema("nexus")
 }
 
 // doc §39.13 — Access Monitoring: every access event should be monitored
 model AuditLog {
-  id            String      @id @default(cuid())
-  institution   Institution @relation(fields: [institutionId], references: [id], onDelete: Cascade)
-  institutionId String
-  user          User?       @relation(fields: [userId], references: [id], onDelete: SetNull)
-  userId        String?
+  id            String      @id(map: "pk_audit_log") @default(uuid())
+  institution   Institution @relation(fields: [institutionId], references: [id], onDelete: Cascade, map: "fk_audit_log_institution")
+  institutionId String      @map("institution_id")
+  user          User?       @relation(fields: [userId], references: [id], onDelete: SetNull, map: "fk_audit_log_user")
+  userId        String?     @map("user_id")
   action        String // e.g. "auth.login", "role.assign", "loan.approve"
   resource      String?
-  resourceId    String?
+  resourceId    String?     @map("resource_id")
   metadata      Json?
-  ipAddress     String?
-  createdAt     DateTime    @default(now())
+  ipAddress     String?     @map("ip_address")
+  createdAt     DateTime    @default(now()) @map("created_at")
 
-  @@map("audit_logs")
+  @@map("audit_log")
   @@schema("nexus")
 }
