@@ -145,16 +145,28 @@ institutionRouter.post("/onboarding/branches", requirePermission("branches.admin
 // Step 4 — invite staff (bootstraps Employee + User together)
 const inviteSchema = z.object({ fullName: z.string().min(2), email: z.string().email(), roleId: z.string(), branchId: z.string().optional() });
 
+// Bootstraps User + UserRole + Employee together atomically. Previously
+// these were three separate creates — if userRole or employee creation
+// failed (e.g. an invalid roleId), the User row from the first call had
+// already persisted, leaving an orphaned, role-less, invite-less user
+// that silently blocked any retry with the same email. Found via a live
+// smoke test after the PDDS Phase 1+2 migration (not a schema defect itself).
 institutionRouter.post("/onboarding/staff", requirePermission("users.administer"), async (req: AuthedRequest, res) => {
   const parsed = inviteSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
   const { fullName, email, roleId, branchId } = parsed.data;
 
-  const user = await prisma.user.create({
-    data: { institutionId: req.auth!.institutionId, fullName, email, passwordHash: "", status: "INVITED" },
+  const role = await prisma.role.findFirst({ where: { id: roleId, institutionId: req.auth!.institutionId } });
+  if (!role) return res.status(404).json({ error: "Role not found" });
+
+  const user = await prisma.$transaction(async (tx) => {
+    const u = await tx.user.create({
+      data: { institutionId: req.auth!.institutionId, fullName, email, passwordHash: "", status: "INVITED" },
+    });
+    await tx.userRole.create({ data: { userId: u.id, roleId, branchId } });
+    await tx.employee.create({ data: { institutionId: req.auth!.institutionId, fullName, email, branchId, userId: u.id } });
+    return u;
   });
-  await prisma.userRole.create({ data: { userId: user.id, roleId, branchId } });
-  await prisma.employee.create({ data: { institutionId: req.auth!.institutionId, fullName, email, branchId, userId: user.id } });
 
   res.status(201).json({ user });
 });
