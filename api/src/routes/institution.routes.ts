@@ -1,4 +1,5 @@
 import { Router } from "express";
+import crypto from "crypto";
 import { z } from "zod";
 import { prisma } from "../lib/prisma";
 import { requireAuth, AuthedRequest } from "../middleware/auth";
@@ -144,13 +145,17 @@ institutionRouter.post("/onboarding/branches", requirePermission("branches.admin
 
 // Step 4 — invite staff (bootstraps Employee + User together)
 const inviteSchema = z.object({ fullName: z.string().min(2), email: z.string().email(), roleId: z.string(), branchId: z.string().optional() });
+const INVITE_TOKEN_TTL_DAYS = 7;
 
-// Bootstraps User + UserRole + Employee together atomically. Previously
-// these were three separate creates — if userRole or employee creation
-// failed (e.g. an invalid roleId), the User row from the first call had
-// already persisted, leaving an orphaned, role-less, invite-less user
-// that silently blocked any retry with the same email. Found via a live
-// smoke test after the PDDS Phase 1+2 migration (not a schema defect itself).
+// Bootstraps User + UserRole + Employee together atomically (fixed: was
+// three separate creates, so a mid-way failure left an orphaned, role-less
+// user that silently blocked any retry with the same email). Also now
+// generates a real invite token — this endpoint had fallen out of sync
+// with employee.routes.ts's Grant Access flow, which got the invite-token
+// fix applied earlier but this one, the one actually used for onboarding's
+// very first staff invite, never did — invited users had no way to ever
+// accept and set a password. Both found via a live smoke test after the
+// PDDS Phase 1+2 migration; neither is a schema defect.
 institutionRouter.post("/onboarding/staff", requirePermission("users.administer"), async (req: AuthedRequest, res) => {
   const parsed = inviteSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
@@ -159,16 +164,24 @@ institutionRouter.post("/onboarding/staff", requirePermission("users.administer"
   const role = await prisma.role.findFirst({ where: { id: roleId, institutionId: req.auth!.institutionId } });
   if (!role) return res.status(404).json({ error: "Role not found" });
 
+  const inviteToken = crypto.randomBytes(32).toString("hex");
+  const inviteTokenExpiresAt = new Date(Date.now() + INVITE_TOKEN_TTL_DAYS * 24 * 60 * 60 * 1000);
+
   const user = await prisma.$transaction(async (tx) => {
     const u = await tx.user.create({
-      data: { institutionId: req.auth!.institutionId, fullName, email, passwordHash: "", status: "INVITED" },
+      data: { institutionId: req.auth!.institutionId, fullName, email, passwordHash: "", status: "INVITED", inviteToken, inviteTokenExpiresAt },
     });
     await tx.userRole.create({ data: { userId: u.id, roleId, branchId } });
     await tx.employee.create({ data: { institutionId: req.auth!.institutionId, fullName, email, branchId, userId: u.id } });
     return u;
   });
 
-  res.status(201).json({ user });
+  await prisma.auditLog.create({
+    data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "institution.staff_invite", resource: "user", resourceId: user.id },
+  });
+
+  const webOrigin = process.env.WEB_ORIGIN || "http://localhost:3100";
+  res.status(201).json({ user, inviteLink: `${webOrigin}/accept-invite?token=${inviteToken}` });
 });
 
 // Step 5 — go live
