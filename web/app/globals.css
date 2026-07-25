@@ -31,6 +31,23 @@ input, textarea, select {
   user-select: text;
 }
 
+/* EUXS Volume XVII (Accessibility) §163/§153 — on-brand, guaranteed-visible
+   keyboard focus indicator for every interactive element that isn't an
+   input/select/textarea (those already have their own gold-glow focus
+   treatment above). Previously these relied on the browser's unstyled
+   default outline, which is functional but not on-brand or guaranteed
+   visible against every button background in the app. :focus-visible
+   (not :focus) so this only appears for keyboard navigation, not mouse
+   clicks, matching standard accessible-focus-ring convention. */
+button:focus-visible,
+a:focus-visible,
+[role="button"]:focus-visible,
+[tabindex]:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(200, 169, 81, 0.5);
+  border-radius: 6px;
+}
+
 @layer components {
   /* Inputs, selects, textareas — soft elevation + signature gold focus glow */
   .input {

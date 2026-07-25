@@ -60,17 +60,26 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
   return (
     <ToastContext.Provider value={value}>
       {children}
+      {/* EUXS Volume XVII (Accessibility) / §158 Notification Behaviour —
+          role="alert" (errors, assertive) vs role="status" (success/info,
+          polite) so screen readers actually announce toasts as they
+          appear; previously nothing was announced at all. Icons are
+          aria-hidden since their meaning is redundant with the message
+          text; the dismiss button gets a real accessible name instead of
+          just the ✕ glyph. */}
       <div className="fixed z-[100] bottom-20 dt:bottom-6 left-1/2 -translate-x-1/2 dt:left-auto dt:translate-x-0 dt:right-6 flex flex-col gap-2 w-[92vw] max-w-sm">
         {toasts.map((t) => (
           <div
             key={t.id}
+            role={t.kind === "error" ? "alert" : "status"}
+            aria-live={t.kind === "error" ? "assertive" : "polite"}
             className={`rounded-[10px] px-4 py-3 text-sm shadow-[0_4px_16px_rgba(8,23,46,0.18)] flex items-start gap-2.5 ${
               t.kind === "error" ? "bg-ink-900 text-paper-50 border border-rose-600/40"
               : t.kind === "success" ? "bg-ink-900 text-paper-50 border border-green-600/40"
               : "bg-ink-900 text-paper-50 border border-gold-500/40"
             }`}
           >
-            <span className="mt-0.5">
+            <span className="mt-0.5" aria-hidden="true">
               {t.kind === "error" ? "⚠" : t.kind === "success" ? "✓" : "ℹ"}
             </span>
             <div className="flex-1 min-w-0">
@@ -82,7 +91,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
                 </button>
               )}
             </div>
-            <button onClick={() => dismiss(t.id)} className="text-violet-500 hover:text-paper-50 shrink-0">✕</button>
+            <button onClick={() => dismiss(t.id)} aria-label="Dismiss notification" className="text-violet-500 hover:text-paper-50 shrink-0">✕</button>
           </div>
         ))}
       </div>

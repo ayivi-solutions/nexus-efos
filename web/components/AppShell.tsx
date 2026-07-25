@@ -60,17 +60,29 @@ export function AppShell({ active, children }: { active: string; children: React
 
   return (
     <div className="min-h-screen bg-paper-0">
+      {/* EUXS Volume XVII (Accessibility) §163 Keyboard Accessibility /
+          WCAG 2.4.1 Bypass Blocks — lets keyboard users jump straight past
+          the repeated nav chrome on every single page. Visually hidden
+          until focused (Tab from page load reveals it first). */}
+      <a
+        href="#main-content"
+        className="sr-only focus:not-sr-only focus:fixed focus:z-[200] focus:top-2 focus:left-2 focus:bg-gold-500 focus:text-ink-900 focus:px-4 focus:py-2 focus:rounded-md focus:text-sm focus:font-semibold"
+      >
+        Skip to main content
+      </a>
+
       {/* Fixed top chrome */}
       <header className="fixed top-0 inset-x-0 h-14 z-40 flex items-center gap-3 px-4 bg-ink-900 text-paper-0 border-b border-ink-700/40">
         <button
           onClick={() => setOpen((o) => !o)}
           aria-label="Toggle navigation"
+          aria-expanded={open}
           className="dt:hidden w-9 h-9 flex items-center justify-center rounded-md text-gold-400 border border-gold-500/30 text-lg shrink-0"
         >
-          {open ? "✕" : "☰"}
+          <span aria-hidden="true">{open ? "✕" : "☰"}</span>
         </button>
         <div className="flex items-center gap-2">
-          <span className="w-2 h-2 rounded-full bg-gold-400" style={{ boxShadow: "0 0 8px #e2c46a" }} />
+          <span className="w-2 h-2 rounded-full bg-gold-400" style={{ boxShadow: "0 0 8px #e2c46a" }} aria-hidden="true" />
           <span className="font-mono text-sm tracking-wide">
             NEXUS <b className="text-gold-400">EFOS</b>
           </span>
@@ -84,18 +96,19 @@ export function AppShell({ active, children }: { active: string; children: React
             open ? "translate-x-0" : "-translate-x-full"
           } dt:sticky dt:top-14 dt:translate-x-0 dt:w-[280px] dt:max-w-none dt:h-[calc(100vh-56px)] dt:shrink-0`}
         >
-          <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
+          <nav aria-label="Primary" className="flex-1 p-3 space-y-1 overflow-y-auto">
             {visibleNav.map((item) => (
               <button
                 key={item.label}
                 onClick={() => go(item.href)}
+                aria-current={item.label === active ? "page" : undefined}
                 className={`w-full flex items-center gap-2.5 text-left px-3 py-2.5 rounded-md text-[13px] transition ${
                   item.label === active
                     ? "bg-ink-800 text-gold-300 shadow-[inset_2px_0_0_#e2c46a]"
                     : "text-violet-500 hover:bg-ink-800 hover:text-paper-50"
                 }`}
               >
-                <span className="text-gold-500">{item.icon}</span>
+                <span className="text-gold-500" aria-hidden="true">{item.icon}</span>
                 {item.label}
               </button>
             ))}
@@ -105,7 +118,7 @@ export function AppShell({ active, children }: { active: string; children: React
               onClick={handleLogout}
               className="w-full flex items-center gap-2.5 text-left px-5 py-3 text-[13px] text-rose-600 hover:bg-ink-800 transition"
             >
-              <span>⏻</span> Log out
+              <span aria-hidden="true">⏻</span> Log out
             </button>
             <div className="px-4 pb-4 text-[11px] text-violet-500">Core Platform · Working Draft v0.1</div>
           </div>
@@ -120,20 +133,21 @@ export function AppShell({ active, children }: { active: string; children: React
         )}
 
         {/* Main content — bottom padding clears the mobile tab bar */}
-        <main className="flex-1 min-w-0 pb-24 dt:pb-0">{children}</main>
+        <main id="main-content" className="flex-1 min-w-0 pb-24 dt:pb-0">{children}</main>
       </div>
 
       {/* Bottom tab bar — mobile only, role-aware (Dashboard + top 3 permitted) */}
-      <nav className="dt:hidden fixed bottom-0 inset-x-0 h-16 z-40 flex bg-ink-900 border-t border-ink-700/40" style={{ paddingBottom: "env(safe-area-inset-bottom)" }}>
+      <nav aria-label="Mobile" className="dt:hidden fixed bottom-0 inset-x-0 h-16 z-40 flex bg-ink-900 border-t border-ink-700/40" style={{ paddingBottom: "env(safe-area-inset-bottom)" }}>
         {tabItems.map((item) => (
           <button
             key={item.label}
             onClick={() => go(item.href)}
+            aria-current={item.label === active ? "page" : undefined}
             className={`flex-1 flex flex-col items-center justify-center gap-1 text-[10.5px] ${
               item.label === active ? "text-gold-400" : "text-violet-500"
             }`}
           >
-            <span className="text-base">{item.icon}</span>
+            <span className="text-base" aria-hidden="true">{item.icon}</span>
             {item.label === "Roles & Permissions" ? "Roles" : item.label}
           </button>
         ))}
