@@ -30,11 +30,20 @@ async function requestFormData(path: string, formData: FormData): Promise<any> {
   return res.json();
 }
 
+// Endpoints that never require a token in the first place. A 401 from any
+// of these means "wrong credentials" or "bad/expired invite token" — a
+// real, specific error the person needs to see — not "your session
+// expired," which was previously overriding every one of these with a
+// misleading message. Found live: repeated "Session expired" toasts on
+// the login page itself while just trying to sign in with the wrong
+// password, which had nothing to do with a session at all.
+const UNAUTHENTICATED_PATHS = ["/auth/login", "/auth/register-institution", "/auth/accept-invite", "/auth/refresh", "/auth/logout"];
+
 async function request(path: string, options: RequestInit = {}, _retried = false): Promise<any> {
   const accessToken = typeof window !== "undefined" ? sessionStorage.getItem("nexus_access_token") : null;
   const res = await rawFetch(path, options, accessToken);
 
-  if (res.status === 401 && !_retried && typeof window !== "undefined" && path !== "/auth/refresh") {
+  if (res.status === 401 && !_retried && typeof window !== "undefined" && !UNAUTHENTICATED_PATHS.includes(path)) {
     const refreshToken = sessionStorage.getItem("nexus_refresh_token");
     if (refreshToken) {
       try {
