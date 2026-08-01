@@ -174,6 +174,9 @@ export const api = {
     request(`/customers/${id}/stage`, { method: "PATCH", body: JSON.stringify({ lifecycleStage }) }),
   updateCustomerKyc: (id: string, kycStatus: string) =>
     request(`/customers/${id}/kyc`, { method: "PATCH", body: JSON.stringify({ kycStatus }) }),
+  updateCustomerCdd: (id: string, data: { pepStatus?: string; cddNotes?: string }) =>
+    request(`/customers/${id}/cdd`, { method: "PATCH", body: JSON.stringify(data) }),
+  getKycChecklist: (id: string) => request(`/customers/${id}/kyc-checklist`),
   updateCustomerStatus: (id: string, status: string) =>
     request(`/customers/${id}/status`, { method: "PATCH", body: JSON.stringify({ status }) }),
 

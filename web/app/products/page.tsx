@@ -7,6 +7,7 @@ import { AppShell } from "@/components/AppShell";
 
 const STATUS_COLOR: Record<string, string> = {
   DRAFT: "bg-violet-500/15 text-violet-500",
+  PENDING_APPROVAL: "bg-violet-500/15 text-violet-500",
   ACTIVE: "bg-green-100 text-green-600",
   WITHDRAWN: "bg-gold-500/15 text-gold-600",
   ARCHIVED: "bg-paper-100 text-text-muted",

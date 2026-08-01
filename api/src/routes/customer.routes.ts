@@ -318,6 +318,107 @@ customerRouter.patch("/:id/kyc", requirePermission("customers.update"), async (r
   res.json({ ok: true });
 });
 
+// doc §58 Compliance — PEP classification + CDD. cddLevel is auto-derived
+// (ENHANCED whenever pepStatus isn't NOT_PEP, or riskRating is HIGH) rather
+// than independently settable, so it can never silently drift out of sync
+// with the very risk factors that are supposed to drive it.
+const cddSchema = z.object({
+  pepStatus: z.enum(["NOT_PEP", "DOMESTIC_PEP", "FOREIGN_PEP", "PEP_ASSOCIATE"]).optional(),
+  cddNotes: z.string().optional(),
+});
+
+customerRouter.patch("/:id/cdd", requirePermission("customers.update"), async (req: AuthedRequest, res) => {
+  const parsed = cddSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+  const existing = await prisma.customer.findFirst({ where: { id: req.params.id, institutionId: req.auth!.institutionId } });
+  if (!existing) return res.status(404).json({ error: "Customer not found" });
+  const lockError = assertNotLocked(existing.status);
+  if (lockError) return res.status(409).json({ error: lockError });
+
+  const effectivePepStatus = parsed.data.pepStatus ?? existing.pepStatus;
+  const cddLevel = (effectivePepStatus !== "NOT_PEP" || existing.riskRating === "HIGH") ? "ENHANCED" : "STANDARD";
+
+  const customer = await prisma.customer.update({
+    where: { id: existing.id },
+    data: {
+      ...parsed.data,
+      cddLevel,
+      cddCompletedAt: new Date(),
+      cddCompletedById: req.auth!.userId,
+    },
+  });
+
+  await prisma.auditLog.create({
+    data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "customer.cdd_update", resource: "customer", resourceId: existing.id, metadata: { pepStatus: effectivePepStatus, cddLevel } },
+  });
+
+  res.json({ customer });
+});
+
+// doc §30 Customer Document Management + §58 KYC — a real completion
+// checklist computed live against the customer's actual uploaded
+// documents, rather than a bare status flag. Deliberately does NOT include
+// expiry monitoring or periodic re-screening — both need a job scheduler
+// that doesn't exist in this app yet.
+const KYC_REQUIREMENTS: Record<string, { label: string; anyOf: string[] }[]> = {
+  INDIVIDUAL: [
+    { label: "Identity document", anyOf: ["NATIONAL_ID", "PASSPORT", "DRIVERS_LICENCE", "VOTER_ID"] },
+    { label: "Proof of address", anyOf: ["PROOF_OF_ADDRESS", "UTILITY_BILL"] },
+    { label: "Photograph", anyOf: ["PHOTOGRAPH"] },
+  ],
+  FARMER_GROUP: [
+    { label: "Identity document", anyOf: ["NATIONAL_ID", "PASSPORT", "DRIVERS_LICENCE", "VOTER_ID"] },
+    { label: "Proof of address", anyOf: ["PROOF_OF_ADDRESS", "UTILITY_BILL"] },
+    { label: "Photograph", anyOf: ["PHOTOGRAPH"] },
+  ],
+  WOMENS_GROUP: [
+    { label: "Identity document", anyOf: ["NATIONAL_ID", "PASSPORT", "DRIVERS_LICENCE", "VOTER_ID"] },
+    { label: "Proof of address", anyOf: ["PROOF_OF_ADDRESS", "UTILITY_BILL"] },
+    { label: "Photograph", anyOf: ["PHOTOGRAPH"] },
+  ],
+  YOUTH: [
+    { label: "Identity document", anyOf: ["NATIONAL_ID", "PASSPORT", "DRIVERS_LICENCE", "VOTER_ID"] },
+    { label: "Proof of address", anyOf: ["PROOF_OF_ADDRESS", "UTILITY_BILL"] },
+    { label: "Photograph", anyOf: ["PHOTOGRAPH"] },
+  ],
+  BUSINESS: [
+    { label: "Business registration", anyOf: ["BUSINESS_REGISTRATION"] },
+    { label: "Tax certificate", anyOf: ["TAX_CERTIFICATE"] },
+    { label: "Proof of address", anyOf: ["PROOF_OF_ADDRESS", "UTILITY_BILL"] },
+  ],
+  CORPORATE: [
+    { label: "Business registration", anyOf: ["BUSINESS_REGISTRATION"] },
+    { label: "Tax certificate", anyOf: ["TAX_CERTIFICATE"] },
+    { label: "Proof of address", anyOf: ["PROOF_OF_ADDRESS", "UTILITY_BILL"] },
+  ],
+};
+
+customerRouter.get("/:id/kyc-checklist", requirePermission("customers.view"), async (req: AuthedRequest, res) => {
+  const customer = await findOwnedCustomer(req.params.id, req.auth!.institutionId);
+  if (!customer) return res.status(404).json({ error: "Customer not found" });
+
+  const documents = await prisma.document.findMany({
+    where: { customerId: customer.id, status: { not: "DISPOSED" } },
+  });
+  const presentTypes = new Set(documents.map((d) => d.documentType));
+
+  const requirements = KYC_REQUIREMENTS[customer.segment] ?? KYC_REQUIREMENTS.INDIVIDUAL;
+  const checklist = requirements.map((r) => ({
+    label: r.label,
+    satisfied: r.anyOf.some((t) => presentTypes.has(t as any)),
+    acceptedTypes: r.anyOf,
+  }));
+  const satisfiedCount = checklist.filter((c) => c.satisfied).length;
+
+  res.json({
+    checklist,
+    percentComplete: Math.round((satisfiedCount / checklist.length) * 100),
+    complete: satisfiedCount === checklist.length,
+    missing: checklist.filter((c) => !c.satisfied).map((c) => c.label),
+  });
+});
+
 const archiveSchema = z.object({
   closureReason: z.enum(["CUSTOMER_REQUEST", "DEATH", "BUSINESS_CLOSURE", "FRAUD", "REGULATORY_DIRECTIVE", "DUPLICATE_MERGE", "MIGRATION", "INACTIVITY", "INSTITUTIONAL_DECISION", "COURT_ORDER", "OTHER"]),
   closureNote: z.string().optional(),

@@ -167,6 +167,9 @@ productsRouter.delete("/:id/tiers/:tierId", requirePermission("institution.confi
 productsRouter.post("/:id/activate", requirePermission("institution.configure"), async (req: AuthedRequest, res) => {
   const product = await prisma.product.findFirst({ where: { id: req.params.id, institutionId: req.auth!.institutionId } });
   if (!product) return res.status(404).json({ error: "Product not found" });
+  if (product.status === "PENDING_APPROVAL") {
+    return res.status(400).json({ error: "This product's activation is already pending approval" });
+  }
 
   const approval = await prisma.approvalRequest.create({
     data: {
@@ -179,6 +182,11 @@ productsRouter.post("/:id/activate", requirePermission("institution.configure"),
       requestedById: req.auth!.userId,
     },
   });
+
+  // doc §32 Product Lifecycle — the product's own status now honestly
+  // reflects that an activation request is in flight, instead of silently
+  // staying DRAFT the whole time the Approval Workflow is resolving it.
+  await prisma.product.update({ where: { id: product.id }, data: { status: "PENDING_APPROVAL" } });
 
   await prisma.auditLog.create({
     data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "product.activation_requested", resource: "product", resourceId: req.params.id, metadata: { approvalRequestId: approval.id } },

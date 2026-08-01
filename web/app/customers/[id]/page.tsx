@@ -12,6 +12,7 @@ const KYC_STATUSES = ["PENDING", "VERIFIED", "REJECTED"];
 const SEGMENTS = ["INDIVIDUAL", "BUSINESS", "FARMER_GROUP", "WOMENS_GROUP", "YOUTH", "CORPORATE"];
 const RISK_RATINGS = ["LOW", "MEDIUM", "HIGH"];
 const CLOSURE_REASONS = ["CUSTOMER_REQUEST", "DEATH", "BUSINESS_CLOSURE", "FRAUD", "REGULATORY_DIRECTIVE", "DUPLICATE_MERGE", "MIGRATION", "INACTIVITY", "INSTITUTIONAL_DECISION", "COURT_ORDER", "OTHER"];
+const PEP_STATUSES = ["NOT_PEP", "DOMESTIC_PEP", "FOREIGN_PEP", "PEP_ASSOCIATE"];
 
 type TimelineEvent = { date: string; label: string; detail: string; amount?: string };
 
@@ -41,6 +42,8 @@ export default function CustomerDetailPage() {
   const [ownerForm, setOwnerForm] = useState(emptyOwner);
 
   const [documents, setDocuments] = useState<any[]>([]);
+  const [kycChecklist, setKycChecklist] = useState<any>(null);
+  const [cddForm, setCddForm] = useState({ pepStatus: "NOT_PEP", cddNotes: "" });
   const [docFile, setDocFile] = useState<File | null>(null);
   const [docType, setDocType] = useState("NATIONAL_ID");
   const [docExpiry, setDocExpiry] = useState("");
@@ -68,12 +71,25 @@ export default function CustomerDetailPage() {
         transactionAlertsEnabled: res.customer.transactionAlertsEnabled,
         statementDeliveryEnabled: res.customer.statementDeliveryEnabled,
       });
+      setCddForm({ pepStatus: res.customer.pepStatus || "NOT_PEP", cddNotes: res.customer.cddNotes || "" });
     }).catch((err) => setError(err.message));
     loadDocuments();
+    api.getKycChecklist(id).then(setKycChecklist).catch(() => {});
   }
 
   function loadDocuments() {
     api.listDocuments(id).then((res) => setDocuments(res.documents)).catch(() => {});
+  }
+
+  async function handleUpdateCdd(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy(true); setError(null);
+    try {
+      await api.updateCustomerCdd(id, cddForm);
+      toast.success("CDD updated.");
+      load();
+    } catch (err: any) { setError(err.message || "Could not update CDD"); }
+    finally { setBusy(false); }
   }
 
   useEffect(() => { load(); }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -441,6 +457,48 @@ export default function CustomerDetailPage() {
               <Stat label="Savings accounts" value={String((customer.savingsAccounts || []).length)} />
               <Stat label="Customer since" value={new Date(customer.createdAt).toLocaleDateString()} />
             </div>
+
+            {/* KYC Checklist + CDD/PEP — doc §30/§58. Computed live against
+                actual uploaded documents; no expiry monitoring/re-screening
+                yet, both need a job scheduler that doesn't exist. */}
+            <h2 className="font-display font-semibold text-lg text-ink-900 mb-3">KYC & Due Diligence</h2>
+            {kycChecklist && (
+              <div className="card p-5 mb-4">
+                <div className="flex items-center justify-between mb-3">
+                  <span className="text-[13px] font-medium text-text-700">Document checklist</span>
+                  <span className={`badge ${kycChecklist.complete ? "bg-green-100 text-green-600" : "bg-gold-500/15 text-gold-600"}`}>{kycChecklist.percentComplete}% complete</span>
+                </div>
+                <div className="space-y-1.5 mb-2">
+                  {kycChecklist.checklist.map((c: any, i: number) => (
+                    <div key={i} className="flex items-center gap-2 text-[12.5px] text-text-700">
+                      <span className={c.satisfied ? "text-green-600" : "text-text-muted"}>{c.satisfied ? "✓" : "○"}</span>
+                      {c.label}
+                    </div>
+                  ))}
+                </div>
+                {!kycChecklist.complete && <p className="text-text-muted text-xs">Missing: {kycChecklist.missing.join(", ")}</p>}
+              </div>
+            )}
+            <form onSubmit={handleUpdateCdd} className="card p-5 mb-10">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-3">
+                <label className="block">
+                  <span className="block text-[13px] text-text-500 mb-1.5">PEP status</span>
+                  <select className="input" value={cddForm.pepStatus} onChange={(e) => setCddForm((f) => ({ ...f, pepStatus: e.target.value }))}>
+                    {PEP_STATUSES.map((p) => (<option key={p} value={p}>{p.replaceAll("_", " ")}</option>))}
+                  </select>
+                </label>
+                <label className="block">
+                  <span className="block text-[13px] text-text-500 mb-1.5">CDD level <span className="text-text-muted normal-case">(auto-derived)</span></span>
+                  <input disabled className="input opacity-70" value={customer.cddLevel || "STANDARD"} />
+                </label>
+              </div>
+              <label className="block mb-3">
+                <span className="block text-[13px] text-text-500 mb-1.5">CDD notes</span>
+                <textarea rows={2} className="input" value={cddForm.cddNotes} onChange={(e) => setCddForm((f) => ({ ...f, cddNotes: e.target.value }))} />
+              </label>
+              {customer.cddCompletedAt && <p className="text-text-muted text-xs mb-3">Last updated {new Date(customer.cddCompletedAt).toLocaleString()}</p>}
+              <button type="submit" disabled={busy} className="btn-text text-gold-600">Save CDD</button>
+            </form>
 
             {/* Documents — doc §30/§69. Files live in Supabase Storage (private
                 bucket); only metadata + checksum are stored here. */}

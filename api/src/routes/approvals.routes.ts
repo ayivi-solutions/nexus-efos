@@ -91,6 +91,11 @@ approvalsRouter.post("/:id/reject", requirePermission("institution.configure"), 
   if ((request.type === "CUSTOMER_STATUS_CHANGE" || request.type === "CUSTOMER_PROFILE_UPDATE") && payload.previousStatus) {
     await prisma.customer.update({ where: { id: request.targetId }, data: { status: payload.previousStatus } });
   }
+  // doc §32 Product Lifecycle — a rejected activation reverts the product
+  // back to DRAFT rather than leaving it stuck in PENDING_APPROVAL forever.
+  if (request.type === "PRODUCT_ACTIVATION") {
+    await prisma.product.update({ where: { id: request.targetId }, data: { status: "DRAFT" } });
+  }
 
   await prisma.approvalRequest.update({
     where: { id: request.id },

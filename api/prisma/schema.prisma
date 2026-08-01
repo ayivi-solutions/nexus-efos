@@ -550,6 +550,19 @@ model Customer {
   closedById    String?        @map("closed_by_id")
   closedAt      DateTime?      @map("closed_at")
 
+  // doc §58 Compliance — PEP classification and CDD level. cddLevel is
+  // auto-derived (ENHANCED whenever riskRating is HIGH or pepStatus isn't
+  // NOT_PEP) rather than independently settable, so it can't silently drift
+  // out of sync with the risk factors that are supposed to drive it.
+  // Deliberately NOT built here: expiry monitoring or periodic re-screening
+  // — both need a job scheduler that doesn't exist in this app yet; naming
+  // that honestly rather than half-building an unscheduled "monitor".
+  pepStatus       PepStatus @default(NOT_PEP) @map("pep_status")
+  cddLevel        CddLevel  @default(STANDARD) @map("cdd_level")
+  cddNotes        String?   @map("cdd_notes")
+  cddCompletedAt  DateTime? @map("cdd_completed_at")
+  cddCompletedById String?  @map("cdd_completed_by_id")
+
   archived   Boolean   @default(false)
   archivedAt DateTime? @map("archived_at")
 
@@ -579,6 +592,22 @@ model Customer {
   recordStatus RecordStatus @default(ACTIVE) @map("record_status")
   @@unique([institutionId, phone], map: "uq_customer_institution_id_phone")
   @@map("customer")
+  @@schema("nexus")
+}
+
+enum PepStatus {
+  NOT_PEP
+  DOMESTIC_PEP
+  FOREIGN_PEP
+  PEP_ASSOCIATE
+
+  @@schema("nexus")
+}
+
+enum CddLevel {
+  STANDARD
+  ENHANCED
+
   @@schema("nexus")
 }
 
@@ -806,8 +835,15 @@ enum ProductType {
   @@schema("nexus")
 }
 
+// doc's Product Lifecycle model has 9 ideation-through-retirement stages;
+// most (Opportunity/Concept/Design) describe pre-system work that happens
+// before a Product row would ever exist here. PENDING_APPROVAL added as a
+// genuine, honest 5th state — it now reflects on the Product record itself
+// that an activation request is in flight, rather than silently staying
+// DRAFT the whole time the Approval Workflow is resolving it.
 enum ProductStatus {
   DRAFT
+  PENDING_APPROVAL
   ACTIVE
   WITHDRAWN
   ARCHIVED
