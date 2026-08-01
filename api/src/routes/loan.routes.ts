@@ -77,7 +77,7 @@ loanRouter.get("/:id", requirePermission("reports.view"), async (req: AuthedRequ
       branch: { select: { name: true } },
       repayments: { orderBy: { paidAt: "desc" } },
       installments: { orderBy: { installmentNumber: "asc" } },
-      accountHolders: { include: { customer: { select: { id: true, fullName: true, phone: true } } }, orderBy: { createdAt: "asc" } },
+      accountHolders: { where: { deletedAt: null }, include: { customer: { select: { id: true, fullName: true, phone: true } } }, orderBy: { createdAt: "asc" } },
     },
   });
   if (!loan) return res.status(404).json({ error: "Loan not found" });
@@ -127,7 +127,8 @@ loanRouter.delete("/:id/holders/:holderId", requirePermission("loans.approve"), 
   const loan = await prisma.loan.findFirst({ where: { id: req.params.id, institutionId: req.auth!.institutionId } });
   if (!loan) return res.status(404).json({ error: "Loan not found" });
 
-  await prisma.accountHolder.deleteMany({ where: { id: req.params.holderId, loanId: loan.id } });
+  // PDDS Phase 3 — soft-delete, not a real delete
+  await prisma.accountHolder.updateMany({ where: { id: req.params.holderId, loanId: loan.id }, data: { deletedAt: new Date() } });
   await prisma.auditLog.create({
     data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "loan.holder_remove", resource: "loan", resourceId: loan.id, metadata: { holderId: req.params.holderId } },
   });

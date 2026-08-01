@@ -125,7 +125,7 @@ productsRouter.get("/:id/tiers", requirePermission("reports.view"), async (req: 
   if (!product || !product.currentVersionId) return res.status(404).json({ error: "Product or current version not found" });
 
   const tiers = await prisma.interestRateTier.findMany({
-    where: { productVersionId: product.currentVersionId },
+    where: { productVersionId: product.currentVersionId, deletedAt: null },
     orderBy: { minBalance: "asc" },
   });
   res.json({ tiers });
@@ -153,7 +153,8 @@ productsRouter.delete("/:id/tiers/:tierId", requirePermission("institution.confi
   const product = await prisma.product.findFirst({ where: { id: req.params.id, institutionId: req.auth!.institutionId } });
   if (!product || !product.currentVersionId) return res.status(404).json({ error: "Product or current version not found" });
 
-  await prisma.interestRateTier.deleteMany({ where: { id: req.params.tierId, productVersionId: product.currentVersionId } });
+  // PDDS Phase 3 — soft-delete, not a real delete
+  await prisma.interestRateTier.updateMany({ where: { id: req.params.tierId, productVersionId: product.currentVersionId }, data: { deletedAt: new Date() } });
   await prisma.auditLog.create({
     data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "product.tier_remove", resource: "product", resourceId: product.id, metadata: { tierId: req.params.tierId } },
   });

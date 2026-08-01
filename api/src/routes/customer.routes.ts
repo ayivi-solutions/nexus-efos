@@ -64,10 +64,10 @@ customerRouter.get("/:id", requirePermission("customers.view"), async (req: Auth
     include: {
       loans: { include: { repayments: { orderBy: { paidAt: "desc" } } }, orderBy: { createdAt: "desc" } },
       savingsAccounts: { include: { transactions: { orderBy: { createdAt: "desc" } } }, orderBy: { createdAt: "desc" } },
-      nextOfKin: { orderBy: { createdAt: "desc" } },
+      nextOfKin: { where: { deletedAt: null }, orderBy: { createdAt: "desc" } },
       notes: { orderBy: { createdAt: "desc" } },
-      beneficiaries: { orderBy: { createdAt: "desc" } },
-      beneficialOwners: { orderBy: { createdAt: "desc" } },
+      beneficiaries: { where: { deletedAt: null }, orderBy: { createdAt: "desc" } },
+      beneficialOwners: { where: { deletedAt: null }, orderBy: { createdAt: "desc" } },
     },
   });
   if (!customer) return res.status(404).json({ error: "Customer not found" });
@@ -98,7 +98,7 @@ customerRouter.post("/", requirePermission("customers.create"), async (req: Auth
 
   const [watchlistMatch, existingCustomers] = await Promise.all([
     prisma.watchlistEntry.findFirst({
-      where: { institutionId: req.auth!.institutionId, fullName: { equals: parsed.data.fullName, mode: "insensitive" } },
+      where: { institutionId: req.auth!.institutionId, fullName: { equals: parsed.data.fullName, mode: "insensitive" }, deletedAt: null },
     }),
     prisma.customer.findMany({
       where: { institutionId: req.auth!.institutionId, archived: false },
@@ -398,7 +398,8 @@ customerRouter.post("/:id/next-of-kin", requirePermission("customers.update"), a
 customerRouter.delete("/:id/next-of-kin/:kinId", requirePermission("customers.update"), async (req: AuthedRequest, res) => {
   const customer = await findOwnedCustomer(req.params.id, req.auth!.institutionId);
   if (!customer) return res.status(404).json({ error: "Customer not found" });
-  await prisma.nextOfKin.deleteMany({ where: { id: req.params.kinId, customerId: customer.id } });
+  // PDDS Phase 3 — soft-delete, not a real delete
+  await prisma.nextOfKin.updateMany({ where: { id: req.params.kinId, customerId: customer.id }, data: { deletedAt: new Date() } });
   res.status(204).send();
 });
 
@@ -428,7 +429,7 @@ customerRouter.post("/:id/beneficiaries", requirePermission("customers.update"),
   const customer = await findOwnedCustomer(req.params.id, req.auth!.institutionId);
   if (!customer) return res.status(404).json({ error: "Customer not found" });
 
-  const existingBeneficiaries = await prisma.beneficiary.findMany({ where: { customerId: customer.id } });
+  const existingBeneficiaries = await prisma.beneficiary.findMany({ where: { customerId: customer.id, deletedAt: null } });
   const currentTotal = existingBeneficiaries.reduce((sum, b) => sum + Number(b.allocationPct), 0);
   const newTotal = currentTotal + parsed.data.allocationPct;
   if (newTotal > 100) {
@@ -445,7 +446,9 @@ customerRouter.post("/:id/beneficiaries", requirePermission("customers.update"),
 customerRouter.delete("/:id/beneficiaries/:beneficiaryId", requirePermission("customers.update"), async (req: AuthedRequest, res) => {
   const customer = await findOwnedCustomer(req.params.id, req.auth!.institutionId);
   if (!customer) return res.status(404).json({ error: "Customer not found" });
-  await prisma.beneficiary.deleteMany({ where: { id: req.params.beneficiaryId, customerId: customer.id } });
+  // PDDS Phase 3 — soft-delete, not a real delete. Also frees up allocation
+  // headroom for the 100%-cap check, since deleted rows are excluded there.
+  await prisma.beneficiary.updateMany({ where: { id: req.params.beneficiaryId, customerId: customer.id }, data: { deletedAt: new Date() } });
   res.status(204).send();
 });
 
@@ -467,6 +470,7 @@ customerRouter.post("/:id/beneficial-owners", requirePermission("customers.updat
 customerRouter.delete("/:id/beneficial-owners/:ownerId", requirePermission("customers.update"), async (req: AuthedRequest, res) => {
   const customer = await findOwnedCustomer(req.params.id, req.auth!.institutionId);
   if (!customer) return res.status(404).json({ error: "Customer not found" });
-  await prisma.beneficialOwner.deleteMany({ where: { id: req.params.ownerId, customerId: customer.id } });
+  // PDDS Phase 3 — soft-delete, not a real delete
+  await prisma.beneficialOwner.updateMany({ where: { id: req.params.ownerId, customerId: customer.id }, data: { deletedAt: new Date() } });
   res.status(204).send();
 });

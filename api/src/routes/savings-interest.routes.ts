@@ -57,7 +57,7 @@ async function resolveEffectiveRate(account: any, productVersion: any, balanceUs
   }
   if (productVersion.interestRateType === "TIERED") {
     const tiers = await prisma.interestRateTier.findMany({
-      where: { productVersionId: productVersion.id },
+      where: { productVersionId: productVersion.id, deletedAt: null },
       orderBy: { minBalance: "asc" },
     });
     for (const tier of tiers) {

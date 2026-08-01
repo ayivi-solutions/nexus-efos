@@ -23,7 +23,7 @@ savingsRouter.get("/:id", requirePermission("reports.view"), async (req: AuthedR
       customer: { select: { id: true, fullName: true, phone: true } },
       branch: { select: { name: true } },
       transactions: { orderBy: { createdAt: "desc" } },
-      accountHolders: { include: { customer: { select: { id: true, fullName: true, phone: true } } }, orderBy: { createdAt: "asc" } },
+      accountHolders: { where: { deletedAt: null }, include: { customer: { select: { id: true, fullName: true, phone: true } } }, orderBy: { createdAt: "asc" } },
       productVersion: true,
     },
   });
@@ -72,7 +72,8 @@ savingsRouter.delete("/:id/holders/:holderId", requirePermission("savings.approv
   const account = await prisma.savingsAccount.findFirst({ where: { id: req.params.id, institutionId: req.auth!.institutionId } });
   if (!account) return res.status(404).json({ error: "Account not found" });
 
-  await prisma.accountHolder.deleteMany({ where: { id: req.params.holderId, savingsAccountId: account.id } });
+  // PDDS Phase 3 — soft-delete, not a real delete
+  await prisma.accountHolder.updateMany({ where: { id: req.params.holderId, savingsAccountId: account.id }, data: { deletedAt: new Date() } });
   await prisma.auditLog.create({
     data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "savings.holder_remove", resource: "savings_account", resourceId: account.id, metadata: { holderId: req.params.holderId } },
   });

@@ -1,5 +1,6 @@
 import express from "express";
 import cors from "cors";
+import rateLimit from "express-rate-limit";
 import { authRouter } from "./routes/auth.routes";
 import { institutionRouter } from "./routes/institution.routes";
 import { roleRouter } from "./routes/role.routes";
@@ -20,22 +21,35 @@ export const app = express();
 app.use(cors({ origin: process.env.WEB_ORIGIN || "http://localhost:3100", credentials: true }));
 app.use(express.json());
 
+// PDDS §47 API Architecture Phase 3 — real versioning (every route now
+// lives under /v1) and basic rate limiting. Deliberately not a full API
+// gateway (no request transformation, no per-client API keys yet) — a
+// bounded, honest first step, not the doc's full enterprise vision.
+const apiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 300, // per IP, per window — generous for normal use, still a real ceiling
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Too many requests — please slow down and try again shortly." },
+});
+app.use("/v1", apiLimiter);
+
 app.get("/health", (_req, res) => res.json({ status: "ok", service: "nexus-efos-api" }));
 
-app.use("/auth", authRouter);
-app.use("/institutions", institutionRouter);
-app.use("/roles", roleRouter);
-app.use("/customers", customerRouter);
-app.use("/loans", loanRouter);
-app.use("/savings", savingsRouter);
-app.use("/audit-log", auditRouter);
-app.use("/employees", employeeRouter);
-app.use("/reports", reportsRouter);
-app.use("/products", productsRouter);
-app.use("/watchlist", watchlistRouter);
-app.use("/documents", documentsRouter);
-app.use("/approvals", approvalsRouter);
-app.use("/savings-interest", savingsInterestRouter);
+app.use("/v1/auth", authRouter);
+app.use("/v1/institutions", institutionRouter);
+app.use("/v1/roles", roleRouter);
+app.use("/v1/customers", customerRouter);
+app.use("/v1/loans", loanRouter);
+app.use("/v1/savings", savingsRouter);
+app.use("/v1/audit-log", auditRouter);
+app.use("/v1/employees", employeeRouter);
+app.use("/v1/reports", reportsRouter);
+app.use("/v1/products", productsRouter);
+app.use("/v1/watchlist", watchlistRouter);
+app.use("/v1/documents", documentsRouter);
+app.use("/v1/approvals", approvalsRouter);
+app.use("/v1/savings-interest", savingsInterestRouter);
 
 app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   console.error(err);

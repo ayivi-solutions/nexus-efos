@@ -1,4 +1,7 @@
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4100";
+// PDDS §47 API Architecture Phase 3 — real API versioning. Every backend
+// route now lives under /v1; appending it here once means none of the ~90
+// individual request() call sites throughout this file need to change.
+const API_BASE = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:4100") + "/v1";
 
 async function rawFetch(path: string, options: RequestInit, accessToken: string | null) {
   return fetch(`${API_BASE}${path}`, {

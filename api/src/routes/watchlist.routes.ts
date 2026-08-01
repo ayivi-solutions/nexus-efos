@@ -9,7 +9,7 @@ watchlistRouter.use(requireAuth);
 
 watchlistRouter.get("/", requirePermission("institution.configure"), async (req: AuthedRequest, res) => {
   const entries = await prisma.watchlistEntry.findMany({
-    where: { institutionId: req.auth!.institutionId },
+    where: { institutionId: req.auth!.institutionId, deletedAt: null },
     orderBy: { createdAt: "desc" },
   });
   res.json({ entries });
@@ -31,7 +31,8 @@ watchlistRouter.post("/", requirePermission("institution.configure"), async (req
 });
 
 watchlistRouter.delete("/:id", requirePermission("institution.configure"), async (req: AuthedRequest, res) => {
-  await prisma.watchlistEntry.deleteMany({ where: { id: req.params.id, institutionId: req.auth!.institutionId } });
+  // PDDS Phase 3 — soft-delete, not a real delete
+  await prisma.watchlistEntry.updateMany({ where: { id: req.params.id, institutionId: req.auth!.institutionId }, data: { deletedAt: new Date() } });
   await prisma.auditLog.create({
     data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "watchlist.remove", resource: "watchlist_entry", resourceId: req.params.id },
   });

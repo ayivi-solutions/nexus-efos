@@ -72,6 +72,18 @@ model Institution {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
+  // PDDS §13.4 Phase 3 — mandatory audit/version/lifecycle columns.
+  // created_by/updated_by/version_no auto-populated by Prisma middleware
+  // (see lib/requestContext.ts + lib/prisma.ts) so no route handler needs
+  // to set them manually. deleted_at/deleted_by are set explicitly by the
+  // handful of endpoints that do real disposal. record_status is kept in
+  // sync by the same middleware whenever archived/deletedAt change.
+  createdById  String?      @map("created_by_id")
+  updatedById  String?      @map("updated_by_id")
+  deletedAt    DateTime?    @map("deleted_at")
+  deletedById  String?      @map("deleted_by_id")
+  versionNo    Int          @default(1) @map("version_no")
+  recordStatus RecordStatus @default(ACTIVE) @map("record_status")
   @@map("institution")
   @@schema("nexus")
 }
@@ -97,6 +109,18 @@ model Branch {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
+  // PDDS §13.4 Phase 3 — mandatory audit/version/lifecycle columns.
+  // created_by/updated_by/version_no auto-populated by Prisma middleware
+  // (see lib/requestContext.ts + lib/prisma.ts) so no route handler needs
+  // to set them manually. deleted_at/deleted_by are set explicitly by the
+  // handful of endpoints that do real disposal. record_status is kept in
+  // sync by the same middleware whenever archived/deletedAt change.
+  createdById  String?      @map("created_by_id")
+  updatedById  String?      @map("updated_by_id")
+  deletedAt    DateTime?    @map("deleted_at")
+  deletedById  String?      @map("deleted_by_id")
+  versionNo    Int          @default(1) @map("version_no")
+  recordStatus RecordStatus @default(ACTIVE) @map("record_status")
   @@unique([institutionId, code], map: "uq_branch_institution_id_code")
   @@map("branch")
   @@schema("nexus")
@@ -146,6 +170,18 @@ model User {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
+  // PDDS §13.4 Phase 3 — mandatory audit/version/lifecycle columns.
+  // created_by/updated_by/version_no auto-populated by Prisma middleware
+  // (see lib/requestContext.ts + lib/prisma.ts) so no route handler needs
+  // to set them manually. deleted_at/deleted_by are set explicitly by the
+  // handful of endpoints that do real disposal. record_status is kept in
+  // sync by the same middleware whenever archived/deletedAt change.
+  createdById  String?      @map("created_by_id")
+  updatedById  String?      @map("updated_by_id")
+  deletedAt    DateTime?    @map("deleted_at")
+  deletedById  String?      @map("deleted_by_id")
+  versionNo    Int          @default(1) @map("version_no")
+  recordStatus RecordStatus @default(ACTIVE) @map("record_status")
   @@unique([institutionId, email], map: "uq_user_institution_id_email")
   @@map("user")
   @@schema("nexus")
@@ -180,6 +216,18 @@ model Role {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
+  // PDDS §13.4 Phase 3 — mandatory audit/version/lifecycle columns.
+  // created_by/updated_by/version_no auto-populated by Prisma middleware
+  // (see lib/requestContext.ts + lib/prisma.ts) so no route handler needs
+  // to set them manually. deleted_at/deleted_by are set explicitly by the
+  // handful of endpoints that do real disposal. record_status is kept in
+  // sync by the same middleware whenever archived/deletedAt change.
+  createdById  String?      @map("created_by_id")
+  updatedById  String?      @map("updated_by_id")
+  deletedAt    DateTime?    @map("deleted_at")
+  deletedById  String?      @map("deleted_by_id")
+  versionNo    Int          @default(1) @map("version_no")
+  recordStatus RecordStatus @default(ACTIVE) @map("record_status")
   @@unique([institutionId, name], map: "uq_role_institution_id_name")
   @@map("role")
   @@schema("nexus")
@@ -222,6 +270,18 @@ model Permission {
 
   rolePermissions RolePermission[]
 
+  // PDDS §13.4 Phase 3 — mandatory audit/version/lifecycle columns.
+  // created_by/updated_by/version_no auto-populated by Prisma middleware
+  // (see lib/requestContext.ts + lib/prisma.ts) so no route handler needs
+  // to set them manually. deleted_at/deleted_by are set explicitly by the
+  // handful of endpoints that do real disposal. record_status is kept in
+  // sync by the same middleware whenever archived/deletedAt change.
+  createdById  String?      @map("created_by_id")
+  updatedById  String?      @map("updated_by_id")
+  deletedAt    DateTime?    @map("deleted_at")
+  deletedById  String?      @map("deleted_by_id")
+  versionNo    Int          @default(1) @map("version_no")
+  recordStatus RecordStatus @default(ACTIVE) @map("record_status")
   @@map("permission")
   @@schema("nexus")
 }
@@ -233,6 +293,18 @@ model RolePermission {
   permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade, map: "fk_role_permission_permission")
   permissionId String     @map("permission_id")
 
+  // PDDS §13.4 Phase 3 — mandatory audit/version/lifecycle columns.
+  // created_by/updated_by/version_no auto-populated by Prisma middleware
+  // (see lib/requestContext.ts + lib/prisma.ts) so no route handler needs
+  // to set them manually. deleted_at/deleted_by are set explicitly by the
+  // handful of endpoints that do real disposal. record_status is kept in
+  // sync by the same middleware whenever archived/deletedAt change.
+  createdById  String?      @map("created_by_id")
+  updatedById  String?      @map("updated_by_id")
+  deletedAt    DateTime?    @map("deleted_at")
+  deletedById  String?      @map("deleted_by_id")
+  versionNo    Int          @default(1) @map("version_no")
+  recordStatus RecordStatus @default(ACTIVE) @map("record_status")
   @@unique([roleId, permissionId], map: "uq_role_permission_role_id_permission_id")
   @@map("role_permission")
   @@schema("nexus")
@@ -255,6 +327,18 @@ model UserRole {
 
   createdAt DateTime @default(now()) @map("created_at")
 
+  // PDDS §13.4 Phase 3 — mandatory audit/version/lifecycle columns.
+  // created_by/updated_by/version_no auto-populated by Prisma middleware
+  // (see lib/requestContext.ts + lib/prisma.ts) so no route handler needs
+  // to set them manually. deleted_at/deleted_by are set explicitly by the
+  // handful of endpoints that do real disposal. record_status is kept in
+  // sync by the same middleware whenever archived/deletedAt change.
+  createdById  String?      @map("created_by_id")
+  updatedById  String?      @map("updated_by_id")
+  deletedAt    DateTime?    @map("deleted_at")
+  deletedById  String?      @map("deleted_by_id")
+  versionNo    Int          @default(1) @map("version_no")
+  recordStatus RecordStatus @default(ACTIVE) @map("record_status")
   @@unique([userId, roleId, branchId], map: "uq_user_role_user_id_role_id_branch_id")
   @@map("user_role")
   @@schema("nexus")
@@ -314,6 +398,18 @@ model Employee {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
+  // PDDS §13.4 Phase 3 — mandatory audit/version/lifecycle columns.
+  // created_by/updated_by/version_no auto-populated by Prisma middleware
+  // (see lib/requestContext.ts + lib/prisma.ts) so no route handler needs
+  // to set them manually. deleted_at/deleted_by are set explicitly by the
+  // handful of endpoints that do real disposal. record_status is kept in
+  // sync by the same middleware whenever archived/deletedAt change.
+  createdById  String?      @map("created_by_id")
+  updatedById  String?      @map("updated_by_id")
+  deletedAt    DateTime?    @map("deleted_at")
+  deletedById  String?      @map("deleted_by_id")
+  versionNo    Int          @default(1) @map("version_no")
+  recordStatus RecordStatus @default(ACTIVE) @map("record_status")
   @@unique([institutionId, email], map: "uq_employee_institution_id_email")
   @@unique([institutionId, employeeNumber], map: "uq_employee_institution_id_employee_number")
   @@map("employee")
@@ -377,6 +473,14 @@ enum AccountStatus {
 }
 
 // doc §45.3 Customer Offboarding closure reasons
+enum RecordStatus {
+  ACTIVE
+  ARCHIVED
+  DELETED
+
+  @@schema("nexus")
+}
+
 enum ClosureReason {
   CUSTOMER_REQUEST
   DEATH
@@ -461,6 +565,18 @@ model Customer {
   accountHolderRoles AccountHolder[]
   documents          Document[]
 
+  // PDDS §13.4 Phase 3 — mandatory audit/version/lifecycle columns.
+  // created_by/updated_by/version_no auto-populated by Prisma middleware
+  // (see lib/requestContext.ts + lib/prisma.ts) so no route handler needs
+  // to set them manually. deleted_at/deleted_by are set explicitly by the
+  // handful of endpoints that do real disposal. record_status is kept in
+  // sync by the same middleware whenever archived/deletedAt change.
+  createdById  String?      @map("created_by_id")
+  updatedById  String?      @map("updated_by_id")
+  deletedAt    DateTime?    @map("deleted_at")
+  deletedById  String?      @map("deleted_by_id")
+  versionNo    Int          @default(1) @map("version_no")
+  recordStatus RecordStatus @default(ACTIVE) @map("record_status")
   @@unique([institutionId, phone], map: "uq_customer_institution_id_phone")
   @@map("customer")
   @@schema("nexus")
@@ -486,6 +602,18 @@ model NextOfKin {
   address      String?
   createdAt    DateTime @default(now()) @map("created_at")
 
+  // PDDS §13.4 Phase 3 — mandatory audit/version/lifecycle columns.
+  // created_by/updated_by/version_no auto-populated by Prisma middleware
+  // (see lib/requestContext.ts + lib/prisma.ts) so no route handler needs
+  // to set them manually. deleted_at/deleted_by are set explicitly by the
+  // handful of endpoints that do real disposal. record_status is kept in
+  // sync by the same middleware whenever archived/deletedAt change.
+  createdById  String?      @map("created_by_id")
+  updatedById  String?      @map("updated_by_id")
+  deletedAt    DateTime?    @map("deleted_at")
+  deletedById  String?      @map("deleted_by_id")
+  versionNo    Int          @default(1) @map("version_no")
+  recordStatus RecordStatus @default(ACTIVE) @map("record_status")
   @@map("next_of_kin")
   @@schema("nexus")
 }
@@ -499,6 +627,18 @@ model CustomerNote {
   note       String
   createdAt  DateTime @default(now()) @map("created_at")
 
+  // PDDS §13.4 Phase 3 — mandatory audit/version/lifecycle columns.
+  // created_by/updated_by/version_no auto-populated by Prisma middleware
+  // (see lib/requestContext.ts + lib/prisma.ts) so no route handler needs
+  // to set them manually. deleted_at/deleted_by are set explicitly by the
+  // handful of endpoints that do real disposal. record_status is kept in
+  // sync by the same middleware whenever archived/deletedAt change.
+  createdById  String?      @map("created_by_id")
+  updatedById  String?      @map("updated_by_id")
+  deletedAt    DateTime?    @map("deleted_at")
+  deletedById  String?      @map("deleted_by_id")
+  versionNo    Int          @default(1) @map("version_no")
+  recordStatus RecordStatus @default(ACTIVE) @map("record_status")
   @@map("customer_note")
   @@schema("nexus")
 }
@@ -514,6 +654,18 @@ model Beneficiary {
   phone         String?
   createdAt     DateTime @default(now()) @map("created_at")
 
+  // PDDS §13.4 Phase 3 — mandatory audit/version/lifecycle columns.
+  // created_by/updated_by/version_no auto-populated by Prisma middleware
+  // (see lib/requestContext.ts + lib/prisma.ts) so no route handler needs
+  // to set them manually. deleted_at/deleted_by are set explicitly by the
+  // handful of endpoints that do real disposal. record_status is kept in
+  // sync by the same middleware whenever archived/deletedAt change.
+  createdById  String?      @map("created_by_id")
+  updatedById  String?      @map("updated_by_id")
+  deletedAt    DateTime?    @map("deleted_at")
+  deletedById  String?      @map("deleted_by_id")
+  versionNo    Int          @default(1) @map("version_no")
+  recordStatus RecordStatus @default(ACTIVE) @map("record_status")
   @@map("beneficiary")
   @@schema("nexus")
 }
@@ -529,6 +681,18 @@ model BeneficialOwner {
   idNumber     String?  @map("id_number")
   createdAt    DateTime @default(now()) @map("created_at")
 
+  // PDDS §13.4 Phase 3 — mandatory audit/version/lifecycle columns.
+  // created_by/updated_by/version_no auto-populated by Prisma middleware
+  // (see lib/requestContext.ts + lib/prisma.ts) so no route handler needs
+  // to set them manually. deleted_at/deleted_by are set explicitly by the
+  // handful of endpoints that do real disposal. record_status is kept in
+  // sync by the same middleware whenever archived/deletedAt change.
+  createdById  String?      @map("created_by_id")
+  updatedById  String?      @map("updated_by_id")
+  deletedAt    DateTime?    @map("deleted_at")
+  deletedById  String?      @map("deleted_by_id")
+  versionNo    Int          @default(1) @map("version_no")
+  recordStatus RecordStatus @default(ACTIVE) @map("record_status")
   @@map("beneficial_owner")
   @@schema("nexus")
 }
@@ -546,6 +710,18 @@ model WatchlistEntry {
   addedById     String?     @map("added_by_id")
   createdAt     DateTime    @default(now()) @map("created_at")
 
+  // PDDS §13.4 Phase 3 — mandatory audit/version/lifecycle columns.
+  // created_by/updated_by/version_no auto-populated by Prisma middleware
+  // (see lib/requestContext.ts + lib/prisma.ts) so no route handler needs
+  // to set them manually. deleted_at/deleted_by are set explicitly by the
+  // handful of endpoints that do real disposal. record_status is kept in
+  // sync by the same middleware whenever archived/deletedAt change.
+  createdById  String?      @map("created_by_id")
+  updatedById  String?      @map("updated_by_id")
+  deletedAt    DateTime?    @map("deleted_at")
+  deletedById  String?      @map("deleted_by_id")
+  versionNo    Int          @default(1) @map("version_no")
+  recordStatus RecordStatus @default(ACTIVE) @map("record_status")
   @@map("watchlist_entry")
   @@schema("nexus")
 }
@@ -598,6 +774,18 @@ model ApprovalRequest {
   resolvedAt     DateTime? @map("resolved_at")
   resolutionNote String?   @map("resolution_note")
 
+  // PDDS §13.4 Phase 3 — mandatory audit/version/lifecycle columns.
+  // created_by/updated_by/version_no auto-populated by Prisma middleware
+  // (see lib/requestContext.ts + lib/prisma.ts) so no route handler needs
+  // to set them manually. deleted_at/deleted_by are set explicitly by the
+  // handful of endpoints that do real disposal. record_status is kept in
+  // sync by the same middleware whenever archived/deletedAt change.
+  createdById  String?      @map("created_by_id")
+  updatedById  String?      @map("updated_by_id")
+  deletedAt    DateTime?    @map("deleted_at")
+  deletedById  String?      @map("deleted_by_id")
+  versionNo    Int          @default(1) @map("version_no")
+  recordStatus RecordStatus @default(ACTIVE) @map("record_status")
   @@map("approval_request")
   @@schema("nexus")
 }
@@ -642,6 +830,18 @@ model Product {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
+  // PDDS §13.4 Phase 3 — mandatory audit/version/lifecycle columns.
+  // created_by/updated_by/version_no auto-populated by Prisma middleware
+  // (see lib/requestContext.ts + lib/prisma.ts) so no route handler needs
+  // to set them manually. deleted_at/deleted_by are set explicitly by the
+  // handful of endpoints that do real disposal. record_status is kept in
+  // sync by the same middleware whenever archived/deletedAt change.
+  createdById  String?      @map("created_by_id")
+  updatedById  String?      @map("updated_by_id")
+  deletedAt    DateTime?    @map("deleted_at")
+  deletedById  String?      @map("deleted_by_id")
+  versionNo    Int          @default(1) @map("version_no")
+  recordStatus RecordStatus @default(ACTIVE) @map("record_status")
   @@unique([institutionId, code], map: "uq_product_institution_id_code")
   @@map("product")
   @@schema("nexus")
@@ -656,6 +856,8 @@ model ProductVersion {
   name        String
   description String?
   currency    String  @default("GHS")
+  category    String?   @map("product_category") // PDDS §39 — broader classification above LOAN/SAVINGS type
+  effectiveTo DateTime? @map("effective_to")       // PDDS §39 — explicit version end-date; null while current
 
   // Savings-specific (null for LOAN products)
   minOpeningBalance   Decimal? @map("min_opening_balance") @db.Decimal(14, 2)
@@ -691,6 +893,18 @@ model ProductVersion {
   savingsAccounts   SavingsAccount[]
   interestRateTiers InterestRateTier[]
 
+  // PDDS §13.4 Phase 3 — mandatory audit/version/lifecycle columns.
+  // created_by/updated_by/version_no auto-populated by Prisma middleware
+  // (see lib/requestContext.ts + lib/prisma.ts) so no route handler needs
+  // to set them manually. deleted_at/deleted_by are set explicitly by the
+  // handful of endpoints that do real disposal. record_status is kept in
+  // sync by the same middleware whenever archived/deletedAt change.
+  createdById  String?      @map("created_by_id")
+  updatedById  String?      @map("updated_by_id")
+  deletedAt    DateTime?    @map("deleted_at")
+  deletedById  String?      @map("deleted_by_id")
+  versionNo    Int          @default(1) @map("version_no")
+  recordStatus RecordStatus @default(ACTIVE) @map("record_status")
   @@unique([productId, versionNumber], map: "uq_product_version_product_id_version_number")
   @@map("product_version")
   @@schema("nexus")
@@ -741,6 +955,18 @@ model Loan {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
+  // PDDS §13.4 Phase 3 — mandatory audit/version/lifecycle columns.
+  // created_by/updated_by/version_no auto-populated by Prisma middleware
+  // (see lib/requestContext.ts + lib/prisma.ts) so no route handler needs
+  // to set them manually. deleted_at/deleted_by are set explicitly by the
+  // handful of endpoints that do real disposal. record_status is kept in
+  // sync by the same middleware whenever archived/deletedAt change.
+  createdById  String?      @map("created_by_id")
+  updatedById  String?      @map("updated_by_id")
+  deletedAt    DateTime?    @map("deleted_at")
+  deletedById  String?      @map("deleted_by_id")
+  versionNo    Int          @default(1) @map("version_no")
+  recordStatus RecordStatus @default(ACTIVE) @map("record_status")
   @@map("loan")
   @@schema("nexus")
 }
@@ -753,6 +979,18 @@ model LoanRepayment {
   paidAt       DateTime @default(now()) @map("paid_at")
   recordedById String?  @map("recorded_by_id")
 
+  // PDDS §13.4 Phase 3 — mandatory audit/version/lifecycle columns.
+  // created_by/updated_by/version_no auto-populated by Prisma middleware
+  // (see lib/requestContext.ts + lib/prisma.ts) so no route handler needs
+  // to set them manually. deleted_at/deleted_by are set explicitly by the
+  // handful of endpoints that do real disposal. record_status is kept in
+  // sync by the same middleware whenever archived/deletedAt change.
+  createdById  String?      @map("created_by_id")
+  updatedById  String?      @map("updated_by_id")
+  deletedAt    DateTime?    @map("deleted_at")
+  deletedById  String?      @map("deleted_by_id")
+  versionNo    Int          @default(1) @map("version_no")
+  recordStatus RecordStatus @default(ACTIVE) @map("record_status")
   @@map("loan_repayment")
   @@schema("nexus")
 }
@@ -783,6 +1021,18 @@ model LoanInstallment {
   status            InstallmentStatus @default(PENDING)
   createdAt         DateTime          @default(now()) @map("created_at")
 
+  // PDDS §13.4 Phase 3 — mandatory audit/version/lifecycle columns.
+  // created_by/updated_by/version_no auto-populated by Prisma middleware
+  // (see lib/requestContext.ts + lib/prisma.ts) so no route handler needs
+  // to set them manually. deleted_at/deleted_by are set explicitly by the
+  // handful of endpoints that do real disposal. record_status is kept in
+  // sync by the same middleware whenever archived/deletedAt change.
+  createdById  String?      @map("created_by_id")
+  updatedById  String?      @map("updated_by_id")
+  deletedAt    DateTime?    @map("deleted_at")
+  deletedById  String?      @map("deleted_by_id")
+  versionNo    Int          @default(1) @map("version_no")
+  recordStatus RecordStatus @default(ACTIVE) @map("record_status")
   @@unique([loanId, installmentNumber], map: "uq_loan_installment_loan_id_installment_number")
   @@map("loan_installment")
   @@schema("nexus")
@@ -846,6 +1096,18 @@ model SavingsAccount {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
+  // PDDS §13.4 Phase 3 — mandatory audit/version/lifecycle columns.
+  // created_by/updated_by/version_no auto-populated by Prisma middleware
+  // (see lib/requestContext.ts + lib/prisma.ts) so no route handler needs
+  // to set them manually. deleted_at/deleted_by are set explicitly by the
+  // handful of endpoints that do real disposal. record_status is kept in
+  // sync by the same middleware whenever archived/deletedAt change.
+  createdById  String?      @map("created_by_id")
+  updatedById  String?      @map("updated_by_id")
+  deletedAt    DateTime?    @map("deleted_at")
+  deletedById  String?      @map("deleted_by_id")
+  versionNo    Int          @default(1) @map("version_no")
+  recordStatus RecordStatus @default(ACTIVE) @map("record_status")
   @@map("savings_account")
   @@schema("nexus")
 }
@@ -862,6 +1124,18 @@ model InterestRateTier {
   interestRate     Decimal        @map("interest_rate") @db.Decimal(6, 3)
   createdAt        DateTime       @default(now()) @map("created_at")
 
+  // PDDS §13.4 Phase 3 — mandatory audit/version/lifecycle columns.
+  // created_by/updated_by/version_no auto-populated by Prisma middleware
+  // (see lib/requestContext.ts + lib/prisma.ts) so no route handler needs
+  // to set them manually. deleted_at/deleted_by are set explicitly by the
+  // handful of endpoints that do real disposal. record_status is kept in
+  // sync by the same middleware whenever archived/deletedAt change.
+  createdById  String?      @map("created_by_id")
+  updatedById  String?      @map("updated_by_id")
+  deletedAt    DateTime?    @map("deleted_at")
+  deletedById  String?      @map("deleted_by_id")
+  versionNo    Int          @default(1) @map("version_no")
+  recordStatus RecordStatus @default(ACTIVE) @map("record_status")
   @@map("interest_rate_tier")
   @@schema("nexus")
 }
@@ -885,6 +1159,18 @@ model SavingsInterestAccrual {
   postingId     String?        @map("posting_id")
   createdAt     DateTime       @default(now()) @map("created_at")
 
+  // PDDS §13.4 Phase 3 — mandatory audit/version/lifecycle columns.
+  // created_by/updated_by/version_no auto-populated by Prisma middleware
+  // (see lib/requestContext.ts + lib/prisma.ts) so no route handler needs
+  // to set them manually. deleted_at/deleted_by are set explicitly by the
+  // handful of endpoints that do real disposal. record_status is kept in
+  // sync by the same middleware whenever archived/deletedAt change.
+  createdById  String?      @map("created_by_id")
+  updatedById  String?      @map("updated_by_id")
+  deletedAt    DateTime?    @map("deleted_at")
+  deletedById  String?      @map("deleted_by_id")
+  versionNo    Int          @default(1) @map("version_no")
+  recordStatus RecordStatus @default(ACTIVE) @map("record_status")
   @@unique([accountId, accrualDate], map: "uq_savings_interest_accrual_account_id_accrual_date")
   @@map("savings_interest_accrual")
   @@schema("nexus")
@@ -910,6 +1196,18 @@ model SavingsInterestPosting {
   reversalReason String?        @map("reversal_reason")
   createdAt      DateTime       @default(now()) @map("created_at")
 
+  // PDDS §13.4 Phase 3 — mandatory audit/version/lifecycle columns.
+  // created_by/updated_by/version_no auto-populated by Prisma middleware
+  // (see lib/requestContext.ts + lib/prisma.ts) so no route handler needs
+  // to set them manually. deleted_at/deleted_by are set explicitly by the
+  // handful of endpoints that do real disposal. record_status is kept in
+  // sync by the same middleware whenever archived/deletedAt change.
+  createdById  String?      @map("created_by_id")
+  updatedById  String?      @map("updated_by_id")
+  deletedAt    DateTime?    @map("deleted_at")
+  deletedById  String?      @map("deleted_by_id")
+  versionNo    Int          @default(1) @map("version_no")
+  recordStatus RecordStatus @default(ACTIVE) @map("record_status")
   @@map("savings_interest_posting")
   @@schema("nexus")
 }
@@ -945,6 +1243,18 @@ model AccountHolder {
   addedById String?  @map("added_by_id")
   createdAt DateTime @default(now()) @map("created_at")
 
+  // PDDS §13.4 Phase 3 — mandatory audit/version/lifecycle columns.
+  // created_by/updated_by/version_no auto-populated by Prisma middleware
+  // (see lib/requestContext.ts + lib/prisma.ts) so no route handler needs
+  // to set them manually. deleted_at/deleted_by are set explicitly by the
+  // handful of endpoints that do real disposal. record_status is kept in
+  // sync by the same middleware whenever archived/deletedAt change.
+  createdById  String?      @map("created_by_id")
+  updatedById  String?      @map("updated_by_id")
+  deletedAt    DateTime?    @map("deleted_at")
+  deletedById  String?      @map("deleted_by_id")
+  versionNo    Int          @default(1) @map("version_no")
+  recordStatus RecordStatus @default(ACTIVE) @map("record_status")
   @@map("account_holder")
   @@schema("nexus")
 }
@@ -1011,6 +1321,18 @@ model Document {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
+  // PDDS §13.4 Phase 3 — mandatory audit/version/lifecycle columns.
+  // created_by/updated_by/version_no auto-populated by Prisma middleware
+  // (see lib/requestContext.ts + lib/prisma.ts) so no route handler needs
+  // to set them manually. deleted_at/deleted_by are set explicitly by the
+  // handful of endpoints that do real disposal. record_status is kept in
+  // sync by the same middleware whenever archived/deletedAt change.
+  createdById  String?      @map("created_by_id")
+  updatedById  String?      @map("updated_by_id")
+  deletedAt    DateTime?    @map("deleted_at")
+  deletedById  String?      @map("deleted_by_id")
+  versionNo    Int          @default(1) @map("version_no")
+  recordStatus RecordStatus @default(ACTIVE) @map("record_status")
   @@map("document")
   @@schema("nexus")
 }
@@ -1025,6 +1347,18 @@ model SavingsTransaction {
   recordedById String?        @map("recorded_by_id")
   createdAt    DateTime       @default(now()) @map("created_at")
 
+  // PDDS §13.4 Phase 3 — mandatory audit/version/lifecycle columns.
+  // created_by/updated_by/version_no auto-populated by Prisma middleware
+  // (see lib/requestContext.ts + lib/prisma.ts) so no route handler needs
+  // to set them manually. deleted_at/deleted_by are set explicitly by the
+  // handful of endpoints that do real disposal. record_status is kept in
+  // sync by the same middleware whenever archived/deletedAt change.
+  createdById  String?      @map("created_by_id")
+  updatedById  String?      @map("updated_by_id")
+  deletedAt    DateTime?    @map("deleted_at")
+  deletedById  String?      @map("deleted_by_id")
+  versionNo    Int          @default(1) @map("version_no")
+  recordStatus RecordStatus @default(ACTIVE) @map("record_status")
   @@map("savings_transaction")
   @@schema("nexus")
 }
@@ -1044,6 +1378,18 @@ model RefreshToken {
   revokedAt DateTime? @map("revoked_at")
   createdAt DateTime  @default(now()) @map("created_at")
 
+  // PDDS §13.4 Phase 3 — mandatory audit/version/lifecycle columns.
+  // created_by/updated_by/version_no auto-populated by Prisma middleware
+  // (see lib/requestContext.ts + lib/prisma.ts) so no route handler needs
+  // to set them manually. deleted_at/deleted_by are set explicitly by the
+  // handful of endpoints that do real disposal. record_status is kept in
+  // sync by the same middleware whenever archived/deletedAt change.
+  createdById  String?      @map("created_by_id")
+  updatedById  String?      @map("updated_by_id")
+  deletedAt    DateTime?    @map("deleted_at")
+  deletedById  String?      @map("deleted_by_id")
+  versionNo    Int          @default(1) @map("version_no")
+  recordStatus RecordStatus @default(ACTIVE) @map("record_status")
   @@map("refresh_token")
   @@schema("nexus")
 }
@@ -1062,6 +1408,18 @@ model AuditLog {
   ipAddress     String?     @map("ip_address")
   createdAt     DateTime    @default(now()) @map("created_at")
 
+  // PDDS §13.4 Phase 3 — mandatory audit/version/lifecycle columns.
+  // created_by/updated_by/version_no auto-populated by Prisma middleware
+  // (see lib/requestContext.ts + lib/prisma.ts) so no route handler needs
+  // to set them manually. deleted_at/deleted_by are set explicitly by the
+  // handful of endpoints that do real disposal. record_status is kept in
+  // sync by the same middleware whenever archived/deletedAt change.
+  createdById  String?      @map("created_by_id")
+  updatedById  String?      @map("updated_by_id")
+  deletedAt    DateTime?    @map("deleted_at")
+  deletedById  String?      @map("deleted_by_id")
+  versionNo    Int          @default(1) @map("version_no")
+  recordStatus RecordStatus @default(ACTIVE) @map("record_status")
   @@map("audit_log")
   @@schema("nexus")
 }
