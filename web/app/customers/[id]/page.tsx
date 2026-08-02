@@ -33,8 +33,10 @@ export default function CustomerDetailPage() {
   const [editing, setEditing] = useState(false);
   const [editForm, setEditForm] = useState({
     fullName: "", phone: "", email: "", segment: "INDIVIDUAL", riskRating: "", preferredChannel: "", preferredLanguage: "",
+    branchId: "", address: "",
     smsEnabled: true, emailEnabled: true, whatsappEnabled: true, marketingEnabled: false, transactionAlertsEnabled: true, statementDeliveryEnabled: true,
   });
+  const [branches, setBranches] = useState<any[]>([]);
 
   const [kinForm, setKinForm] = useState(emptyKin);
   const [noteText, setNoteText] = useState("");
@@ -64,6 +66,8 @@ export default function CustomerDetailPage() {
         riskRating: res.customer.riskRating || "",
         preferredChannel: res.customer.preferredChannel || "",
         preferredLanguage: res.customer.preferredLanguage || "",
+        branchId: res.customer.branchId || "",
+        address: res.customer.address || "",
         smsEnabled: res.customer.smsEnabled,
         emailEnabled: res.customer.emailEnabled,
         whatsappEnabled: res.customer.whatsappEnabled,
@@ -75,6 +79,7 @@ export default function CustomerDetailPage() {
     }).catch((err) => setError(err.message));
     loadDocuments();
     api.getKycChecklist(id).then(setKycChecklist).catch(() => {});
+    api.listBranches().then((res) => setBranches(res.branches)).catch(() => {});
   }
 
   function loadDocuments() {
@@ -185,6 +190,8 @@ export default function CustomerDetailPage() {
         riskRating: editForm.riskRating || null,
         preferredChannel: editForm.preferredChannel || null,
         preferredLanguage: editForm.preferredLanguage || null,
+        branchId: editForm.branchId || null,
+        address: editForm.address || null,
         expectedVersion: customer.versionNo,
       });
       if (res?.pendingApproval) toast.info("Critical field change submitted for approval — a different authorised user must approve it.");
@@ -338,7 +345,8 @@ export default function CustomerDetailPage() {
               </div>
             </div>
             <h1 className="font-display font-semibold text-2xl dt:text-3xl text-ink-900 mb-1 selectable">{customer.fullName}</h1>
-            <div className="text-text-muted text-sm mb-6 selectable">{customer.phone}{customer.email ? ` · ${customer.email}` : ""}</div>
+            <div className="text-text-muted text-sm mb-1 selectable">{customer.phone}{customer.email ? ` · ${customer.email}` : ""}</div>
+            <div className="text-text-muted text-xs mb-6 selectable font-mono">{customer.customerNumber || "No customer number"} · {customer.branch?.name || "Unassigned branch"}</div>
 
             <div className="card p-6 mb-8">
               <div className="flex items-center justify-between mb-4">
@@ -395,6 +403,19 @@ export default function CustomerDetailPage() {
                       <select className="input" value={editForm.segment} onChange={(e) => setEditForm((f) => ({ ...f, segment: e.target.value }))}>
                         {SEGMENTS.map((s) => (<option key={s} value={s}>{s.replaceAll("_", " ")}</option>))}
                       </select>
+                    </label>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
+                    <label className="block">
+                      <span className="block text-[13px] text-text-500 mb-1.5">Branch — doc §23.4 "Assign branch ownership"</span>
+                      <select className="input" value={editForm.branchId} onChange={(e) => setEditForm((f) => ({ ...f, branchId: e.target.value }))}>
+                        <option value="">— Unassigned —</option>
+                        {branches.map((b) => (<option key={b.id} value={b.id}>{b.name}</option>))}
+                      </select>
+                    </label>
+                    <label className="block">
+                      <span className="block text-[13px] text-text-500 mb-1.5">Address</span>
+                      <input className="input" value={editForm.address} onChange={(e) => setEditForm((f) => ({ ...f, address: e.target.value }))} />
                     </label>
                   </div>
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">

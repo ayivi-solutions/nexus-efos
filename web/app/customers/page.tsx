@@ -45,13 +45,15 @@ export default function CustomersPage() {
   const [customers, setCustomers] = useState<any[]>([]);
   const [error, setError] = useState<string | null>(null);
   useErrorToast(error);
+  const [branches, setBranches] = useState<any[]>([]);
   const [showForm, setShowForm] = useState(false);
-  const [form, setForm] = useState({ fullName: "", phone: "", email: "", segment: "INDIVIDUAL" });
+  const [form, setForm] = useState({ fullName: "", phone: "", email: "", segment: "INDIVIDUAL", branchId: "", address: "" });
   const [saving, setSaving] = useState(false);
   const [search, setSearch] = useState("");
 
   function load() {
     api.listCustomers({ search: search || undefined }).then((res) => setCustomers(res.customers)).catch((err) => setError(err.message));
+    api.listBranches().then((res) => setBranches(res.branches)).catch(() => {});
   }
 
   useEffect(() => { load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -65,7 +67,7 @@ export default function CustomersPage() {
       if (res.warnings?.watchlist) toast.error(`Watchlist match: ${res.warnings.watchlist}`);
       if (res.warnings?.duplicate) toast.error(`Possible duplicate: ${res.warnings.duplicate}`);
       if (!res.warnings?.watchlist && !res.warnings?.duplicate) toast.success("Customer created.");
-      setForm({ fullName: "", phone: "", email: "", segment: "INDIVIDUAL" });
+      setForm({ fullName: "", phone: "", email: "", segment: "INDIVIDUAL", branchId: "", address: "" });
       setShowForm(false);
       load();
     } catch (err: any) {
@@ -115,6 +117,19 @@ export default function CustomersPage() {
                 </select>
               </label>
             </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
+              <label className="block">
+                <span className="block text-[13px] text-text-500 mb-1.5">Branch — doc §23.4 "Assign branch ownership"</span>
+                <select required className="input" value={form.branchId} onChange={(e) => setForm((f) => ({ ...f, branchId: e.target.value }))}>
+                  <option value="">— Select a branch —</option>
+                  {branches.map((b) => (<option key={b.id} value={b.id}>{b.name}</option>))}
+                </select>
+              </label>
+              <label className="block">
+                <span className="block text-[13px] text-text-500 mb-1.5">Address (optional)</span>
+                <input className="input" value={form.address} onChange={(e) => setForm((f) => ({ ...f, address: e.target.value }))} placeholder="e.g. digital address or landmark description" />
+              </label>
+            </div>
             <button type="submit" disabled={saving} className="btn-primary">
               {saving ? "Saving…" : "Create customer"}
             </button>
@@ -124,13 +139,15 @@ export default function CustomersPage() {
         <div className="card overflow-x-auto">
           <table className="w-full min-w-[680px] text-sm table-modern">
             <thead>
-              <tr><th>Name</th><th>Phone</th><th>Segment</th><th>Status</th><th>Stage</th><th>KYC</th><th>Flags</th></tr>
+              <tr><th>Name</th><th>Number</th><th>Phone</th><th>Branch</th><th>Segment</th><th>Status</th><th>Stage</th><th>KYC</th><th>Flags</th></tr>
             </thead>
             <tbody>
               {customers.map((c) => (
                 <tr key={c.id} onClick={() => router.push(`/customers/${c.id}`)} className="cursor-pointer">
                   <td className="text-text-900 font-medium hover:text-gold-600">{c.fullName}</td>
+                  <td className="text-text-700 font-mono text-[12px]">{c.customerNumber || "—"}</td>
                   <td className="text-text-700">{c.phone}</td>
+                  <td className="text-text-700">{c.branch?.name || "Unassigned"}</td>
                   <td className="text-text-700">{c.segment.replaceAll("_", " ")}</td>
                   <td><span className={`badge ${STATUS_COLOR[c.status] || ""}`}>{c.status.replaceAll("_", " ")}</span></td>
                   <td><span className={`badge ${STAGE_COLOR[c.lifecycleStage] || ""}`}>{c.lifecycleStage.replaceAll("_", " ")}</span></td>
@@ -142,7 +159,7 @@ export default function CustomersPage() {
                 </tr>
               ))}
               {customers.length === 0 && (
-                <tr><td colSpan={7} className="text-center text-text-muted text-sm py-8">No customers yet.</td></tr>
+                <tr><td colSpan={9} className="text-center text-text-muted text-sm py-8">No customers yet.</td></tr>
               )}
             </tbody>
           </table>

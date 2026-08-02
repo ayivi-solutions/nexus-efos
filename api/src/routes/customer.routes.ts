@@ -5,6 +5,7 @@ import { requireAuth, AuthedRequest } from "../middleware/auth";
 import { requirePermission } from "../middleware/rbac";
 import { matchRules, executeMatchedRules } from "../lib/businessRules";
 import { checkVersion, VersionConflictError } from "../lib/optimisticLock";
+import { generateCustomerNumber } from "../lib/customerNumber";
 
 export const customerRouter = Router();
 customerRouter.use(requireAuth);
@@ -55,6 +56,7 @@ customerRouter.get("/", requirePermission("customers.view"), async (req: AuthedR
           }
         : {}),
     },
+    include: { branch: { select: { id: true, name: true } } },
     orderBy: { createdAt: "desc" },
   });
   res.json({ customers });
@@ -64,6 +66,7 @@ customerRouter.get("/:id", requirePermission("customers.view"), async (req: Auth
   const customer = await prisma.customer.findFirst({
     where: { id: req.params.id, institutionId: req.auth!.institutionId },
     include: {
+      branch: { select: { id: true, name: true } },
       loans: { include: { repayments: { orderBy: { paidAt: "desc" } } }, orderBy: { createdAt: "desc" } },
       savingsAccounts: { include: { transactions: { orderBy: { createdAt: "desc" } } }, orderBy: { createdAt: "desc" } },
       nextOfKin: { where: { deletedAt: null }, orderBy: { createdAt: "desc" } },
@@ -82,7 +85,11 @@ const createSchema = z.object({
   email: z.string().email().optional(),
   idType: z.string().optional(),
   idNumber: z.string().optional(),
-  branchId: z.string().optional(),
+  // doc §23.4 "Assign branch ownership" is a "shall" requirement — made
+  // genuinely mandatory server-side too, not just a frontend nicety a
+  // direct API call could bypass.
+  branchId: z.string().min(1, "Branch is required"),
+  address: z.string().optional(),
   segment: z.enum(["INDIVIDUAL", "BUSINESS", "FARMER_GROUP", "WOMENS_GROUP", "YOUTH", "CORPORATE"]).default("INDIVIDUAL"),
 });
 
@@ -122,6 +129,7 @@ customerRouter.post("/", requirePermission("customers.create"), async (req: Auth
   const customer = await prisma.customer.create({
     data: {
       institutionId: req.auth!.institutionId,
+      customerNumber: generateCustomerNumber(),
       ...parsed.data,
       status: watchlistMatch ? "BLACKLISTED" : "REGISTERED",
       watchlistFlag: !!watchlistMatch,
@@ -177,6 +185,7 @@ const updateSchema = z.object({
   idType: z.string().optional().nullable(),
   idNumber: z.string().optional().nullable(),
   branchId: z.string().optional().nullable(),
+  address: z.string().optional().nullable(),
   segment: z.enum(["INDIVIDUAL", "BUSINESS", "FARMER_GROUP", "WOMENS_GROUP", "YOUTH", "CORPORATE"]).optional(),
   riskRating: z.enum(["LOW", "MEDIUM", "HIGH"]).optional().nullable(),
   preferredChannel: z.string().optional().nullable(),

@@ -521,6 +521,12 @@ model Customer {
   branch        Branch?     @relation(fields: [branchId], references: [id], onDelete: SetNull, map: "fk_customer_branch")
   branchId      String?     @map("branch_id")
 
+  // doc §23.4 "Create unique customer numbers" / "Capture address
+  // information" — both explicitly required by Customer Registration and
+  // previously missing entirely, not just unexposed in the UI.
+  customerNumber String? @unique @map("customer_number")
+  address        String?
+
   fullName String  @map("full_name")
   phone    String
   email    String?

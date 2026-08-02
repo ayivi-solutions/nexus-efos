@@ -173,7 +173,7 @@ export const api = {
     return request(`/customers${qs ? `?${qs}` : ""}`);
   },
   getCustomer: (id: string) => request(`/customers/${id}`),
-  createCustomer: (data: { fullName: string; phone: string; email?: string; segment: string }) =>
+  createCustomer: (data: { fullName: string; phone: string; email?: string; segment: string; branchId?: string; address?: string }) =>
     request("/customers", { method: "POST", body: JSON.stringify(data) }),
   updateCustomer: (id: string, data: any) => request(`/customers/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
   archiveCustomer: (id: string, data: { closureReason: string; closureNote?: string }) => request(`/customers/${id}/archive`, { method: "POST", body: JSON.stringify(data) }),
