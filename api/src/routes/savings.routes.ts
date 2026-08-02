@@ -4,6 +4,7 @@ import { prisma } from "../lib/prisma";
 import { requireAuth, AuthedRequest } from "../middleware/auth";
 import { requirePermission } from "../middleware/rbac";
 import { generateAccountNumber } from "../lib/accountNumber";
+import { matchRules, executeMatchedRules } from "../lib/businessRules";
 
 export const savingsRouter = Router();
 savingsRouter.use(requireAuth);
@@ -142,6 +143,17 @@ savingsRouter.post("/", requirePermission("savings.initiate"), async (req: Authe
         }
       : {};
 
+  // doc §41 — checked BEFORE the account is created: this is a "check
+  // first" trigger point (see lib/businessRules.ts's header comment for
+  // why), so a REJECT action here blocks opening the account entirely
+  // rather than creating one and marking it rejected after the fact.
+  const ruleContext = { productCode: productVersion.product.code, customer };
+  const matched = await matchRules(prisma, req.auth!.institutionId, "SAVINGS_ACCOUNT_OPENING", ruleContext);
+  const blockingRule = matched.find((m) => m.hasReject);
+  if (blockingRule) {
+    return res.status(400).json({ error: `Account opening blocked by business rule ${blockingRule.rule.ruleCode}: ${blockingRule.rule.name}` });
+  }
+
   const account = await prisma.savingsAccount.create({
     data: {
       institutionId: req.auth!.institutionId,
@@ -163,7 +175,9 @@ savingsRouter.post("/", requirePermission("savings.initiate"), async (req: Authe
     },
   });
 
-  res.status(201).json({ account });
+  const ruleWarnings = await executeMatchedRules(prisma, req.auth!.institutionId, req.auth!.userId, "SavingsAccount", account.id, matched);
+
+  res.status(201).json({ account, ruleWarnings });
 });
 
 const txnSchema = z.object({ amount: z.number().positive() });

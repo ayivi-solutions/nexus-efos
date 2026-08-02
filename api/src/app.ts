@@ -17,6 +17,7 @@ import { approvalsRouter } from "./routes/approvals.routes";
 import { savingsInterestRouter } from "./routes/savings-interest.routes";
 import { migrationRouter } from "./routes/migration.routes";
 import { businessRulesRouter } from "./routes/businessRules.routes";
+import { departmentsRouter, positionsRouter } from "./routes/departments.routes";
 
 export const app = express();
 
@@ -54,6 +55,8 @@ app.use("/v1/approvals", approvalsRouter);
 app.use("/v1/savings-interest", savingsInterestRouter);
 app.use("/v1/migration", migrationRouter);
 app.use("/v1/business-rules", businessRulesRouter);
+app.use("/v1/departments", departmentsRouter);
+app.use("/v1/positions", positionsRouter);
 
 app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   console.error(err);

@@ -70,6 +70,8 @@ model Institution {
   savingsInterestPostings SavingsInterestPosting[]
   importBatches           ImportBatch[]
   businessRules           BusinessRule[]
+  departments             Department[]
+  positions               Position[]
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -381,9 +383,14 @@ model Employee {
   fullName         String         @map("full_name")
   email            String
   employmentType   EmploymentType @default(PERMANENT) @map("employment_type")
-  department       String?
+  // doc §50 Master Data Management — normalized lookup tables, replacing
+  // what were previously free-text department/position strings. Division
+  // stays free-text; only Department/Position were named in the gap.
+  department       Department? @relation(fields: [departmentId], references: [id], onDelete: SetNull, map: "fk_employee_department")
+  departmentId     String?     @map("department_id")
+  position         Position?   @relation(fields: [positionId], references: [id], onDelete: SetNull, map: "fk_employee_position")
+  positionId       String?     @map("position_id")
   division         String?
-  position         String?
   grade            String?
   employmentDate   DateTime?      @map("employment_date")
   confirmationDate DateTime?      @map("confirmation_date")
@@ -1571,6 +1578,9 @@ enum BusinessRuleStatus {
 
 enum BusinessRuleTriggerPoint {
   LOAN_INITIATION
+  LOAN_APPROVAL
+  SAVINGS_ACCOUNT_OPENING
+  CUSTOMER_CREATION
 
   @@schema("nexus")
 }
@@ -1617,5 +1627,61 @@ model BusinessRule {
   versionNo    Int          @default(1) @map("version_no")
   recordStatus RecordStatus @default(ACTIVE) @map("record_status")
   @@map("business_rule")
+  @@schema("nexus")
+}
+
+// doc §50 Master Data Management Framework — normalized lookup tables for
+// Employee's Department/Position, replacing what were previously
+// free-text strings that could drift (typos, inconsistent capitalization,
+// no single source of truth for "which departments exist").
+model Department {
+  id            String       @id(map: "pk_department") @default(uuid())
+  institution   Institution  @relation(fields: [institutionId], references: [id], onDelete: Cascade, map: "fk_department_institution")
+  institutionId String       @map("institution_id")
+  name          String
+  code          String?
+
+  employees Employee[]
+  positions Position[]
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  // PDDS §13.4 Phase 3 — mandatory audit/version/lifecycle columns.
+  createdById  String?      @map("created_by_id")
+  updatedById  String?      @map("updated_by_id")
+  deletedAt    DateTime?    @map("deleted_at")
+  deletedById  String?      @map("deleted_by_id")
+  versionNo    Int          @default(1) @map("version_no")
+  recordStatus RecordStatus @default(ACTIVE) @map("record_status")
+
+  @@unique([institutionId, name], map: "uq_department_institution_id_name")
+  @@map("department")
+  @@schema("nexus")
+}
+
+model Position {
+  id            String       @id(map: "pk_position") @default(uuid())
+  institution   Institution  @relation(fields: [institutionId], references: [id], onDelete: Cascade, map: "fk_position_institution")
+  institutionId String       @map("institution_id")
+  title         String
+  department    Department?  @relation(fields: [departmentId], references: [id], onDelete: SetNull, map: "fk_position_department")
+  departmentId  String?      @map("department_id")
+
+  employees Employee[]
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  // PDDS §13.4 Phase 3 — mandatory audit/version/lifecycle columns.
+  createdById  String?      @map("created_by_id")
+  updatedById  String?      @map("updated_by_id")
+  deletedAt    DateTime?    @map("deleted_at")
+  deletedById  String?      @map("deleted_by_id")
+  versionNo    Int          @default(1) @map("version_no")
+  recordStatus RecordStatus @default(ACTIVE) @map("record_status")
+
+  @@unique([institutionId, title], map: "uq_position_institution_id_title")
+  @@map("position")
   @@schema("nexus")
 }

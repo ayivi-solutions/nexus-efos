@@ -4,7 +4,7 @@ import { prisma } from "../lib/prisma";
 import { requireAuth, AuthedRequest } from "../middleware/auth";
 import { requirePermission } from "../middleware/rbac";
 import { round2, generateSchedule, allocateRepayment } from "../lib/loanSchedule";
-import { ruleMatches, RuleCondition, RuleAction } from "../lib/businessRules";
+import { matchRules, executeMatchedRules } from "../lib/businessRules";
 
 export const loanRouter = Router();
 loanRouter.use(requireAuth);
@@ -152,58 +152,19 @@ loanRouter.post("/", requirePermission("loans.initiate"), async (req: AuthedRequ
   });
 
   // doc §41 Business Rules Framework — genuinely evaluated here, not a
-  // configuration screen for rules that never run. Every ACTIVE rule
-  // whose trigger point is LOAN_INITIATION is checked against this real
-  // loan + its customer, in priority order.
-  const ruleWarnings: { ruleCode: string; ruleName: string; actionsTaken: string[] }[] = [];
-  const activeRules = await prisma.businessRule.findMany({
-    where: {
-      institutionId: req.auth!.institutionId, status: "ACTIVE", triggerPoint: "LOAN_INITIATION",
-      OR: [{ effectiveDate: null }, { effectiveDate: { lte: new Date() } }],
-      AND: [{ OR: [{ expiryDate: null }, { expiryDate: { gte: new Date() } }] }],
-    },
-    orderBy: { priority: "asc" },
-  });
-
-  if (activeRules.length > 0) {
-    const ruleContext = { principal: Number(loan.principal), termMonths: loan.termMonths, interestRate: Number(loan.interestRate), customer };
-
-    for (const rule of activeRules) {
-      const conditions = rule.conditions as unknown as RuleCondition[];
-      if (!ruleMatches(ruleContext, conditions, rule.conditionLogic)) continue;
-
-      const actions = rule.actions as unknown as RuleAction[];
-      const actionsTaken: string[] = [];
-
-      for (const action of actions) {
-        if (action.type === "FLAG") {
-          await prisma.auditLog.create({
-            data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "business_rule.flagged", resource: "loan", resourceId: loan.id, metadata: { ruleId: rule.id, ruleCode: rule.ruleCode, message: action.message } },
-          });
-          actionsTaken.push("FLAG");
-        } else if (action.type === "REQUIRE_ADDITIONAL_APPROVAL") {
-          await prisma.approvalRequest.create({
-            data: {
-              institutionId: req.auth!.institutionId, type: "BUSINESS_RULE_TRIGGERED", targetType: "Loan", targetId: loan.id,
-              payload: { ruleId: rule.id }, reason: action.message || `Business rule ${rule.ruleCode} (${rule.name}) requires additional approval`,
-              requestedById: req.auth!.userId,
-            },
-          });
-          actionsTaken.push("REQUIRE_ADDITIONAL_APPROVAL");
-        } else if (action.type === "REJECT") {
-          await prisma.loan.update({ where: { id: loan.id }, data: { status: "REJECTED" } });
-          actionsTaken.push("REJECT");
-        }
-      }
-
-      await prisma.auditLog.create({
-        data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "business_rule.triggered", resource: "loan", resourceId: loan.id, metadata: { ruleId: rule.id, ruleCode: rule.ruleCode, actionsTaken } },
-      });
-      ruleWarnings.push({ ruleCode: rule.ruleCode, ruleName: rule.name, actionsTaken });
-    }
+  // configuration screen for rules that never run. Loan Initiation is the
+  // one deliberate exception to the "check before creating" pattern used
+  // at the other trigger points: the loan application itself is the
+  // record of an attempt, so a REJECT action here marks the already-created
+  // loan REJECTED rather than pretending the attempt never happened.
+  const ruleContext = { principal: Number(loan.principal), termMonths: loan.termMonths, interestRate: Number(loan.interestRate), customer };
+  const matched = await matchRules(prisma, req.auth!.institutionId, "LOAN_INITIATION", ruleContext);
+  if (matched.some((m) => m.hasReject)) {
+    await prisma.loan.update({ where: { id: loan.id }, data: { status: "REJECTED" } });
   }
+  const ruleWarnings = await executeMatchedRules(prisma, req.auth!.institutionId, req.auth!.userId, "Loan", loan.id, matched);
 
-  const finalLoan = ruleWarnings.length > 0 ? await prisma.loan.findUniqueOrThrow({ where: { id: loan.id } }) : loan;
+  const finalLoan = matched.length > 0 ? await prisma.loan.findUniqueOrThrow({ where: { id: loan.id } }) : loan;
   res.status(201).json({ loan: finalLoan, ruleWarnings });
 });
 
@@ -213,6 +174,18 @@ loanRouter.post("/:id/approve", requirePermission("loans.approve"), async (req: 
 
   if (loan.initiatedById === req.auth!.userId) {
     return res.status(403).json({ error: "Segregation of duties: cannot approve a loan you initiated" });
+  }
+
+  // doc §41 — checked before applying the approval, not after: a rule
+  // that says REJECT at this trigger point blocks the approval action
+  // itself, surfaced to the approver as a clear error, rather than
+  // silently flipping an already-approved loan back to some other state.
+  const customer = await prisma.customer.findFirst({ where: { id: loan.customerId } });
+  const approveRuleContext = { principal: Number(loan.principal), termMonths: loan.termMonths, interestRate: Number(loan.interestRate), customer };
+  const approveMatched = await matchRules(prisma, req.auth!.institutionId, "LOAN_APPROVAL", approveRuleContext);
+  const blockingRule = approveMatched.find((m) => m.hasReject);
+  if (blockingRule) {
+    return res.status(400).json({ error: `Approval blocked by business rule ${blockingRule.rule.ruleCode}: ${blockingRule.rule.name}` });
   }
 
   const updated = await prisma.loan.update({
@@ -230,7 +203,9 @@ loanRouter.post("/:id/approve", requirePermission("loans.approve"), async (req: 
     },
   });
 
-  res.json({ loan: updated });
+  const approveRuleWarnings = await executeMatchedRules(prisma, req.auth!.institutionId, req.auth!.userId, "Loan", loan.id, approveMatched);
+
+  res.json({ loan: updated, ruleWarnings: approveRuleWarnings });
 });
 
 loanRouter.post("/:id/reject", requirePermission("loans.reject"), async (req: AuthedRequest, res) => {

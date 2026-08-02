@@ -3,6 +3,8 @@ import { z } from "zod";
 import { prisma } from "../lib/prisma";
 import { requireAuth, AuthedRequest } from "../middleware/auth";
 import { requirePermission } from "../middleware/rbac";
+import { matchRules, executeMatchedRules } from "../lib/businessRules";
+import { checkVersion, VersionConflictError } from "../lib/optimisticLock";
 
 export const customerRouter = Router();
 customerRouter.use(requireAuth);
@@ -107,6 +109,16 @@ customerRouter.post("/", requirePermission("customers.create"), async (req: Auth
   ]);
   const duplicateMatch = existingCustomers.find((c) => normalizeName(c.fullName) === normalized) || null;
 
+  // doc §41 — checked BEFORE the customer is created: a "check first"
+  // trigger point (see lib/businessRules.ts), so REJECT blocks creation
+  // entirely rather than creating a customer record and rejecting it after.
+  const ruleContext = { ...parsed.data };
+  const matched = await matchRules(prisma, req.auth!.institutionId, "CUSTOMER_CREATION", ruleContext);
+  const blockingRule = matched.find((m) => m.hasReject);
+  if (blockingRule) {
+    return res.status(400).json({ error: `Customer creation blocked by business rule ${blockingRule.rule.ruleCode}: ${blockingRule.rule.name}` });
+  }
+
   const customer = await prisma.customer.create({
     data: {
       institutionId: req.auth!.institutionId,
@@ -116,6 +128,8 @@ customerRouter.post("/", requirePermission("customers.create"), async (req: Auth
       possibleDuplicate: !!duplicateMatch,
     },
   });
+
+  const ruleWarnings = await executeMatchedRules(prisma, req.auth!.institutionId, req.auth!.userId, "Customer", customer.id, matched);
 
   let approvalRequestId: string | null = null;
   if (watchlistMatch) {
@@ -146,6 +160,7 @@ customerRouter.post("/", requirePermission("customers.create"), async (req: Auth
 
   res.status(201).json({
     customer,
+    ruleWarnings,
     warnings: {
       watchlist: watchlistMatch
         ? `Name matches a watchlist entry — customer BLACKLISTED pending compliance adjudication: ${watchlistMatch.reason || "no reason recorded"}`
@@ -179,13 +194,26 @@ const updateSchema = z.object({
 // approval request instead of applying immediately. Everything else
 // (contact info, preferences, risk rating) still applies directly.
 customerRouter.patch("/:id", requirePermission("customers.update"), async (req: AuthedRequest, res) => {
-  const parsed = updateSchema.safeParse(req.body);
+  // expectedVersion is request metadata, not a Customer field — kept out
+  // of updateSchema deliberately, since that schema's fields are spread
+  // directly into the Prisma update payload.
+  const { expectedVersion, ...body } = req.body as { expectedVersion?: number; [key: string]: any };
+  const parsed = updateSchema.safeParse(body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
   const existing = await prisma.customer.findFirst({ where: { id: req.params.id, institutionId: req.auth!.institutionId } });
   if (!existing) return res.status(404).json({ error: "Customer not found" });
   const lockError = assertNotLocked(existing.status);
   if (lockError) return res.status(409).json({ error: lockError });
+
+  try {
+    await checkVersion(prisma, "customer", existing.id, expectedVersion);
+  } catch (err) {
+    if (err instanceof VersionConflictError) {
+      return res.status(409).json({ error: err.message, currentVersion: err.currentVersion });
+    }
+    throw err;
+  }
 
   const touchesCriticalField = CRITICAL_FIELDS.some((f) => parsed.data[f] !== undefined);
   const needsApproval = touchesCriticalField && ["ACTIVE", "VERIFIED"].includes(existing.status);

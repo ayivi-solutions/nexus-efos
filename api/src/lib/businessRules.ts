@@ -70,3 +70,87 @@ export function ruleMatches(context: Record<string, any>, conditions: RuleCondit
   const results = conditions.map((c) => evaluateCondition(context, c));
   return conditionLogic === "ANY" ? results.some(Boolean) : results.every(Boolean);
 }
+
+// Split into two steps deliberately, for trigger points where the target
+// record doesn't exist yet at evaluation time (Customer Creation, Savings
+// Account Opening): matchRules is a pure check, safe to call BEFORE
+// creating anything, so a REJECT action can block creation outright rather
+// than creating a record and immediately marking it rejected. Once it's
+// known nothing will be rejected, the entity is created for real, and
+// executeMatchedRules applies FLAG/REQUIRE_ADDITIONAL_APPROVAL against
+// its now-real ID. Loan Initiation is the one deliberate exception — a
+// loan application is itself the record of an attempt, so REJECT there
+// creates the loan and immediately marks it REJECTED, rather than
+// pretending the attempt never happened.
+export interface MatchedRule {
+  rule: { id: string; ruleCode: string; name: string; actions: unknown };
+  hasReject: boolean;
+}
+
+export async function matchRules(
+  prisma: any,
+  institutionId: string,
+  triggerPoint: string,
+  context: Record<string, any>
+): Promise<MatchedRule[]> {
+  const activeRules = await prisma.businessRule.findMany({
+    where: {
+      institutionId, status: "ACTIVE", triggerPoint,
+      OR: [{ effectiveDate: null }, { effectiveDate: { lte: new Date() } }],
+      AND: [{ OR: [{ expiryDate: null }, { expiryDate: { gte: new Date() } }] }],
+    },
+    orderBy: { priority: "asc" },
+  });
+
+  const matched: MatchedRule[] = [];
+  for (const rule of activeRules) {
+    const conditions = rule.conditions as unknown as RuleCondition[];
+    if (!ruleMatches(context, conditions, rule.conditionLogic)) continue;
+    const actions = rule.actions as unknown as RuleAction[];
+    matched.push({ rule, hasReject: actions.some((a) => a.type === "REJECT") });
+  }
+  return matched;
+}
+
+export async function executeMatchedRules(
+  prisma: any,
+  institutionId: string,
+  userId: string,
+  targetType: string,
+  targetId: string,
+  matched: MatchedRule[]
+): Promise<{ ruleCode: string; ruleName: string; actionsTaken: string[] }[]> {
+  const results: { ruleCode: string; ruleName: string; actionsTaken: string[] }[] = [];
+
+  for (const { rule } of matched) {
+    const actions = rule.actions as unknown as RuleAction[];
+    const actionsTaken: string[] = [];
+
+    for (const action of actions) {
+      if (action.type === "FLAG") {
+        await prisma.auditLog.create({
+          data: { institutionId, userId, action: "business_rule.flagged", resource: targetType, resourceId: targetId, metadata: { ruleId: rule.id, ruleCode: rule.ruleCode, message: action.message } },
+        });
+        actionsTaken.push("FLAG");
+      } else if (action.type === "REQUIRE_ADDITIONAL_APPROVAL") {
+        await prisma.approvalRequest.create({
+          data: {
+            institutionId, type: "BUSINESS_RULE_TRIGGERED", targetType, targetId,
+            payload: { ruleId: rule.id }, reason: action.message || `Business rule ${rule.ruleCode} (${rule.name}) requires additional approval`,
+            requestedById: userId,
+          },
+        });
+        actionsTaken.push("REQUIRE_ADDITIONAL_APPROVAL");
+      } else if (action.type === "REJECT") {
+        actionsTaken.push("REJECT");
+      }
+    }
+
+    await prisma.auditLog.create({
+      data: { institutionId, userId, action: "business_rule.triggered", resource: targetType, resourceId: targetId, metadata: { ruleId: rule.id, ruleCode: rule.ruleCode, actionsTaken } },
+    });
+    results.push({ ruleCode: rule.ruleCode, ruleName: rule.name, actionsTaken });
+  }
+
+  return results;
+}

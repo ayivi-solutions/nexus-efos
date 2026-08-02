@@ -149,6 +149,12 @@ export const api = {
   unarchiveBranch: (id: string) => request(`/institutions/branches/${id}/unarchive`, { method: "POST" }),
 
   listEmployees: (includeArchived = false) => request(`/employees${includeArchived ? "?includeArchived=true" : ""}`),
+  listDepartments: () => request("/departments"),
+  createDepartment: (data: { name: string; code?: string }) => request("/departments", { method: "POST", body: JSON.stringify(data) }),
+  deleteDepartment: (id: string) => request(`/departments/${id}`, { method: "DELETE" }),
+  listPositions: () => request("/positions"),
+  createPosition: (data: { title: string; departmentId?: string }) => request("/positions", { method: "POST", body: JSON.stringify(data) }),
+  deletePosition: (id: string) => request(`/positions/${id}`, { method: "DELETE" }),
   createEmployee: (data: { fullName: string; email: string; branchId?: string; employeeNumber?: string; position?: string; department?: string; employmentType?: string }) =>
     request("/employees", { method: "POST", body: JSON.stringify(data) }),
   updateEmployee: (id: string, data: any) => request(`/employees/${id}`, { method: "PATCH", body: JSON.stringify(data) }),

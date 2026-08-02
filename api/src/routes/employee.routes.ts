@@ -4,6 +4,7 @@ import { z } from "zod";
 import { prisma } from "../lib/prisma";
 import { requireAuth, AuthedRequest } from "../middleware/auth";
 import { requirePermission } from "../middleware/rbac";
+import { checkVersion, VersionConflictError } from "../lib/optimisticLock";
 
 export const employeeRouter = Router();
 employeeRouter.use(requireAuth);
@@ -16,6 +17,8 @@ employeeRouter.get("/", requirePermission("users.administer"), async (req: Authe
       branch: true,
       user: { include: { userRoles: { include: { role: true, branch: true } } } },
       reportingManager: { select: { id: true, fullName: true } },
+      department: true,
+      position: true,
     },
     orderBy: { fullName: "asc" },
   });
@@ -32,9 +35,9 @@ const createSchema = z.object({
   branchId: z.string().optional(),
   employeeNumber: z.string().optional(),
   employmentType: employmentTypeEnum.optional(),
-  department: z.string().optional(),
+  departmentId: z.string().optional(),
   division: z.string().optional(),
-  position: z.string().optional(),
+  positionId: z.string().optional(),
   grade: z.string().optional(),
   employmentDate: z.string().datetime().optional(),
   confirmationDate: z.string().datetime().optional(),
@@ -67,9 +70,9 @@ const updateSchema = z.object({
   branchId: z.string().optional().nullable(),
   employeeNumber: z.string().optional().nullable(),
   employmentType: employmentTypeEnum.optional(),
-  department: z.string().optional().nullable(),
+  departmentId: z.string().optional().nullable(),
   division: z.string().optional().nullable(),
-  position: z.string().optional().nullable(),
+  positionId: z.string().optional().nullable(),
   grade: z.string().optional().nullable(),
   employmentDate: z.string().datetime().optional().nullable(),
   confirmationDate: z.string().datetime().optional().nullable(),
@@ -77,11 +80,21 @@ const updateSchema = z.object({
 });
 
 employeeRouter.patch("/:id", requirePermission("users.administer"), async (req: AuthedRequest, res) => {
-  const parsed = updateSchema.safeParse(req.body);
+  const { expectedVersion, ...body } = req.body as { expectedVersion?: number; [key: string]: any };
+  const parsed = updateSchema.safeParse(body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
   const existing = await prisma.employee.findFirst({ where: { id: req.params.id, institutionId: req.auth!.institutionId } });
   if (!existing) return res.status(404).json({ error: "Employee not found" });
+
+  try {
+    await checkVersion(prisma, "employee", existing.id, expectedVersion);
+  } catch (err) {
+    if (err instanceof VersionConflictError) {
+      return res.status(409).json({ error: err.message, currentVersion: err.currentVersion });
+    }
+    throw err;
+  }
 
   if (parsed.data.reportingManagerId === req.params.id) {
     return res.status(400).json({ error: "An employee cannot be their own reporting manager" });

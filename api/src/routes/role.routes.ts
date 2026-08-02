@@ -3,6 +3,7 @@ import { z } from "zod";
 import { prisma } from "../lib/prisma";
 import { requireAuth, AuthedRequest } from "../middleware/auth";
 import { requirePermission } from "../middleware/rbac";
+import { checkVersion, VersionConflictError } from "../lib/optimisticLock";
 
 export const roleRouter = Router();
 roleRouter.use(requireAuth);
@@ -121,11 +122,21 @@ const updateRoleSchema = z.object({
 });
 
 roleRouter.patch("/:id", requirePermission("roles.configure"), async (req: AuthedRequest, res) => {
-  const parsed = updateRoleSchema.safeParse(req.body);
+  const { expectedVersion, ...body } = req.body as { expectedVersion?: number; [key: string]: any };
+  const parsed = updateRoleSchema.safeParse(body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
   const role = await prisma.role.findFirst({ where: { id: req.params.id, institutionId: req.auth!.institutionId } });
   if (!role) return res.status(404).json({ error: "Role not found" });
+
+  try {
+    await checkVersion(prisma, "role", role.id, expectedVersion);
+  } catch (err) {
+    if (err instanceof VersionConflictError) {
+      return res.status(409).json({ error: err.message, currentVersion: err.currentVersion });
+    }
+    throw err;
+  }
 
   await prisma.$transaction(async (tx) => {
     if (parsed.data.description !== undefined) {

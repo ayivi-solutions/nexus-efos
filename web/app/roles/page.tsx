@@ -21,12 +21,15 @@ export default function RolesPage() {
   const [copied, setCopied] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
 
+  const [departments, setDepartments] = useState<any[]>([]);
+  const [positions, setPositions] = useState<any[]>([]);
+
   const [form, setForm] = useState({ userId: "", roleId: "", branchId: "", expiresAt: "", isDelegated: false });
-  const [employeeForm, setEmployeeForm] = useState({ fullName: "", email: "", branchId: "", employeeNumber: "", position: "", department: "", employmentType: "PERMANENT" });
+  const [employeeForm, setEmployeeForm] = useState({ fullName: "", email: "", branchId: "", employeeNumber: "", positionId: "", departmentId: "", employmentType: "PERMANENT" });
   const [grantForm, setGrantForm] = useState({ employeeId: "", roleId: "", branchId: "" });
 
   const [editingEmployeeId, setEditingEmployeeId] = useState<string | null>(null);
-  const [editEmployeeForm, setEditEmployeeForm] = useState({ fullName: "", email: "", branchId: "", employeeNumber: "", position: "", department: "" });
+  const [editEmployeeForm, setEditEmployeeForm] = useState({ fullName: "", email: "", branchId: "", employeeNumber: "", positionId: "", departmentId: "" });
 
   const [editingRoleId, setEditingRoleId] = useState<string | null>(null);
   const [editRolePermCodes, setEditRolePermCodes] = useState<string[]>([]);
@@ -45,18 +48,46 @@ export default function RolesPage() {
       api.listBranches(),
       api.listEmployees(showArchivedEmployees),
       api.listPermissions(),
+      api.listDepartments(),
+      api.listPositions(),
     ])
-      .then(([r, u, b, e, p]) => {
+      .then(([r, u, b, e, p, d, pos]) => {
         setRoles(r.roles);
         setUsers(u.users);
         setBranches(b.branches);
         setEmployees(e.employees);
         setPermissions(p.permissions);
+        setDepartments(d.departments);
+        setPositions(pos.positions);
       })
       .catch((err) => setError(err.message));
   }
 
   useEffect(() => { load(); }, [showArchivedEmployees]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function handleQuickAddDepartment() {
+    const name = window.prompt("New department name:");
+    if (!name) return;
+    try {
+      const res = await api.createDepartment({ name });
+      setDepartments((d) => [...d, res.department]);
+      setEmployeeForm((f) => ({ ...f, departmentId: res.department.id }));
+    } catch (err: any) {
+      setError(err.message || "Could not create department");
+    }
+  }
+
+  async function handleQuickAddPosition() {
+    const title = window.prompt("New position title:");
+    if (!title) return;
+    try {
+      const res = await api.createPosition({ title, departmentId: employeeForm.departmentId || undefined });
+      setPositions((p) => [...p, res.position]);
+      setEmployeeForm((f) => ({ ...f, positionId: res.position.id }));
+    } catch (err: any) {
+      setError(err.message || "Could not create position");
+    }
+  }
 
   const employeesWithoutAccess = employees.filter((e) => !e.userId && e.status !== "INACTIVE");
 
@@ -66,7 +97,7 @@ export default function RolesPage() {
     setError(null);
     try {
       await api.createEmployee(employeeForm);
-      setEmployeeForm({ fullName: "", email: "", branchId: "", employeeNumber: "", position: "", department: "", employmentType: "PERMANENT" });
+      setEmployeeForm({ fullName: "", email: "", branchId: "", employeeNumber: "", positionId: "", departmentId: "", employmentType: "PERMANENT" });
       load();
     } catch (err: any) {
       setError(err.message || "Could not add employee");
@@ -77,7 +108,7 @@ export default function RolesPage() {
 
   function startEditEmployee(emp: any) {
     setEditingEmployeeId(emp.id);
-    setEditEmployeeForm({ fullName: emp.fullName, email: emp.email, branchId: emp.branchId || "", employeeNumber: emp.employeeNumber || "", position: emp.position || "", department: emp.department || "" });
+    setEditEmployeeForm({ fullName: emp.fullName, email: emp.email, branchId: emp.branchId || "", employeeNumber: emp.employeeNumber || "", positionId: emp.positionId || "", departmentId: emp.departmentId || "" });
   }
 
   async function saveEditEmployee(id: string) {
@@ -341,11 +372,19 @@ export default function RolesPage() {
             </label>
             <label className="block">
               <span className="block text-[13px] text-text-500 mb-1.5">Position (optional)</span>
-              <input className="input" value={employeeForm.position} onChange={(e) => setEmployeeForm((f) => ({ ...f, position: e.target.value }))} />
+              <select className="input" value={employeeForm.positionId} onChange={(e) => setEmployeeForm((f) => ({ ...f, positionId: e.target.value }))}>
+                <option value="">— None —</option>
+                {positions.map((p) => (<option key={p.id} value={p.id}>{p.title}</option>))}
+              </select>
+              <button type="button" onClick={handleQuickAddPosition} className="btn-text text-gold-600 mt-1">+ New position</button>
             </label>
             <label className="block">
               <span className="block text-[13px] text-text-500 mb-1.5">Department (optional)</span>
-              <input className="input" value={employeeForm.department} onChange={(e) => setEmployeeForm((f) => ({ ...f, department: e.target.value }))} />
+              <select className="input" value={employeeForm.departmentId} onChange={(e) => setEmployeeForm((f) => ({ ...f, departmentId: e.target.value }))}>
+                <option value="">— None —</option>
+                {departments.map((d) => (<option key={d.id} value={d.id}>{d.name}</option>))}
+              </select>
+              <button type="button" onClick={handleQuickAddDepartment} className="btn-text text-gold-600 mt-1">+ New department</button>
             </label>
             <label className="block">
               <span className="block text-[13px] text-text-500 mb-1.5">Employment type</span>
@@ -371,7 +410,12 @@ export default function RolesPage() {
                     <>
                       <td><input className="input !py-1 !text-[12px]" value={editEmployeeForm.fullName} onChange={(ev) => setEditEmployeeForm((f) => ({ ...f, fullName: ev.target.value }))} /></td>
                       <td><input className="input !py-1 !text-[12px] !w-24" value={editEmployeeForm.employeeNumber} onChange={(ev) => setEditEmployeeForm((f) => ({ ...f, employeeNumber: ev.target.value }))} /></td>
-                      <td><input className="input !py-1 !text-[12px] !w-28" value={editEmployeeForm.position} onChange={(ev) => setEditEmployeeForm((f) => ({ ...f, position: ev.target.value }))} /></td>
+                      <td>
+                        <select className="input !py-1 !text-[12px] !w-28" value={editEmployeeForm.positionId} onChange={(ev) => setEditEmployeeForm((f) => ({ ...f, positionId: ev.target.value }))}>
+                          <option value="">—</option>
+                          {positions.map((p) => (<option key={p.id} value={p.id}>{p.title}</option>))}
+                        </select>
+                      </td>
                       <td><input className="input !py-1 !text-[12px]" value={editEmployeeForm.email} onChange={(ev) => setEditEmployeeForm((f) => ({ ...f, email: ev.target.value }))} /></td>
                       <td>
                         <select className="input !py-1 !text-[12px]" value={editEmployeeForm.branchId} onChange={(ev) => setEditEmployeeForm((f) => ({ ...f, branchId: ev.target.value }))}>
@@ -389,7 +433,7 @@ export default function RolesPage() {
                     <>
                       <td className={e.status === "INACTIVE" ? "text-text-muted line-through" : "text-text-900"}>{e.fullName}</td>
                       <td className="text-text-700 font-mono text-[12px]">{e.employeeNumber || "—"}</td>
-                      <td className="text-text-700">{e.position || "—"}</td>
+                      <td className="text-text-700">{e.position?.title || "—"}</td>
                       <td className="text-text-700">{e.email}</td>
                       <td className="text-text-700">{e.branch?.name || "—"}</td>
                       <td>{e.user ? <span className="badge bg-green-100 text-green-600">{e.user.status}</span> : <span className="badge bg-violet-500/15 text-violet-500">No access</span>}</td>
