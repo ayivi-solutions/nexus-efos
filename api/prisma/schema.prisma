@@ -69,6 +69,7 @@ model Institution {
   savingsInterestAccruals SavingsInterestAccrual[]
   savingsInterestPostings SavingsInterestPosting[]
   importBatches           ImportBatch[]
+  businessRules           BusinessRule[]
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -780,6 +781,8 @@ enum ApprovalRequestType {
   ACCOUNT_HOLDER_ADD
   PRODUCT_ACTIVATION
   AML_ADJUDICATION
+  BUSINESS_RULE_ACTIVATION // §41.6 — a rule itself needs authorised approval before going live
+  BUSINESS_RULE_TRIGGERED  // a rule's REQUIRE_ADDITIONAL_APPROVAL action fired against a real loan
 
   @@schema("nexus")
 }
@@ -1529,5 +1532,90 @@ model ImportBatch {
   loans           Loan[]
 
   @@map("import_batch")
+  @@schema("nexus")
+}
+
+// doc §41 Business Rules Framework — separates institutional policy from
+// application code. §41.7's Rule Structure mapped directly: ruleCode
+// (Rule Identifier), name, businessPurpose, description, category,
+// conditions/actions (JSON, evaluated by lib/businessRules.ts), priority,
+// effectiveDate/expiryDate, status (a pragmatic 4-state compression of
+// §41.6's fuller Identification→...→Retirement lifecycle, the same
+// compression pattern already used for Product Lifecycle), businessOwnerId.
+// "Version"/"Audit History" from §41.7 are satisfied by the existing
+// PDDS versionNo (auto-incremented on every update) and AuditLog, not a
+// redundant parallel field.
+//
+// Wired into exactly ONE real trigger point (Loan Initiation) rather than
+// stubbed across many — genuinely evaluated against every loan created,
+// not a configuration screen for rules that never actually run.
+enum BusinessRuleCategory {
+  VALIDATION
+  ELIGIBILITY
+  CALCULATION
+  APPROVAL
+  COMPLIANCE
+  NOTIFICATION
+
+  @@schema("nexus")
+}
+
+enum BusinessRuleStatus {
+  DRAFT
+  PENDING_APPROVAL
+  ACTIVE
+  RETIRED
+
+  @@schema("nexus")
+}
+
+enum BusinessRuleTriggerPoint {
+  LOAN_INITIATION
+
+  @@schema("nexus")
+}
+
+model BusinessRule {
+  id             String                   @id(map: "pk_business_rule") @default(uuid())
+  institution    Institution              @relation(fields: [institutionId], references: [id], onDelete: Cascade, map: "fk_business_rule_institution")
+  institutionId  String                   @map("institution_id")
+
+  ruleCode       String                   @map("rule_code") // e.g. "BR-001", human-referenceable
+  name           String
+  businessPurpose String?                 @map("business_purpose")
+  description    String?
+  category       BusinessRuleCategory
+  triggerPoint   BusinessRuleTriggerPoint @map("trigger_point")
+
+  // Conditions: [{ field, operator, value }], evaluated per §41.9's
+  // "configuration driven" principle — an administrator edits data, not code.
+  conditions     Json
+  conditionLogic String  @default("ALL") @map("condition_logic") // ALL (AND) | ANY (OR)
+
+  // Actions: [{ type, params }] — FLAG | REQUIRE_ADDITIONAL_APPROVAL | REJECT
+  actions        Json
+
+  priority       Int      @default(100) // lower evaluates first
+  effectiveDate  DateTime? @map("effective_date")
+  expiryDate     DateTime? @map("expiry_date")
+  status         BusinessRuleStatus @default(DRAFT)
+  businessOwnerId String? @map("business_owner_id")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  // PDDS §13.4 Phase 3 — mandatory audit/version/lifecycle columns.
+  // created_by/updated_by/version_no auto-populated by Prisma middleware
+  // (see lib/requestContext.ts + lib/prisma.ts) so no route handler needs
+  // to set them manually. deleted_at/deleted_by are set explicitly by the
+  // handful of endpoints that do real disposal. record_status is kept in
+  // sync by the same middleware whenever archived/deletedAt change.
+  createdById  String?      @map("created_by_id")
+  updatedById  String?      @map("updated_by_id")
+  deletedAt    DateTime?    @map("deleted_at")
+  deletedById  String?      @map("deleted_by_id")
+  versionNo    Int          @default(1) @map("version_no")
+  recordStatus RecordStatus @default(ACTIVE) @map("record_status")
+  @@map("business_rule")
   @@schema("nexus")
 }

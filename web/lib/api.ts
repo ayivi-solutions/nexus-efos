@@ -324,6 +324,13 @@ export const api = {
     fd.append("file", file);
     return requestFormData("/migration/loans/full-history/commit", fd);
   },
+
+  listBusinessRules: () => request("/business-rules"),
+  getBusinessRule: (id: string) => request(`/business-rules/${id}`),
+  createBusinessRule: (data: any) => request("/business-rules", { method: "POST", body: JSON.stringify(data) }),
+  updateBusinessRule: (id: string, data: any) => request(`/business-rules/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
+  requestRuleActivation: (id: string) => request(`/business-rules/${id}/request-activation`, { method: "POST" }),
+  retireBusinessRule: (id: string) => request(`/business-rules/${id}/retire`, { method: "POST" }),
 };
 
 // NOTE: sessionStorage is used here (client-only, in-memory-per-tab) rather

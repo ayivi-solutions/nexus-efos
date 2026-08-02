@@ -4,6 +4,7 @@ import { prisma } from "../lib/prisma";
 import { requireAuth, AuthedRequest } from "../middleware/auth";
 import { requirePermission } from "../middleware/rbac";
 import { round2, generateSchedule, allocateRepayment } from "../lib/loanSchedule";
+import { ruleMatches, RuleCondition, RuleAction } from "../lib/businessRules";
 
 export const loanRouter = Router();
 loanRouter.use(requireAuth);
@@ -150,7 +151,60 @@ loanRouter.post("/", requirePermission("loans.initiate"), async (req: AuthedRequ
     },
   });
 
-  res.status(201).json({ loan });
+  // doc §41 Business Rules Framework — genuinely evaluated here, not a
+  // configuration screen for rules that never run. Every ACTIVE rule
+  // whose trigger point is LOAN_INITIATION is checked against this real
+  // loan + its customer, in priority order.
+  const ruleWarnings: { ruleCode: string; ruleName: string; actionsTaken: string[] }[] = [];
+  const activeRules = await prisma.businessRule.findMany({
+    where: {
+      institutionId: req.auth!.institutionId, status: "ACTIVE", triggerPoint: "LOAN_INITIATION",
+      OR: [{ effectiveDate: null }, { effectiveDate: { lte: new Date() } }],
+      AND: [{ OR: [{ expiryDate: null }, { expiryDate: { gte: new Date() } }] }],
+    },
+    orderBy: { priority: "asc" },
+  });
+
+  if (activeRules.length > 0) {
+    const ruleContext = { principal: Number(loan.principal), termMonths: loan.termMonths, interestRate: Number(loan.interestRate), customer };
+
+    for (const rule of activeRules) {
+      const conditions = rule.conditions as unknown as RuleCondition[];
+      if (!ruleMatches(ruleContext, conditions, rule.conditionLogic)) continue;
+
+      const actions = rule.actions as unknown as RuleAction[];
+      const actionsTaken: string[] = [];
+
+      for (const action of actions) {
+        if (action.type === "FLAG") {
+          await prisma.auditLog.create({
+            data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "business_rule.flagged", resource: "loan", resourceId: loan.id, metadata: { ruleId: rule.id, ruleCode: rule.ruleCode, message: action.message } },
+          });
+          actionsTaken.push("FLAG");
+        } else if (action.type === "REQUIRE_ADDITIONAL_APPROVAL") {
+          await prisma.approvalRequest.create({
+            data: {
+              institutionId: req.auth!.institutionId, type: "BUSINESS_RULE_TRIGGERED", targetType: "Loan", targetId: loan.id,
+              payload: { ruleId: rule.id }, reason: action.message || `Business rule ${rule.ruleCode} (${rule.name}) requires additional approval`,
+              requestedById: req.auth!.userId,
+            },
+          });
+          actionsTaken.push("REQUIRE_ADDITIONAL_APPROVAL");
+        } else if (action.type === "REJECT") {
+          await prisma.loan.update({ where: { id: loan.id }, data: { status: "REJECTED" } });
+          actionsTaken.push("REJECT");
+        }
+      }
+
+      await prisma.auditLog.create({
+        data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "business_rule.triggered", resource: "loan", resourceId: loan.id, metadata: { ruleId: rule.id, ruleCode: rule.ruleCode, actionsTaken } },
+      });
+      ruleWarnings.push({ ruleCode: rule.ruleCode, ruleName: rule.name, actionsTaken });
+    }
+  }
+
+  const finalLoan = ruleWarnings.length > 0 ? await prisma.loan.findUniqueOrThrow({ where: { id: loan.id } }) : loan;
+  res.status(201).json({ loan: finalLoan, ruleWarnings });
 });
 
 loanRouter.post("/:id/approve", requirePermission("loans.approve"), async (req: AuthedRequest, res) => {
@@ -203,6 +257,17 @@ loanRouter.post("/:id/disburse", requirePermission("loans.approve"), async (req:
   const loan = await prisma.loan.findFirst({ where: { id: req.params.id, institutionId: req.auth!.institutionId } });
   if (!loan) return res.status(404).json({ error: "Loan not found" });
   if (loan.status !== "APPROVED") return res.status(400).json({ error: "Loan must be APPROVED before disbursement" });
+
+  // doc §41 Business Rules Framework — a REQUIRE_ADDITIONAL_APPROVAL action
+  // has real teeth: disbursement is blocked while any business-rule-triggered
+  // approval on this loan is still pending, on top of the loan's own normal
+  // approval.
+  const pendingRuleApproval = await prisma.approvalRequest.findFirst({
+    where: { targetType: "Loan", targetId: loan.id, type: "BUSINESS_RULE_TRIGGERED", status: "PENDING" },
+  });
+  if (pendingRuleApproval) {
+    return res.status(400).json({ error: `Disbursement blocked: "${pendingRuleApproval.reason}" is still pending approval` });
+  }
 
   const disbursedAt = new Date();
   const schedule = generateSchedule(

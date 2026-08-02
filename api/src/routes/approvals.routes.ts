@@ -45,6 +45,12 @@ async function applyApproval(request: { id: string; type: string; targetId: stri
     case "PRODUCT_ACTIVATION":
       await prisma.product.update({ where: { id: request.targetId }, data: { status: "ACTIVE" } });
       break;
+    case "BUSINESS_RULE_ACTIVATION":
+      await prisma.businessRule.update({ where: { id: request.targetId }, data: { status: "ACTIVE" } });
+      break;
+    // BUSINESS_RULE_TRIGGERED needs no apply-side effect — it's a pure
+    // blocking gate checked at loan disbursement time (see loan.routes.ts);
+    // approving it just resolves the record so disbursement is unblocked.
     case "AML_ADJUDICATION":
       // Approving = false positive, clear the customer.
       await prisma.customer.update({
@@ -95,6 +101,9 @@ approvalsRouter.post("/:id/reject", requirePermission("institution.configure"), 
   // back to DRAFT rather than leaving it stuck in PENDING_APPROVAL forever.
   if (request.type === "PRODUCT_ACTIVATION") {
     await prisma.product.update({ where: { id: request.targetId }, data: { status: "DRAFT" } });
+  }
+  if (request.type === "BUSINESS_RULE_ACTIVATION") {
+    await prisma.businessRule.update({ where: { id: request.targetId }, data: { status: "DRAFT" } });
   }
 
   await prisma.approvalRequest.update({
