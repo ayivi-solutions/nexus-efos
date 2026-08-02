@@ -1,16 +1,17 @@
 import { prisma } from "./lib/prisma";
-import { PERMISSION_CATALOG } from "./seed-data";
+import { syncPermissionsAndRoles } from "./lib/syncPermissionsAndRoles";
 
+// Manual on-demand equivalent of what now also runs automatically on every
+// server boot (see server.ts) — kept as a convenience for syncing
+// immediately without waiting for/triggering a redeploy, not because
+// anyone should need to remember to run this after a code change anymore.
 async function main() {
-  console.log(`Seeding ${PERMISSION_CATALOG.length} permissions...`);
-  for (const p of PERMISSION_CATALOG) {
-    await prisma.permission.upsert({
-      where: { code: p.code },
-      update: { category: p.category, action: p.action, resource: p.resource, description: p.description },
-      create: p,
-    });
-  }
-  console.log("Done.");
+  const summary = await syncPermissionsAndRoles();
+  console.log(
+    `Sync complete: ${summary.institutionsChecked} institution(s) checked, ` +
+      `${summary.newPermissions} new permission(s), ${summary.newRolesCreated} new role(s), ` +
+      `${summary.newRolePermissionLinks} new role-permission link(s).`
+  );
 }
 
 main()
