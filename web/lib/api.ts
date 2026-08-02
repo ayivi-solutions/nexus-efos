@@ -301,6 +301,29 @@ export const api = {
     fd.append("file", file);
     return requestFormData("/migration/savings/commit", fd);
   },
+
+  downloadLoanOpeningBalanceTemplate: () => downloadFile("/migration/loans/template/opening-balance", "nexus-loan-opening-balance-template.xlsx"),
+  downloadLoanFullHistoryTemplate: () => downloadFile("/migration/loans/template/full-history", "nexus-loan-full-history-template.xlsx"),
+  dryRunLoanOpeningBalance: (file: File) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    return requestFormData("/migration/loans/opening-balance/dry-run", fd);
+  },
+  commitLoanOpeningBalance: (file: File) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    return requestFormData("/migration/loans/opening-balance/commit", fd);
+  },
+  dryRunLoanFullHistory: (file: File) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    return requestFormData("/migration/loans/full-history/dry-run", fd);
+  },
+  commitLoanFullHistory: (file: File) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    return requestFormData("/migration/loans/full-history/commit", fd);
+  },
 };
 
 // NOTE: sessionStorage is used here (client-only, in-memory-per-tab) rather

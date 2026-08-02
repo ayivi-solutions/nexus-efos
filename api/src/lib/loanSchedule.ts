@@ -57,6 +57,39 @@ export function generateSchedule(
   return rows;
 }
 
+// Data Migration — Opening Balance method. Unlike generateSchedule (which
+// computes a full term from disbursement), this distributes a KNOWN
+// remaining balance evenly across the remaining installments going
+// forward from a given next-due-date. Deliberately not trying to
+// reconstruct the original amortization curve — the migrating company
+// only supplies what's currently outstanding, not the original schedule,
+// so an even split of what's left is the honest, achievable answer, not
+// a false precision. The last installment absorbs any rounding remainder
+// so the total exactly matches the supplied outstanding figures.
+export function generateRemainingSchedule(
+  outstandingPrincipal: number,
+  outstandingInterest: number,
+  remainingInstallments: number,
+  nextDueDate: Date
+): ScheduleRow[] {
+  const principalPer = round2(outstandingPrincipal / remainingInstallments);
+  const interestPer = round2(outstandingInterest / remainingInstallments);
+  const rows: ScheduleRow[] = [];
+
+  for (let i = 1; i <= remainingInstallments; i++) {
+    const dueDate = new Date(nextDueDate);
+    dueDate.setMonth(dueDate.getMonth() + (i - 1));
+    rows.push({ installmentNumber: i, dueDate, principalDue: principalPer, interestDue: interestPer });
+  }
+
+  const principalSoFar = round2(principalPer * (remainingInstallments - 1));
+  const interestSoFar = round2(interestPer * (remainingInstallments - 1));
+  rows[rows.length - 1].principalDue = round2(outstandingPrincipal - principalSoFar);
+  rows[rows.length - 1].interestDue = round2(outstandingInterest - interestSoFar);
+
+  return rows;
+}
+
 export interface InstallmentState {
   id: string;
   interestDue: number;

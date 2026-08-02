@@ -5,7 +5,7 @@ import { prisma } from "../lib/prisma";
 import { requireAuth, AuthedRequest } from "../middleware/auth";
 import { requirePermission } from "../middleware/rbac";
 import { generateAccountNumber } from "../lib/accountNumber";
-import { round2 } from "../lib/loanSchedule";
+import { round2, generateSchedule, generateRemainingSchedule, allocateRepayment } from "../lib/loanSchedule";
 
 // Data Migration — bulk onboarding of an existing company's data. §35
 // Customer Merge and Duplicate Management's principles applied even
@@ -626,6 +626,418 @@ migrationRouter.post("/savings/commit", upload.single("file"), async (req: Authe
 
   await prisma.auditLog.create({
     data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "migration.savings_commit", resource: "import_batch", resourceId: batch.id, metadata: { successRows, errorRows: rowErrors.length } },
+  });
+
+  res.status(201).json({ batch, successRows, errorRows: rowErrors.length, rowErrors });
+});
+
+// =======================================================================
+// LOAN MIGRATION — two methods, one page, two templates
+// =======================================================================
+
+const INTEREST_METHODS = ["FLAT", "REDUCING_BALANCE"];
+
+function buildLoanOpeningBalanceTemplate(): XLSX.WorkBook {
+  const wb = XLSX.utils.book_new();
+
+  const instructions = XLSX.utils.aoa_to_sheet([
+    ["Nexus EFOS — Loan Migration (Opening Balance method): Instructions"],
+    [""],
+    ["Use this method when you want a clean starting point: the loan is recorded as already disbursed, with whatever balance remains today, and a fresh repayment schedule for only what's left. Nexus will not have a record of payments made before today — if you need that full history, use the separate Full History template instead."],
+    [""],
+    ["Field reference:"],
+    ["Customer Phone — required. Must match an existing customer's phone number exactly."],
+    ["Product Code — required. Must match an existing, active Loan product's code."],
+    ["Original Principal — required. The full amount originally disbursed, in GHS."],
+    ["Interest Rate — required. Annual percentage rate."],
+    ["Interest Method — required. One of: " + INTEREST_METHODS.join(", ")],
+    ["Term Months — required. The original loan term, for record-keeping."],
+    ["Disbursed Date — required. When the loan was originally disbursed (YYYY-MM-DD)."],
+    ["Outstanding Principal — required. How much principal is still owed today, in GHS."],
+    ["Outstanding Interest — optional, defaults to 0. How much interest is still owed today, in GHS."],
+    ["Remaining Installments — required. How many payments are left."],
+    ["Next Due Date — required. When the next payment is due (YYYY-MM-DD)."],
+    [""],
+    ["What happens: the outstanding principal and interest are split evenly across the remaining installments, starting from the next due date. This is an honest even split of what you tell us is left — not a reconstruction of the original schedule, since that history isn't being supplied in this method."],
+    [""],
+    ["IMPORTANT — format the Customer Phone column as Text before typing (see the Customer migration template for why)."],
+  ]);
+  instructions["!cols"] = [{ wch: 100 }];
+  XLSX.utils.book_append_sheet(wb, instructions, "Instructions");
+
+  const headers = ["Customer Phone", "Product Code", "Original Principal", "Interest Rate", "Interest Method", "Term Months", "Disbursed Date", "Outstanding Principal", "Outstanding Interest", "Remaining Installments", "Next Due Date"];
+  const example = ["0244111222", "LN-01", "5000", "18", "FLAT", "6", "2026-01-15", "3200", "150", "4", "2026-09-01"];
+  const sheet = XLSX.utils.aoa_to_sheet([headers, example]);
+  sheet["!cols"] = headers.map(() => ({ wch: 20 }));
+  XLSX.utils.book_append_sheet(wb, sheet, "Loans");
+
+  return wb;
+}
+
+function buildLoanFullHistoryTemplate(): XLSX.WorkBook {
+  const wb = XLSX.utils.book_new();
+
+  const instructions = XLSX.utils.aoa_to_sheet([
+    ["Nexus EFOS — Loan Migration (Full History method): Instructions"],
+    [""],
+    ["Use this method when you have a complete repayment history and want Nexus to hold the real, full record from original disbursement onward — the full original amortization schedule is generated and every historical payment is replayed against it in date order, the same allocation rule (oldest installment first, interest before principal) real repayments have always used."],
+    [""],
+    ["This workbook has 2 sheets:"],
+    ["1. Loan Headers — one row per loan. Give each loan its own External Loan Reference — any short code you choose, used only to link its repayments below."],
+    ["2. Repayment History — one row per historical payment. Link each row to its loan using the exact External Loan Reference from the Loan Headers sheet."],
+    [""],
+    ["Field reference — Loan Headers:"],
+    ["External Loan Reference — required, must be unique in this file."],
+    ["Customer Phone — required. Must match an existing customer's phone number exactly."],
+    ["Product Code — required. Must match an existing, active Loan product's code."],
+    ["Principal — required. The amount disbursed, in GHS."],
+    ["Interest Rate — required. Annual percentage rate."],
+    ["Interest Method — required. One of: " + INTEREST_METHODS.join(", ")],
+    ["Term Months — required."],
+    ["Disbursed Date — required (YYYY-MM-DD)."],
+    [""],
+    ["Field reference — Repayment History:"],
+    ["External Loan Reference — required, must match a row in Loan Headers."],
+    ["Payment Date — required (YYYY-MM-DD)."],
+    ["Amount — required, in GHS."],
+    [""],
+    ["IMPORTANT — format the Customer Phone column as Text before typing (see the Customer migration template for why)."],
+  ]);
+  instructions["!cols"] = [{ wch: 100 }];
+  XLSX.utils.book_append_sheet(wb, instructions, "Instructions");
+
+  const headerCols = ["External Loan Reference", "Customer Phone", "Product Code", "Principal", "Interest Rate", "Interest Method", "Term Months", "Disbursed Date"];
+  const headerExample = ["LOAN-001", "0244111222", "LN-01", "5000", "18", "FLAT", "6", "2026-01-15"];
+  const headerSheet = XLSX.utils.aoa_to_sheet([headerCols, headerExample]);
+  headerSheet["!cols"] = headerCols.map(() => ({ wch: 20 }));
+  XLSX.utils.book_append_sheet(wb, headerSheet, "Loan Headers");
+
+  const repayCols = ["External Loan Reference", "Payment Date", "Amount"];
+  const repayExample = ["LOAN-001", "2026-02-15", "908.33"];
+  const repaySheet = XLSX.utils.aoa_to_sheet([repayCols, repayExample]);
+  repaySheet["!cols"] = repayCols.map(() => ({ wch: 20 }));
+  XLSX.utils.book_append_sheet(wb, repaySheet, "Repayment History");
+
+  return wb;
+}
+
+migrationRouter.get("/loans/template/opening-balance", (_req, res) => {
+  const wb = buildLoanOpeningBalanceTemplate();
+  const buffer = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
+  res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+  res.setHeader("Content-Disposition", "attachment; filename=nexus-loan-opening-balance-template.xlsx");
+  res.send(buffer);
+});
+
+migrationRouter.get("/loans/template/full-history", (_req, res) => {
+  const wb = buildLoanFullHistoryTemplate();
+  const buffer = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
+  res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+  res.setHeader("Content-Disposition", "attachment; filename=nexus-loan-full-history-template.xlsx");
+  res.send(buffer);
+});
+
+// -----------------------------------------------------------------------
+// Opening Balance — parsing, validation, commit
+// -----------------------------------------------------------------------
+
+interface LoanOBRow {
+  rowNumber: number;
+  customerPhone: string; productCode: string; originalPrincipal: string; interestRate: string;
+  interestMethod: string; termMonths: string; disbursedDate: string; outstandingPrincipal: string;
+  outstandingInterest: string; remainingInstallments: string; nextDueDate: string;
+}
+
+function parseLoanOBWorkbook(buffer: Buffer): LoanOBRow[] {
+  const wb = XLSX.read(buffer, { type: "buffer" });
+  return sheetToRows(wb, "Loans")
+    .map((r, i) => ({
+      rowNumber: i + 2, customerPhone: str(r[0]), productCode: str(r[1]), originalPrincipal: str(r[2]),
+      interestRate: str(r[3]), interestMethod: str(r[4]).toUpperCase(), termMonths: str(r[5]), disbursedDate: str(r[6]),
+      outstandingPrincipal: str(r[7]), outstandingInterest: str(r[8]) || "0", remainingInstallments: str(r[9]), nextDueDate: str(r[10]),
+    }))
+    .filter((r) => r.customerPhone || r.productCode);
+}
+
+function parseDate(s: string): Date | null {
+  const d = new Date(s);
+  return isNaN(d.getTime()) ? null : d;
+}
+
+async function validateLoanOBRows(rows: LoanOBRow[], institutionId: string) {
+  const results = [];
+  for (const row of rows) {
+    const errors: string[] = [];
+    if (!row.customerPhone) errors.push("Customer Phone is required");
+    else { const pe = phoneError(row.customerPhone); if (pe) errors.push(`Customer Phone: ${pe}`); }
+    if (!row.productCode) errors.push("Product Code is required");
+    if (isNaN(Number(row.originalPrincipal)) || Number(row.originalPrincipal) <= 0) errors.push("Original Principal must be a positive number");
+    if (isNaN(Number(row.interestRate)) || Number(row.interestRate) < 0) errors.push("Interest Rate must be a number ≥ 0");
+    if (!INTEREST_METHODS.includes(row.interestMethod)) errors.push(`Interest Method must be one of: ${INTEREST_METHODS.join(", ")}`);
+    if (!Number.isInteger(Number(row.termMonths)) || Number(row.termMonths) <= 0) errors.push("Term Months must be a positive whole number");
+    if (!parseDate(row.disbursedDate)) errors.push("Disbursed Date is not a valid date");
+    if (isNaN(Number(row.outstandingPrincipal)) || Number(row.outstandingPrincipal) < 0) errors.push("Outstanding Principal must be a number ≥ 0");
+    if (isNaN(Number(row.outstandingInterest)) || Number(row.outstandingInterest) < 0) errors.push("Outstanding Interest must be a number ≥ 0");
+    if (!Number.isInteger(Number(row.remainingInstallments)) || Number(row.remainingInstallments) <= 0) errors.push("Remaining Installments must be a positive whole number");
+    if (!parseDate(row.nextDueDate)) errors.push("Next Due Date is not a valid date");
+
+    let customer = null, productVersion = null;
+    if (row.customerPhone && !phoneError(row.customerPhone)) {
+      customer = await prisma.customer.findFirst({ where: { institutionId, phone: row.customerPhone } });
+      if (!customer) errors.push(`No customer found with phone "${row.customerPhone}" — import customers first`);
+    }
+    if (row.productCode) {
+      const product = await prisma.product.findFirst({ where: { institutionId, code: row.productCode, type: "LOAN" }, include: { currentVersion: true } });
+      if (!product) errors.push(`No Loan product found with code "${row.productCode}"`);
+      else if (product.status !== "ACTIVE") errors.push(`Product "${row.productCode}" is not currently active`);
+      else productVersion = product.currentVersion;
+    }
+
+    results.push({ rowNumber: row.rowNumber, sheet: "Loans", data: row, status: (errors.length ? "error" : "valid") as "error" | "valid", errors, customerId: customer?.id, productVersionId: productVersion?.id });
+  }
+  return results;
+}
+
+migrationRouter.post("/loans/opening-balance/dry-run", upload.single("file"), async (req: AuthedRequest, res) => {
+  if (!req.file) return res.status(400).json({ error: "No file uploaded" });
+  let rows: LoanOBRow[];
+  try { rows = parseLoanOBWorkbook(req.file.buffer); }
+  catch { return res.status(400).json({ error: "Could not read this file" }); }
+  if (rows.length === 0) return res.status(400).json({ error: "No data rows found in the Loans sheet" });
+
+  const results = await validateLoanOBRows(rows, req.auth!.institutionId);
+  const summary = { total: results.length, valid: results.filter((r) => r.status === "valid").length, error: results.filter((r) => r.status === "error").length };
+
+  await prisma.auditLog.create({
+    data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "migration.loans_opening_balance_dry_run", resource: "import_batch", metadata: { fileName: req.file.originalname, summary } },
+  });
+
+  res.json({ summary, results });
+});
+
+migrationRouter.post("/loans/opening-balance/commit", upload.single("file"), async (req: AuthedRequest, res) => {
+  if (!req.file) return res.status(400).json({ error: "No file uploaded" });
+  let rows: LoanOBRow[];
+  try { rows = parseLoanOBWorkbook(req.file.buffer); }
+  catch { return res.status(400).json({ error: "Could not read this file" }); }
+
+  const results = await validateLoanOBRows(rows, req.auth!.institutionId);
+  const blockingErrors = results.filter((r) => r.status === "error");
+  if (blockingErrors.length > 0) {
+    return res.status(400).json({ error: "This file still has unresolved errors — fix them and re-run a dry-run before committing", errors: blockingErrors });
+  }
+
+  const batch = await prisma.importBatch.create({
+    data: { institutionId: req.auth!.institutionId, entityType: "LOAN", method: "OPENING_BALANCE", status: "DRY_RUN", fileName: req.file.originalname, totalRows: results.length, successRows: 0, errorRows: 0, createdById: req.auth!.userId },
+  });
+
+  let successRows = 0;
+  const rowErrors: { rowNumber: number; sheet: string; error: string }[] = [];
+
+  for (const r of results) {
+    try {
+      const outstandingPrincipal = round2(Number(r.data.outstandingPrincipal));
+      const outstandingInterest = round2(Number(r.data.outstandingInterest));
+      const remainingInstallments = Number(r.data.remainingInstallments);
+      const nextDueDate = parseDate(r.data.nextDueDate)!;
+      const schedule = generateRemainingSchedule(outstandingPrincipal, outstandingInterest, remainingInstallments, nextDueDate);
+
+      await prisma.$transaction(async (tx: any) => {
+        const loan = await tx.loan.create({
+          data: {
+            institutionId: req.auth!.institutionId, customerId: r.customerId!, productVersionId: r.productVersionId!,
+            principal: round2(Number(r.data.originalPrincipal)), interestRate: round2(Number(r.data.interestRate)),
+            interestMethod: r.data.interestMethod, termMonths: Number(r.data.termMonths),
+            status: "DISBURSED", disbursedAt: parseDate(r.data.disbursedDate)!, importBatchId: batch.id,
+          },
+        });
+        await tx.loanInstallment.createMany({
+          data: schedule.map((s) => ({
+            loanId: loan.id, installmentNumber: s.installmentNumber, dueDate: s.dueDate,
+            principalDue: s.principalDue, interestDue: s.interestDue, totalDue: round2(s.principalDue + s.interestDue),
+          })),
+        });
+      });
+      successRows++;
+    } catch (err: any) {
+      rowErrors.push({ rowNumber: r.rowNumber, sheet: "Loans", error: err.message || "Unknown error" });
+    }
+  }
+
+  await prisma.importBatch.update({ where: { id: batch.id }, data: { status: rowErrors.length === 0 ? "COMMITTED" : "FAILED", successRows, errorRows: rowErrors.length, committedAt: new Date() } });
+  await prisma.auditLog.create({
+    data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "migration.loans_opening_balance_commit", resource: "import_batch", resourceId: batch.id, metadata: { successRows, errorRows: rowErrors.length } },
+  });
+
+  res.status(201).json({ batch, successRows, errorRows: rowErrors.length, rowErrors });
+});
+
+// -----------------------------------------------------------------------
+// Full History — parsing, validation, commit
+// -----------------------------------------------------------------------
+
+interface LoanHeaderRow {
+  rowNumber: number; externalRef: string; customerPhone: string; productCode: string;
+  principal: string; interestRate: string; interestMethod: string; termMonths: string; disbursedDate: string;
+}
+interface RepaymentRow { rowNumber: number; externalRef: string; paymentDate: string; amount: string; }
+
+function parseLoanFHWorkbook(buffer: Buffer) {
+  const wb = XLSX.read(buffer, { type: "buffer" });
+  const headers: LoanHeaderRow[] = sheetToRows(wb, "Loan Headers")
+    .map((r, i) => ({
+      rowNumber: i + 2, externalRef: str(r[0]), customerPhone: str(r[1]), productCode: str(r[2]),
+      principal: str(r[3]), interestRate: str(r[4]), interestMethod: str(r[5]).toUpperCase(), termMonths: str(r[6]), disbursedDate: str(r[7]),
+    }))
+    .filter((r) => r.externalRef || r.customerPhone);
+
+  const repayments: RepaymentRow[] = sheetToRows(wb, "Repayment History")
+    .map((r, i) => ({ rowNumber: i + 2, externalRef: str(r[0]), paymentDate: str(r[1]), amount: str(r[2]) }))
+    .filter((r) => r.externalRef || r.amount);
+
+  return { headers, repayments };
+}
+
+async function validateLoanFHRows(parsed: ReturnType<typeof parseLoanFHWorkbook>, institutionId: string) {
+  const seenRefs = new Set<string>();
+  const headerResults = [];
+
+  for (const row of parsed.headers) {
+    const errors: string[] = [];
+    if (!row.externalRef) errors.push("External Loan Reference is required");
+    else if (seenRefs.has(row.externalRef)) errors.push("Duplicate External Loan Reference within this file");
+    if (row.externalRef) seenRefs.add(row.externalRef);
+    if (!row.customerPhone) errors.push("Customer Phone is required");
+    else { const pe = phoneError(row.customerPhone); if (pe) errors.push(`Customer Phone: ${pe}`); }
+    if (!row.productCode) errors.push("Product Code is required");
+    if (isNaN(Number(row.principal)) || Number(row.principal) <= 0) errors.push("Principal must be a positive number");
+    if (isNaN(Number(row.interestRate)) || Number(row.interestRate) < 0) errors.push("Interest Rate must be a number ≥ 0");
+    if (!INTEREST_METHODS.includes(row.interestMethod)) errors.push(`Interest Method must be one of: ${INTEREST_METHODS.join(", ")}`);
+    if (!Number.isInteger(Number(row.termMonths)) || Number(row.termMonths) <= 0) errors.push("Term Months must be a positive whole number");
+    if (!parseDate(row.disbursedDate)) errors.push("Disbursed Date is not a valid date");
+
+    let customer = null, productVersion = null;
+    if (row.customerPhone && !phoneError(row.customerPhone)) {
+      customer = await prisma.customer.findFirst({ where: { institutionId, phone: row.customerPhone } });
+      if (!customer) errors.push(`No customer found with phone "${row.customerPhone}" — import customers first`);
+    }
+    if (row.productCode) {
+      const product = await prisma.product.findFirst({ where: { institutionId, code: row.productCode, type: "LOAN" }, include: { currentVersion: true } });
+      if (!product) errors.push(`No Loan product found with code "${row.productCode}"`);
+      else if (product.status !== "ACTIVE") errors.push(`Product "${row.productCode}" is not currently active`);
+      else productVersion = product.currentVersion;
+    }
+
+    headerResults.push({ rowNumber: row.rowNumber, sheet: "Loan Headers", data: row, status: (errors.length ? "error" : "valid") as "error" | "valid", errors, customerId: customer?.id, productVersionId: productVersion?.id });
+  }
+
+  const knownRefs = new Set(parsed.headers.map((h) => h.externalRef));
+  const repaymentResults = parsed.repayments.map((row) => {
+    const errors: string[] = [];
+    if (!row.externalRef) errors.push("External Loan Reference is required");
+    else if (!knownRefs.has(row.externalRef)) errors.push(`External Loan Reference "${row.externalRef}" does not match any row in Loan Headers`);
+    if (!parseDate(row.paymentDate)) errors.push("Payment Date is not a valid date");
+    if (isNaN(Number(row.amount)) || Number(row.amount) <= 0) errors.push("Amount must be a positive number");
+    return { rowNumber: row.rowNumber, sheet: "Repayment History", data: row, status: (errors.length ? "error" : "valid") as "error" | "valid", errors };
+  });
+
+  return { headerResults, repaymentResults };
+}
+
+migrationRouter.post("/loans/full-history/dry-run", upload.single("file"), async (req: AuthedRequest, res) => {
+  if (!req.file) return res.status(400).json({ error: "No file uploaded" });
+  let parsed: ReturnType<typeof parseLoanFHWorkbook>;
+  try { parsed = parseLoanFHWorkbook(req.file.buffer); }
+  catch { return res.status(400).json({ error: "Could not read this file" }); }
+  if (parsed.headers.length === 0) return res.status(400).json({ error: "No data rows found in the Loan Headers sheet" });
+
+  const { headerResults, repaymentResults } = await validateLoanFHRows(parsed, req.auth!.institutionId);
+  const summary = {
+    headers: { total: headerResults.length, valid: headerResults.filter((r) => r.status === "valid").length, error: headerResults.filter((r) => r.status === "error").length },
+    repayments: { total: repaymentResults.length, valid: repaymentResults.filter((r) => r.status === "valid").length, error: repaymentResults.filter((r) => r.status === "error").length },
+  };
+
+  await prisma.auditLog.create({
+    data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "migration.loans_full_history_dry_run", resource: "import_batch", metadata: { fileName: req.file.originalname, summary } },
+  });
+
+  res.json({ summary, headerResults, repaymentResults });
+});
+
+migrationRouter.post("/loans/full-history/commit", upload.single("file"), async (req: AuthedRequest, res) => {
+  if (!req.file) return res.status(400).json({ error: "No file uploaded" });
+  let parsed: ReturnType<typeof parseLoanFHWorkbook>;
+  try { parsed = parseLoanFHWorkbook(req.file.buffer); }
+  catch { return res.status(400).json({ error: "Could not read this file" }); }
+
+  const { headerResults, repaymentResults } = await validateLoanFHRows(parsed, req.auth!.institutionId);
+  const allErrors = [...headerResults, ...repaymentResults].filter((r) => r.status === "error");
+  if (allErrors.length > 0) {
+    return res.status(400).json({ error: "This file still has unresolved errors — fix them and re-run a dry-run before committing", errors: allErrors });
+  }
+
+  const batch = await prisma.importBatch.create({
+    data: { institutionId: req.auth!.institutionId, entityType: "LOAN", method: "FULL_HISTORY", status: "DRY_RUN", fileName: req.file.originalname, totalRows: headerResults.length, successRows: 0, errorRows: 0, createdById: req.auth!.userId },
+  });
+
+  let successRows = 0;
+  const rowErrors: { rowNumber: number; sheet: string; error: string }[] = [];
+
+  for (const h of headerResults) {
+    try {
+      const repaymentsForLoan = repaymentResults
+        .filter((r) => r.data.externalRef === h.data.externalRef)
+        .sort((a, b) => parseDate(a.data.paymentDate)!.getTime() - parseDate(b.data.paymentDate)!.getTime());
+
+      const principal = round2(Number(h.data.principal));
+      const interestRate = round2(Number(h.data.interestRate));
+      const termMonths = Number(h.data.termMonths);
+      const disbursedAt = parseDate(h.data.disbursedDate)!;
+      const schedule = generateSchedule(principal, interestRate, termMonths, h.data.interestMethod, disbursedAt);
+
+      await prisma.$transaction(async (tx: any) => {
+        const loan = await tx.loan.create({
+          data: {
+            institutionId: req.auth!.institutionId, customerId: h.customerId!, productVersionId: h.productVersionId!,
+            principal, interestRate, interestMethod: h.data.interestMethod, termMonths,
+            status: "DISBURSED", disbursedAt, importBatchId: batch.id,
+          },
+        });
+        const installments = await Promise.all(
+          schedule.map((s) =>
+            tx.loanInstallment.create({
+              data: { loanId: loan.id, installmentNumber: s.installmentNumber, dueDate: s.dueDate, principalDue: s.principalDue, interestDue: s.interestDue, totalDue: round2(s.principalDue + s.interestDue) },
+            })
+          )
+        );
+
+        // Replay every historical repayment in date order through the exact
+        // same allocation rule real-time repayments use (see lib/loanSchedule.ts).
+        const installmentStates = installments.map((i: any) => ({ id: i.id, interestDue: Number(i.interestDue), principalDue: Number(i.principalDue), interestPaid: 0, principalPaid: 0, status: "PENDING" }));
+
+        for (const rep of repaymentsForLoan) {
+          const amount = round2(Number(rep.data.amount));
+          const paidAt = parseDate(rep.data.paymentDate)!;
+          await tx.loanRepayment.create({ data: { loanId: loan.id, amount, paidAt, recordedById: req.auth!.userId } });
+          const updates = allocateRepayment(installmentStates, amount);
+          for (const u of updates) {
+            await tx.loanInstallment.update({ where: { id: u.id }, data: { interestPaid: u.newInterestPaid, principalPaid: u.newPrincipalPaid, status: u.newStatus } });
+          }
+        }
+
+        const allPaid = installmentStates.length > 0 && installmentStates.every((i) => i.status === "PAID");
+        if (allPaid) await tx.loan.update({ where: { id: loan.id }, data: { status: "CLOSED" } });
+        else if (repaymentsForLoan.length > 0) await tx.loan.update({ where: { id: loan.id }, data: { status: "ACTIVE" } });
+      });
+      successRows++;
+    } catch (err: any) {
+      rowErrors.push({ rowNumber: h.rowNumber, sheet: "Loan Headers", error: err.message || "Unknown error" });
+    }
+  }
+
+  await prisma.importBatch.update({ where: { id: batch.id }, data: { status: rowErrors.length === 0 ? "COMMITTED" : "FAILED", successRows, errorRows: rowErrors.length, committedAt: new Date() } });
+  await prisma.auditLog.create({
+    data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "migration.loans_full_history_commit", resource: "import_batch", resourceId: batch.id, metadata: { successRows, errorRows: rowErrors.length } },
   });
 
   res.status(201).json({ batch, successRows, errorRows: rowErrors.length, rowErrors });
