@@ -42,6 +42,13 @@ export const PERMISSION_CATALOG: PermissionDef[] = [
   // Integration
   { code: "api.access", category: "INTEGRATION", action: "VIEW", resource: "api", description: "Access platform APIs" },
   { code: "api.keys.manage", category: "INTEGRATION", action: "ADMINISTER", resource: "api", description: "Create/revoke API keys" },
+
+  // Data Migration — deliberately its own permission, not bundled into
+  // institution.configure. Bulk-committing hundreds of financial records
+  // at once carries real audit/regulatory stakes higher than ordinary
+  // institution configuration; §35.4's "Merge operations require
+  // authorised approval" spirit applied to bulk import generally.
+  { code: "data.migrate", category: "ADMINISTRATIVE", action: "ADMINISTER", resource: "data", description: "Run bulk data migration imports" },
 ];
 
 export interface RoleTemplate {
@@ -105,7 +112,7 @@ export const SYSTEM_ROLE_TEMPLATES: RoleTemplate[] = [
     name: "System Administrator",
     category: "TECHNICAL",
     description: "User, role and integration administration (doc §38.7 Technical Roles)",
-    permissionCodes: ["users.administer", "roles.assign", "roles.configure", "branches.administer", "institution.configure", "api.keys.manage", "audit.view"],
+    permissionCodes: ["users.administer", "roles.assign", "roles.configure", "branches.administer", "institution.configure", "api.keys.manage", "audit.view", "data.migrate"],
   },
   {
     name: "Individual Customer",

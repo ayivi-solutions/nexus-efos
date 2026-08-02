@@ -30,6 +30,23 @@ async function requestFormData(path: string, formData: FormData): Promise<any> {
   return res.json();
 }
 
+// Binary file download (e.g. an .xlsx template) — needs the auth header
+// like any other authenticated call, but the response is a blob, not JSON.
+async function downloadFile(path: string, filename: string) {
+  const accessToken = typeof window !== "undefined" ? sessionStorage.getItem("nexus_access_token") : null;
+  const res = await fetch(`${API_BASE}${path}`, {
+    headers: { ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}) },
+  });
+  if (!res.ok) throw new Error(`Could not download file (${res.status})`);
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 // Endpoints that never require a token in the first place. A 401 from any
 // of these means "wrong credentials" or "bad/expired invite token" — a
 // real, specific error the person needs to see — not "your session
@@ -258,6 +275,20 @@ export const api = {
     request(`/reports/savings${from || to ? `?${new URLSearchParams({ ...(from ? { from } : {}), ...(to ? { to } : {}) })}` : ""}`),
   getCustomerReport: (from?: string, to?: string) =>
     request(`/reports/customers${from || to ? `?${new URLSearchParams({ ...(from ? { from } : {}), ...(to ? { to } : {}) })}` : ""}`),
+
+  downloadCustomerImportTemplate: () => downloadFile("/migration/customers/template", "nexus-customer-import-template.xlsx"),
+  dryRunCustomerImport: (file: File) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    return requestFormData("/migration/customers/dry-run", fd);
+  },
+  commitCustomerImport: (file: File, resolutions: Record<string, "skip" | "update">) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    fd.append("resolutions", JSON.stringify(resolutions));
+    return requestFormData("/migration/customers/commit", fd);
+  },
+  listImportBatches: () => request("/migration/batches"),
 };
 
 // NOTE: sessionStorage is used here (client-only, in-memory-per-tab) rather

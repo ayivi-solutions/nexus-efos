@@ -15,6 +15,7 @@ import { watchlistRouter } from "./routes/watchlist.routes";
 import { documentsRouter } from "./routes/documents.routes";
 import { approvalsRouter } from "./routes/approvals.routes";
 import { savingsInterestRouter } from "./routes/savings-interest.routes";
+import { migrationRouter } from "./routes/migration.routes";
 
 export const app = express();
 
@@ -50,6 +51,7 @@ app.use("/v1/watchlist", watchlistRouter);
 app.use("/v1/documents", documentsRouter);
 app.use("/v1/approvals", approvalsRouter);
 app.use("/v1/savings-interest", savingsInterestRouter);
+app.use("/v1/migration", migrationRouter);
 
 app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   console.error(err);

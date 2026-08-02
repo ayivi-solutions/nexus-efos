@@ -68,6 +68,7 @@ model Institution {
   approvalRequests        ApprovalRequest[]
   savingsInterestAccruals SavingsInterestAccrual[]
   savingsInterestPostings SavingsInterestPosting[]
+  importBatches           ImportBatch[]
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -562,6 +563,12 @@ model Customer {
   cddNotes        String?   @map("cdd_notes")
   cddCompletedAt  DateTime? @map("cdd_completed_at")
   cddCompletedById String?  @map("cdd_completed_by_id")
+
+  // Data Migration (§35 Duplicate Management spirit) — tags a customer
+  // as having arrived via bulk import rather than organic use, so a bad
+  // batch can always be traced and, if needed, identified for cleanup.
+  importBatch   ImportBatch? @relation(fields: [importBatchId], references: [id], onDelete: SetNull, map: "fk_customer_import_batch")
+  importBatchId String?      @map("import_batch_id")
 
   archived   Boolean   @default(false)
   archivedAt DateTime? @map("archived_at")
@@ -1457,5 +1464,57 @@ model AuditLog {
   versionNo    Int          @default(1) @map("version_no")
   recordStatus RecordStatus @default(ACTIVE) @map("record_status")
   @@map("audit_log")
+  @@schema("nexus")
+}
+
+// Data Migration — bulk onboarding of an existing company's data into
+// Nexus. §35 Customer Merge and Duplicate Management's principles applied
+// here even though this isn't literally a merge: configurable matching
+// criteria (phone), explicit manual review of anything ambiguous rather
+// than silent auto-decisions, and a full audit trail. Every batch is
+// dry-run validated (zero writes) before an explicit, separate commit —
+// the point of no return is never a side effect of just uploading a file.
+enum ImportEntityType {
+  CUSTOMER
+  SAVINGS_ACCOUNT
+  LOAN
+
+  @@schema("nexus")
+}
+
+enum ImportMethod {
+  STANDARD
+  OPENING_BALANCE
+  FULL_HISTORY
+
+  @@schema("nexus")
+}
+
+enum ImportBatchStatus {
+  DRY_RUN
+  COMMITTED
+  FAILED
+
+  @@schema("nexus")
+}
+
+model ImportBatch {
+  id            String            @id(map: "pk_import_batch") @default(uuid())
+  institution   Institution       @relation(fields: [institutionId], references: [id], onDelete: Cascade, map: "fk_import_batch_institution")
+  institutionId String            @map("institution_id")
+  entityType    ImportEntityType  @map("entity_type")
+  method        ImportMethod      @default(STANDARD)
+  status        ImportBatchStatus @default(DRY_RUN)
+  fileName      String            @map("file_name")
+  totalRows     Int               @map("total_rows")
+  successRows   Int               @map("success_rows")
+  errorRows     Int               @map("error_rows")
+  createdById   String            @map("created_by_id")
+  committedAt   DateTime?         @map("committed_at")
+  createdAt     DateTime          @default(now()) @map("created_at")
+
+  customers Customer[]
+
+  @@map("import_batch")
   @@schema("nexus")
 }
