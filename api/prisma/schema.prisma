@@ -991,6 +991,10 @@ model Loan {
   approvedById  String?   @map("approved_by_id")
   disbursedAt   DateTime? @map("disbursed_at")
 
+  // Data Migration — same tagging pattern as Customer/SavingsAccount.
+  importBatch   ImportBatch? @relation(fields: [importBatchId], references: [id], onDelete: SetNull, map: "fk_loan_import_batch")
+  importBatchId String?      @map("import_batch_id")
+
   repayments     LoanRepayment[]
   installments   LoanInstallment[]
   accountHolders AccountHolder[]
@@ -1097,6 +1101,9 @@ enum SavingsTxnType {
   DEPOSIT
   WITHDRAWAL
   INTEREST
+  MIGRATION_OPENING_BALANCE // Data Migration — distinct from a real DEPOSIT so
+  // transaction history and reporting can always tell an imported starting
+  // point apart from actual account activity.
 
   @@schema("nexus")
 }
@@ -1130,6 +1137,10 @@ model SavingsAccount {
   promoExpiresAt    DateTime? @map("promo_expires_at")
 
   lastAccrualDate DateTime? @map("last_accrual_date")
+
+  // Data Migration — same tagging pattern as Customer, traceable to a batch.
+  importBatch   ImportBatch? @relation(fields: [importBatchId], references: [id], onDelete: SetNull, map: "fk_savings_account_import_batch")
+  importBatchId String?      @map("import_batch_id")
 
   transactions     SavingsTransaction[]
   accountHolders   AccountHolder[]
@@ -1513,7 +1524,9 @@ model ImportBatch {
   committedAt   DateTime?         @map("committed_at")
   createdAt     DateTime          @default(now()) @map("created_at")
 
-  customers Customer[]
+  customers       Customer[]
+  savingsAccounts SavingsAccount[]
+  loans           Loan[]
 
   @@map("import_batch")
   @@schema("nexus")

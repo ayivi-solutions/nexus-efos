@@ -83,6 +83,12 @@ export default function CustomerMigrationPage() {
   return (
     <AppShell active="Migration">
       <div className="p-5 dt:p-10 overflow-x-auto">
+        <div className="flex gap-2 mb-6">
+          <a href="/migration/customers" className="btn-text text-gold-600 font-semibold">Customers</a>
+          <a href="/migration/savings" className="btn-text text-text-muted">Savings</a>
+          <a href="/migration/loans" className="btn-text text-text-muted">Loans</a>
+        </div>
+
         <h1 className="font-display font-semibold text-2xl dt:text-3xl text-ink-900 mb-1">Customer Data Migration</h1>
         <p className="text-text-muted text-sm mb-6">Bulk-onboard an existing company's customers, next of kin, beneficiaries, and beneficial owners. Nothing is written until you explicitly commit.</p>
 

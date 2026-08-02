@@ -4,6 +4,8 @@ import * as XLSX from "xlsx";
 import { prisma } from "../lib/prisma";
 import { requireAuth, AuthedRequest } from "../middleware/auth";
 import { requirePermission } from "../middleware/rbac";
+import { generateAccountNumber } from "../lib/accountNumber";
+import { round2 } from "../lib/loanSchedule";
 
 // Data Migration — bulk onboarding of an existing company's data. §35
 // Customer Merge and Duplicate Management's principles applied even
@@ -427,6 +429,206 @@ migrationRouter.post("/customers/commit", upload.single("file"), async (req: Aut
   });
 
   res.status(201).json({ batch, successRows, errorRows: rowErrors.length, rowErrors, skipped });
+});
+
+// =======================================================================
+// SAVINGS ACCOUNT MIGRATION
+// =======================================================================
+
+const SAVINGS_ACCOUNT_STATUSES = ["ACTIVE", "DORMANT", "CLOSED"];
+
+function buildSavingsTemplate(): XLSX.WorkBook {
+  const wb = XLSX.utils.book_new();
+
+  const instructions = XLSX.utils.aoa_to_sheet([
+    ["Nexus EFOS — Savings Account Migration: Instructions"],
+    [""],
+    ["One row per savings account. The customer must already exist in Nexus — run the Customer migration first if you haven't yet."],
+    [""],
+    ["Field reference:"],
+    ["Customer Phone — required. Must match an existing customer's phone number exactly."],
+    ["Product Code — required. Must match an existing, active Savings product's code (see the Products page)."],
+    ["Account Number — optional. Leave blank to auto-generate; fill in only if you need to preserve an existing account number from your previous system."],
+    ["Opening Balance — required. The account's current balance in GHS, as of today. This is recorded as a real transaction, not just a number — so the account's history stays consistent from day one, same as every other account."],
+    ["Status — optional, defaults to ACTIVE. One of: " + SAVINGS_ACCOUNT_STATUSES.join(", ")],
+    [""],
+    ["IMPORTANT — before typing any phone numbers:"],
+    ["Excel treats a cell that looks like a number as a number by default, which silently deletes the leading 0 from a Ghana phone number as you type it (0244111222 becomes 244111222). Before entering data, select the Customer Phone column, right-click, choose Format Cells, and set it to Text. If the system detects this happened, it will tell you exactly which row and how to fix it."],
+  ]);
+  instructions["!cols"] = [{ wch: 100 }];
+  XLSX.utils.book_append_sheet(wb, instructions, "Instructions");
+
+  const headers = ["Customer Phone", "Product Code", "Account Number", "Opening Balance", "Status"];
+  const example = ["0244111222", "SAV-01", "", "1000", "ACTIVE"];
+  const sheet = XLSX.utils.aoa_to_sheet([headers, example]);
+  sheet["!cols"] = headers.map(() => ({ wch: 20 }));
+  XLSX.utils.book_append_sheet(wb, sheet, "Savings Accounts");
+
+  return wb;
+}
+
+migrationRouter.get("/savings/template", (_req, res) => {
+  const wb = buildSavingsTemplate();
+  const buffer = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
+  res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+  res.setHeader("Content-Disposition", "attachment; filename=nexus-savings-import-template.xlsx");
+  res.send(buffer);
+});
+
+interface SavingsRow {
+  rowNumber: number;
+  customerPhone: string;
+  productCode: string;
+  accountNumber: string;
+  openingBalance: string;
+  status: string;
+}
+
+function parseSavingsWorkbook(buffer: Buffer): SavingsRow[] {
+  const wb = XLSX.read(buffer, { type: "buffer" });
+  return sheetToRows(wb, "Savings Accounts")
+    .map((r, i) => ({
+      rowNumber: i + 2,
+      customerPhone: str(r[0]),
+      productCode: str(r[1]),
+      accountNumber: str(r[2]),
+      openingBalance: str(r[3]),
+      status: str(r[4]).toUpperCase() || "ACTIVE",
+    }))
+    .filter((r) => r.customerPhone || r.productCode);
+}
+
+async function validateSavingsRows(rows: SavingsRow[], institutionId: string) {
+  const results = [];
+  const seenAccountNumbers = new Set<string>();
+
+  for (const row of rows) {
+    const errors: string[] = [];
+    if (!row.customerPhone) errors.push("Customer Phone is required");
+    else {
+      const pe = phoneError(row.customerPhone);
+      if (pe) errors.push(`Customer Phone: ${pe}`);
+    }
+    if (!row.productCode) errors.push("Product Code is required");
+    if (!SAVINGS_ACCOUNT_STATUSES.includes(row.status)) errors.push(`Status must be one of: ${SAVINGS_ACCOUNT_STATUSES.join(", ")}`);
+    const balance = Number(row.openingBalance);
+    if (row.openingBalance === "" || isNaN(balance) || balance < 0) errors.push("Opening Balance must be a number ≥ 0");
+    if (row.accountNumber) {
+      if (seenAccountNumbers.has(row.accountNumber)) errors.push("Duplicate Account Number within this file");
+      seenAccountNumbers.add(row.accountNumber);
+    }
+
+    let customer = null;
+    let productVersion = null;
+    if (row.customerPhone && !phoneError(row.customerPhone)) {
+      customer = await prisma.customer.findFirst({ where: { institutionId, phone: row.customerPhone } });
+      if (!customer) errors.push(`No customer found with phone "${row.customerPhone}" — import customers first`);
+    }
+    if (row.productCode) {
+      const product = await prisma.product.findFirst({ where: { institutionId, code: row.productCode, type: "SAVINGS" }, include: { currentVersion: true } });
+      if (!product) errors.push(`No Savings product found with code "${row.productCode}"`);
+      else if (product.status !== "ACTIVE") errors.push(`Product "${row.productCode}" is not currently active`);
+      else productVersion = product.currentVersion;
+    }
+    if (row.accountNumber) {
+      const existingAcct = await prisma.savingsAccount.findFirst({ where: { accountNumber: row.accountNumber } });
+      if (existingAcct) errors.push(`Account Number "${row.accountNumber}" is already in use`);
+    }
+
+    results.push({
+      rowNumber: row.rowNumber, sheet: "Savings Accounts", data: row,
+      status: (errors.length ? "error" : "valid") as "error" | "valid", errors,
+      customerId: customer?.id, productVersionId: productVersion?.id,
+    });
+  }
+
+  return results;
+}
+
+migrationRouter.post("/savings/dry-run", upload.single("file"), async (req: AuthedRequest, res) => {
+  if (!req.file) return res.status(400).json({ error: "No file uploaded" });
+  let rows: SavingsRow[];
+  try {
+    rows = parseSavingsWorkbook(req.file.buffer);
+  } catch {
+    return res.status(400).json({ error: "Could not read this file — make sure it's a valid .xlsx exported from the template" });
+  }
+  if (rows.length === 0) return res.status(400).json({ error: "No data rows found in the Savings Accounts sheet" });
+
+  const results = await validateSavingsRows(rows, req.auth!.institutionId);
+  const summary = {
+    total: results.length,
+    valid: results.filter((r) => r.status === "valid").length,
+    error: results.filter((r) => r.status === "error").length,
+  };
+
+  await prisma.auditLog.create({
+    data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "migration.savings_dry_run", resource: "import_batch", metadata: { fileName: req.file.originalname, summary } },
+  });
+
+  res.json({ summary, results });
+});
+
+migrationRouter.post("/savings/commit", upload.single("file"), async (req: AuthedRequest, res) => {
+  if (!req.file) return res.status(400).json({ error: "No file uploaded" });
+
+  let rows: SavingsRow[];
+  try {
+    rows = parseSavingsWorkbook(req.file.buffer);
+  } catch {
+    return res.status(400).json({ error: "Could not read this file" });
+  }
+
+  const results = await validateSavingsRows(rows, req.auth!.institutionId);
+  const blockingErrors = results.filter((r) => r.status === "error");
+  if (blockingErrors.length > 0) {
+    return res.status(400).json({ error: "This file still has unresolved errors — fix them and re-run a dry-run before committing", errors: blockingErrors });
+  }
+
+  const batch = await prisma.importBatch.create({
+    data: {
+      institutionId: req.auth!.institutionId, entityType: "SAVINGS_ACCOUNT", method: "STANDARD", status: "DRY_RUN",
+      fileName: req.file.originalname, totalRows: results.length, successRows: 0, errorRows: 0, createdById: req.auth!.userId,
+    },
+  });
+
+  let successRows = 0;
+  const rowErrors: { rowNumber: number; sheet: string; error: string }[] = [];
+
+  for (const r of results) {
+    try {
+      const openingBalance = round2(Number(r.data.openingBalance));
+      const accountNumber = r.data.accountNumber || generateAccountNumber();
+
+      await prisma.$transaction(async (tx) => {
+        const account = await tx.savingsAccount.create({
+          data: {
+            institutionId: req.auth!.institutionId, customerId: r.customerId!, productVersionId: r.productVersionId!,
+            accountNumber, balance: openingBalance, ledgerBalance: openingBalance, status: r.data.status as any, importBatchId: batch.id,
+          },
+        });
+        if (openingBalance > 0) {
+          await tx.savingsTransaction.create({
+            data: { accountId: account.id, type: "MIGRATION_OPENING_BALANCE", amount: openingBalance, balanceAfter: openingBalance, recordedById: req.auth!.userId },
+          });
+        }
+      });
+      successRows++;
+    } catch (err: any) {
+      rowErrors.push({ rowNumber: r.rowNumber, sheet: "Savings Accounts", error: err.message || "Unknown error" });
+    }
+  }
+
+  await prisma.importBatch.update({
+    where: { id: batch.id },
+    data: { status: rowErrors.length === 0 ? "COMMITTED" : "FAILED", successRows, errorRows: rowErrors.length, committedAt: new Date() },
+  });
+
+  await prisma.auditLog.create({
+    data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "migration.savings_commit", resource: "import_batch", resourceId: batch.id, metadata: { successRows, errorRows: rowErrors.length } },
+  });
+
+  res.status(201).json({ batch, successRows, errorRows: rowErrors.length, rowErrors });
 });
 
 migrationRouter.get("/batches", async (req: AuthedRequest, res) => {

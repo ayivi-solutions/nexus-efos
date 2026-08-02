@@ -289,6 +289,18 @@ export const api = {
     return requestFormData("/migration/customers/commit", fd);
   },
   listImportBatches: () => request("/migration/batches"),
+
+  downloadSavingsImportTemplate: () => downloadFile("/migration/savings/template", "nexus-savings-import-template.xlsx"),
+  dryRunSavingsImport: (file: File) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    return requestFormData("/migration/savings/dry-run", fd);
+  },
+  commitSavingsImport: (file: File) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    return requestFormData("/migration/savings/commit", fd);
+  },
 };
 
 // NOTE: sessionStorage is used here (client-only, in-memory-per-tab) rather

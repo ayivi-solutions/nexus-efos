@@ -3,6 +3,7 @@ import { z } from "zod";
 import { prisma } from "../lib/prisma";
 import { requireAuth, AuthedRequest } from "../middleware/auth";
 import { requirePermission } from "../middleware/rbac";
+import { generateAccountNumber } from "../lib/accountNumber";
 
 export const savingsRouter = Router();
 savingsRouter.use(requireAuth);
@@ -104,10 +105,6 @@ savingsRouter.post("/:id/reactivate", requirePermission("savings.approve"), asyn
   });
   res.json({ ok: true });
 });
-
-function generateAccountNumber() {
-  return "SA" + Date.now().toString().slice(-10);
-}
 
 const openSchema = z.object({ customerId: z.string(), productVersionId: z.string(), branchId: z.string().optional() });
 

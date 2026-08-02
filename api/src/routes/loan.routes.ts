@@ -3,62 +3,10 @@ import { z } from "zod";
 import { prisma } from "../lib/prisma";
 import { requireAuth, AuthedRequest } from "../middleware/auth";
 import { requirePermission } from "../middleware/rbac";
+import { round2, generateSchedule, allocateRepayment } from "../lib/loanSchedule";
 
 export const loanRouter = Router();
 loanRouter.use(requireAuth);
-
-function round2(n: number) {
-  return Math.round(n * 100) / 100;
-}
-
-type ScheduleRow = { installmentNumber: number; dueDate: Date; principalDue: number; interestDue: number };
-
-function generateSchedule(
-  principal: number,
-  annualRatePct: number,
-  termMonths: number,
-  method: string,
-  startDate: Date
-): ScheduleRow[] {
-  const rows: ScheduleRow[] = [];
-
-  if (method === "REDUCING_BALANCE") {
-    const monthlyRate = annualRatePct / 100 / 12;
-    let balance = principal;
-    const payment =
-      monthlyRate === 0
-        ? principal / termMonths
-        : (principal * monthlyRate * Math.pow(1 + monthlyRate, termMonths)) / (Math.pow(1 + monthlyRate, termMonths) - 1);
-
-    for (let i = 1; i <= termMonths; i++) {
-      const interestDue = monthlyRate === 0 ? 0 : balance * monthlyRate;
-      let principalDue = payment - interestDue;
-      if (i === termMonths) principalDue = balance;
-      balance -= principalDue;
-
-      const dueDate = new Date(startDate);
-      dueDate.setMonth(dueDate.getMonth() + i);
-      rows.push({ installmentNumber: i, dueDate, principalDue: round2(principalDue), interestDue: round2(interestDue) });
-    }
-  } else {
-    const totalInterest = principal * (annualRatePct / 100) * (termMonths / 12);
-    const principalPerInstallment = principal / termMonths;
-    const interestPerInstallment = totalInterest / termMonths;
-
-    for (let i = 1; i <= termMonths; i++) {
-      const dueDate = new Date(startDate);
-      dueDate.setMonth(dueDate.getMonth() + i);
-      rows.push({
-        installmentNumber: i,
-        dueDate,
-        principalDue: round2(principalPerInstallment),
-        interestDue: round2(interestPerInstallment),
-      });
-    }
-  }
-
-  return rows;
-}
 
 loanRouter.get("/", requirePermission("reports.view"), async (req: AuthedRequest, res) => {
   const loans = await prisma.loan.findMany({
@@ -310,32 +258,20 @@ loanRouter.post("/:id/repayments", requirePermission("collections.record"), asyn
     data: { loanId: loan.id, amount: parsed.data.amount, recordedById: req.auth!.userId },
   });
 
-  let remaining = parsed.data.amount;
-  for (const inst of loan.installments) {
-    if (remaining <= 0) break;
-    const interestOutstanding = Number(inst.interestDue) - Number(inst.interestPaid);
-    const principalOutstanding = Number(inst.principalDue) - Number(inst.principalPaid);
-    if (interestOutstanding <= 0.005 && principalOutstanding <= 0.005) continue;
-
-    let interestPaidNow = 0;
-    let principalPaidNow = 0;
-    if (interestOutstanding > 0.005) {
-      interestPaidNow = Math.min(remaining, interestOutstanding);
-      remaining -= interestPaidNow;
-    }
-    if (remaining > 0 && principalOutstanding > 0.005) {
-      principalPaidNow = Math.min(remaining, principalOutstanding);
-      remaining -= principalPaidNow;
-    }
-    if (interestPaidNow > 0 || principalPaidNow > 0) {
-      const newInterestPaid = round2(Number(inst.interestPaid) + interestPaidNow);
-      const newPrincipalPaid = round2(Number(inst.principalPaid) + principalPaidNow);
-      const fullyPaid = newInterestPaid >= Number(inst.interestDue) - 0.01 && newPrincipalPaid >= Number(inst.principalDue) - 0.01;
-      await prisma.loanInstallment.update({
-        where: { id: inst.id },
-        data: { interestPaid: newInterestPaid, principalPaid: newPrincipalPaid, status: fullyPaid ? "PAID" : "PARTIALLY_PAID" },
-      });
-    }
+  const installmentStates = loan.installments.map((inst) => ({
+    id: inst.id,
+    interestDue: Number(inst.interestDue),
+    principalDue: Number(inst.principalDue),
+    interestPaid: Number(inst.interestPaid),
+    principalPaid: Number(inst.principalPaid),
+    status: inst.status,
+  }));
+  const updates = allocateRepayment(installmentStates, parsed.data.amount);
+  for (const u of updates) {
+    await prisma.loanInstallment.update({
+      where: { id: u.id },
+      data: { interestPaid: u.newInterestPaid, principalPaid: u.newPrincipalPaid, status: u.newStatus },
+    });
   }
 
   const allInstallments = await prisma.loanInstallment.findMany({ where: { loanId: loan.id } });
