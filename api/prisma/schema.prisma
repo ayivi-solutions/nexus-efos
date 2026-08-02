@@ -1515,6 +1515,7 @@ enum ImportBatchStatus {
   DRY_RUN
   COMMITTED
   FAILED
+  REVERSED
 
   @@schema("nexus")
 }
@@ -1579,8 +1580,10 @@ enum BusinessRuleStatus {
 enum BusinessRuleTriggerPoint {
   LOAN_INITIATION
   LOAN_APPROVAL
+  LOAN_DISBURSEMENT
   SAVINGS_ACCOUNT_OPENING
   CUSTOMER_CREATION
+  EMPLOYEE_ONBOARDING
 
   @@schema("nexus")
 }

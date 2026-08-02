@@ -115,11 +115,18 @@ export default function RolesPage() {
     setBusyId(id);
     setError(null);
     try {
-      await api.updateEmployee(id, { ...editEmployeeForm, branchId: editEmployeeForm.branchId || null });
+      const current = employees.find((e) => e.id === id);
+      await api.updateEmployee(id, { ...editEmployeeForm, branchId: editEmployeeForm.branchId || null, expectedVersion: current?.versionNo });
       setEditingEmployeeId(null);
       load();
     } catch (err: any) {
-      setError(err.message || "Could not update employee");
+      if (err.message?.includes("changed by someone else")) {
+        setError("Someone else updated this employee while you were editing. The list has been refreshed — please redo your changes.");
+        setEditingEmployeeId(null);
+        load();
+      } else {
+        setError(err.message || "Could not update employee");
+      }
     } finally {
       setBusyId(null);
     }
@@ -187,11 +194,18 @@ export default function RolesPage() {
     setBusyId(roleId);
     setError(null);
     try {
-      await api.updateRole(roleId, { permissionCodes: editRolePermCodes });
+      const current = roles.find((r) => r.id === roleId);
+      await api.updateRole(roleId, { permissionCodes: editRolePermCodes, expectedVersion: current?.versionNo });
       setEditingRoleId(null);
       load();
     } catch (err: any) {
-      setError(err.message || "Could not update role");
+      if (err.message?.includes("changed by someone else")) {
+        setError("Someone else updated this role while you were editing. The list has been refreshed — please redo your changes.");
+        setEditingRoleId(null);
+        load();
+      } else {
+        setError(err.message || "Could not update role");
+      }
     } finally {
       setBusyId(null);
     }

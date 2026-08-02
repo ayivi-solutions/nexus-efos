@@ -244,6 +244,18 @@ loanRouter.post("/:id/disburse", requirePermission("loans.approve"), async (req:
     return res.status(400).json({ error: `Disbursement blocked: "${pendingRuleApproval.reason}" is still pending approval` });
   }
 
+  // doc §41 — a real, separate trigger point from Loan Approval: a rule
+  // might approve fine but still want a last check before money actually
+  // moves (e.g. a fraud-pattern check). Checked before applying the
+  // disbursement, not after.
+  const disburseCustomer = await prisma.customer.findFirst({ where: { id: loan.customerId } });
+  const disburseContext = { principal: Number(loan.principal), termMonths: loan.termMonths, interestRate: Number(loan.interestRate), customer: disburseCustomer };
+  const disburseMatched = await matchRules(prisma, req.auth!.institutionId, "LOAN_DISBURSEMENT", disburseContext);
+  const disburseBlockingRule = disburseMatched.find((m) => m.hasReject);
+  if (disburseBlockingRule) {
+    return res.status(400).json({ error: `Disbursement blocked by business rule ${disburseBlockingRule.rule.ruleCode}: ${disburseBlockingRule.rule.name}` });
+  }
+
   const disbursedAt = new Date();
   const schedule = generateSchedule(
     Number(loan.principal),
@@ -279,7 +291,9 @@ loanRouter.post("/:id/disburse", requirePermission("loans.approve"), async (req:
     },
   });
 
-  res.json({ loan: updated });
+  const disburseRuleWarnings = await executeMatchedRules(prisma, req.auth!.institutionId, req.auth!.userId, "Loan", loan.id, disburseMatched);
+
+  res.json({ loan: updated, ruleWarnings: disburseRuleWarnings });
 });
 
 const repaymentSchema = z.object({ amount: z.number().positive() });

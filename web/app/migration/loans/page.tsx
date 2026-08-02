@@ -90,6 +90,7 @@ export default function LoanMigrationPage() {
           <a href="/migration/customers" className="btn-text text-text-muted">Customers</a>
           <a href="/migration/savings" className="btn-text text-text-muted">Savings</a>
           <a href="/migration/loans" className="btn-text text-gold-600 font-semibold">Loans</a>
+          <a href="/migration/history" className="btn-text text-text-muted">History</a>
         </div>
 
         <h1 className="font-display font-semibold text-2xl dt:text-3xl text-ink-900 mb-1">Loan Migration</h1>

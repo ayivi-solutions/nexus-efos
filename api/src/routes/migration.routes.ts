@@ -1047,3 +1047,50 @@ migrationRouter.get("/batches", async (req: AuthedRequest, res) => {
   const batches = await prisma.importBatch.findMany({ where: { institutionId: req.auth!.institutionId }, orderBy: { createdAt: "desc" } });
   res.json({ batches });
 });
+
+// Undo — a genuine, direct soft-delete of every record tagged with this
+// batch, deliberately NOT routed through the normal close/archive business
+// rules (e.g. "balance must be zero before closing"). Those guards exist
+// to stop a live customer from closing an account with money in it; they
+// would actively BLOCK undo in exactly the case it's most needed — a bad
+// import that brought in real, non-zero balances that were simply wrong.
+// This is an explicit admin action reversing a demonstrably bad batch, not
+// a normal business transition, so it bypasses those guards on purpose.
+// A soft-delete, not a hard delete — the data still exists (deletedAt set,
+// same as every other soft-delete in this app) and is fully auditable,
+// but disappears from active use immediately. There is no "undo the undo"
+// from this screen.
+migrationRouter.post("/batches/:id/undo", async (req: AuthedRequest, res) => {
+  const batch = await prisma.importBatch.findFirst({ where: { id: req.params.id, institutionId: req.auth!.institutionId } });
+  if (!batch) return res.status(404).json({ error: "Batch not found" });
+  if (batch.status === "REVERSED") return res.status(400).json({ error: "This batch has already been reversed" });
+  if (batch.status === "DRY_RUN") return res.status(400).json({ error: "This batch was never committed — there's nothing to undo" });
+
+  let affectedCount = 0;
+  const now = new Date();
+
+  if (batch.entityType === "CUSTOMER") {
+    const result = await prisma.customer.updateMany({ where: { importBatchId: batch.id, deletedAt: null }, data: { deletedAt: now, archived: true } });
+    affectedCount = result.count;
+  } else if (batch.entityType === "SAVINGS_ACCOUNT") {
+    const result = await prisma.savingsAccount.updateMany({ where: { importBatchId: batch.id, deletedAt: null }, data: { deletedAt: now } });
+    affectedCount = result.count;
+  } else if (batch.entityType === "LOAN") {
+    const loans = await prisma.loan.findMany({ where: { importBatchId: batch.id, deletedAt: null }, select: { id: true } });
+    const loanIds = loans.map((l) => l.id);
+    if (loanIds.length > 0) {
+      await prisma.loanInstallment.updateMany({ where: { loanId: { in: loanIds } }, data: { deletedAt: now } });
+      await prisma.loanRepayment.updateMany({ where: { loanId: { in: loanIds } }, data: { deletedAt: now } });
+      const result = await prisma.loan.updateMany({ where: { id: { in: loanIds } }, data: { deletedAt: now, status: "REJECTED" } });
+      affectedCount = result.count;
+    }
+  }
+
+  await prisma.importBatch.update({ where: { id: batch.id }, data: { status: "REVERSED" } });
+
+  await prisma.auditLog.create({
+    data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "migration.batch_undo", resource: "import_batch", resourceId: batch.id, metadata: { entityType: batch.entityType, affectedCount } },
+  });
+
+  res.json({ ok: true, affectedCount });
+});

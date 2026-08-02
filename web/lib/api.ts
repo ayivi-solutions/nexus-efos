@@ -127,7 +127,7 @@ export const api = {
   assignRole: (data: { userId: string; roleId: string; branchId?: string; expiresAt?: string; isDelegated?: boolean }) =>
     request("/roles/assign", { method: "POST", body: JSON.stringify(data) }),
   revokeRole: (userRoleId: string) => request(`/roles/assign/${userRoleId}`, { method: "DELETE" }),
-  updateRole: (id: string, data: { description?: string; permissionCodes?: string[] }) =>
+  updateRole: (id: string, data: { description?: string; permissionCodes?: string[]; expectedVersion?: number }) =>
     request(`/roles/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
   createRole: (data: { name: string; description?: string; category: string; permissionCodes?: string[] }) =>
     request("/roles", { method: "POST", body: JSON.stringify(data) }),
@@ -295,6 +295,7 @@ export const api = {
     return requestFormData("/migration/customers/commit", fd);
   },
   listImportBatches: () => request("/migration/batches"),
+  undoImportBatch: (id: string) => request(`/migration/batches/${id}/undo`, { method: "POST" }),
 
   downloadSavingsImportTemplate: () => downloadFile("/migration/savings/template", "nexus-savings-import-template.xlsx"),
   dryRunSavingsImport: (file: File) => {

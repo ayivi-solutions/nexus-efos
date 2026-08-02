@@ -5,6 +5,7 @@ import { prisma } from "../lib/prisma";
 import { requireAuth, AuthedRequest } from "../middleware/auth";
 import { requirePermission } from "../middleware/rbac";
 import { checkVersion, VersionConflictError } from "../lib/optimisticLock";
+import { matchRules, executeMatchedRules } from "../lib/businessRules";
 
 export const employeeRouter = Router();
 employeeRouter.use(requireAuth);
@@ -48,6 +49,15 @@ employeeRouter.post("/", requirePermission("users.administer"), async (req: Auth
   const parsed = createSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
+  // doc §41 — checked BEFORE the employee is created: a "check first"
+  // trigger point, so REJECT blocks onboarding entirely rather than
+  // creating a record and rejecting it after the fact.
+  const matched = await matchRules(prisma, req.auth!.institutionId, "EMPLOYEE_ONBOARDING", parsed.data);
+  const blockingRule = matched.find((m) => m.hasReject);
+  if (blockingRule) {
+    return res.status(400).json({ error: `Employee onboarding blocked by business rule ${blockingRule.rule.ruleCode}: ${blockingRule.rule.name}` });
+  }
+
   const { employmentDate, confirmationDate, ...rest } = parsed.data;
   const employee = await prisma.employee.create({
     data: {
@@ -60,7 +70,8 @@ employeeRouter.post("/", requirePermission("users.administer"), async (req: Auth
   await prisma.auditLog.create({
     data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "employee.create", resource: "employee", resourceId: employee.id },
   });
-  res.status(201).json({ employee });
+  const ruleWarnings = await executeMatchedRules(prisma, req.auth!.institutionId, req.auth!.userId, "Employee", employee.id, matched);
+  res.status(201).json({ employee, ruleWarnings });
 });
 
 // CRUAA — Update

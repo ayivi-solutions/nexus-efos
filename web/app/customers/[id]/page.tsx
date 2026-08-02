@@ -185,11 +185,20 @@ export default function CustomerDetailPage() {
         riskRating: editForm.riskRating || null,
         preferredChannel: editForm.preferredChannel || null,
         preferredLanguage: editForm.preferredLanguage || null,
+        expectedVersion: customer.versionNo,
       });
       if (res?.pendingApproval) toast.info("Critical field change submitted for approval — a different authorised user must approve it.");
       setEditing(false);
       load();
-    } catch (err: any) { setError(err.message || "Could not update customer"); }
+    } catch (err: any) {
+      if (err.message?.includes("changed by someone else")) {
+        toast.error("Someone else updated this customer while you were editing. Reloading the latest version — please redo your changes.");
+        setEditing(false);
+        load();
+      } else {
+        setError(err.message || "Could not update customer");
+      }
+    }
     finally { setBusy(false); }
   }
 
