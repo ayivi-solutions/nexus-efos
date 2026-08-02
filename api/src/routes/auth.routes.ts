@@ -31,12 +31,25 @@ const registerSchema = z.object({
   adminFullName: z.string().min(2),
   adminEmail: z.string().email(),
   adminPassword: z.string().min(8),
+  setupKey: z.string(),
 });
 
+// Institution registration was fully public — anyone who found the
+// endpoint could create a new institution. Gated behind a shared secret,
+// held only as an env var (SUPERUSER_SETUP_KEY, set in Railway) — never
+// in source control, rotatable at any time with no code change or
+// redeploy. The real enforcement is here, server-side; the frontend's own
+// gate (redirecting to /login without a ?key= present) is UX only and
+// deliberately not trusted as the actual security boundary.
 authRouter.post("/register-institution", async (req, res) => {
   const parsed = registerSchema.safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json({ error: parsed.error.flatten() });
+  }
+
+  const expectedKey = process.env.SUPERUSER_SETUP_KEY;
+  if (!expectedKey || parsed.data.setupKey !== expectedKey) {
+    return res.status(403).json({ error: "Invalid setup key" });
   }
   const { legalName, tradingName, type, adminFullName, adminEmail, adminPassword } = parsed.data;
 

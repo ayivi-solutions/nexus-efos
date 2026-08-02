@@ -81,6 +81,7 @@ export const api = {
     adminFullName: string;
     adminEmail: string;
     adminPassword: string;
+    setupKey: string;
   }) => request("/auth/register-institution", { method: "POST", body: JSON.stringify(data) }),
 
   login: (data: { email: string; password: string }) =>

@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { Suspense, useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { api, persistSession } from "@/lib/api";
 import { useErrorToast } from "@/components/Toast";
 
@@ -16,8 +16,17 @@ const INSTITUTION_TYPES: { value: string; label: string }[] = [
   { value: "DIGITAL_LENDING_INSTITUTION", label: "Digital Lending Institution" },
 ];
 
-export default function OnboardingPage() {
+// Institution registration used to be reachable by anyone who found this
+// URL. Now gated behind a shared setup key — this client-side check is
+// purely UX (hides the form from casual visitors who don't have the key);
+// the real enforcement is server-side in POST /auth/register-institution,
+// which rejects regardless of what this page does. Visit as
+// /onboarding?key=<the actual key> to reach the form at all.
+function OnboardingForm() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const setupKey = searchParams.get("key");
+
   const [form, setForm] = useState({
     legalName: "",
     tradingName: "",
@@ -30,6 +39,12 @@ export default function OnboardingPage() {
   useErrorToast(error);
   const [loading, setLoading] = useState(false);
 
+  useEffect(() => {
+    if (!setupKey) {
+      router.replace("/login");
+    }
+  }, [setupKey, router]);
+
   function update<K extends keyof typeof form>(key: K, value: string) {
     setForm((f) => ({ ...f, [key]: value }));
   }
@@ -39,7 +54,7 @@ export default function OnboardingPage() {
     setError(null);
     setLoading(true);
     try {
-      await api.registerInstitution(form);
+      await api.registerInstitution({ ...form, setupKey: setupKey! });
       const session = await api.login({ email: form.adminEmail, password: form.adminPassword });
       persistSession(session.accessToken, session.refreshToken);
       router.push("/onboarding/details");
@@ -49,6 +64,8 @@ export default function OnboardingPage() {
       setLoading(false);
     }
   }
+
+  if (!setupKey) return null;
 
   return (
     <main className="min-h-screen bg-paper-0 flex items-center justify-center px-6 py-12">
@@ -124,12 +141,19 @@ export default function OnboardingPage() {
           />
         </Field>
 
-        
         <button type="submit" disabled={loading} className="btn-dark w-full py-3">
           {loading ? "Creating institution…" : "Create institution & continue"}
         </button>
       </form>
     </main>
+  );
+}
+
+export default function OnboardingPage() {
+  return (
+    <Suspense fallback={null}>
+      <OnboardingForm />
+    </Suspense>
   );
 }
 
