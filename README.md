@@ -1,68 +1,143 @@
-# Nexus EFOS — Core Platform Prototype
+# Nexus EFOS — Enterprise Financial Operating System
 
-First working slice of Nexus OS (Enterprise Operating System for Inclusive
-Finance), built from the 99-section concept doc. Scope for this pass: Layer 1
-of the ecosystem (§21) — Enterprise Identity, Security — implemented as
-**auth + RBAC + institution onboarding**.
+A core banking / MFI operations platform for Ghana's informal and semi-formal
+finance sector, built from the 99-section Nexus OS concept document and its
+companion specifications (EFS, Technical Spec, PDDS, EUXS). Handles the full
+customer-through-loan-and-savings lifecycle for microfinance institutions,
+susu operators, credit unions, and rural/community banks — with RBAC, an
+approval workflow, a configurable business-rules engine, and a bulk data
+migration path for onboarding companies that already have customers.
+
+This is a working prototype under active development, not yet piloted with
+real customer data.
 
 ## What's built
 
-**API** (`/api` — Node/Express/TypeScript/Prisma/PostgreSQL)
-- `POST /auth/register-institution` — institution onboarding step 1. Creates
-  the institution, a Head Office branch, seeds the institution's role set
-  from the doc's §38.7 core role templates, grants permissions, and creates
-  the first user as Chief Executive Officer.
-- `POST /auth/login`, `POST /auth/refresh`, `POST /auth/logout` — JWT access
-  tokens (15 min) + opaque refresh tokens (30 days, hashed at rest).
-- `PATCH/POST /institutions/onboarding/*` — steps 2–5 (details, branches,
-  staff invites, go-live).
-- `GET /roles`, `POST /roles/assign` — role assignment with optional branch
-  scope and expiry, implementing doc §38.12 Temporary Delegation.
-- RBAC middleware (`requirePermission`) enforces least-privilege per doc §39:
-  checks a user's *active* role assignments only (expired delegations are
-  excluded automatically).
+**Identity, Access & Institution Setup**
+- Institution registration, gated behind a shared setup key (env var, not
+  source-controlled) — the registration screen itself is invisible without
+  it. Full 5-step onboarding: institution details, Head Office branch,
+  staff invites, go-live.
+- JWT access tokens (15 min) + refresh token rotation, silent refresh on
+  expiry, real invite-token flow (7-day expiry) for new staff.
+- RBAC: 8 system role templates (CEO, Branch Manager, Loan Officer, Credit
+  Analyst, Credit Manager, Field Collector, Compliance Officer, System
+  Administrator), 20+ permissions, branch-scoped and time-bound role
+  assignments with delegation support.
+- Every permission/role added to the platform automatically syncs to every
+  existing institution on server boot — no manual re-seeding, no
+  re-registering an institution to pick up a platform update.
+- Department/Position as real, normalized lookup tables (not free text).
 
-**Data model** (`api/prisma/schema.prisma`) — Institution, Branch, User,
-Role, Permission, RolePermission, UserRole (with branch scope + delegation +
-expiry), RefreshToken, AuditLog. Every enum and permission category is
-pulled directly from doc §14.3 (institution types), §38 (roles) and §39
-(permission categories/actions) — not invented generically.
+**Customers**
+- Full lifecycle: Registered → KYC → Active → Dormant/Restricted/Suspended
+  → Closed/Archived, with a reconciled 11-value status model.
+- Next of Kin, Beneficiaries (allocation validated to never exceed 100%),
+  Beneficial Owners, Joint Account Holders (6 roles, via Approval Workflow).
+- AML/watchlist screening — a match hard-blocks the customer to BLACKLISTED
+  and opens a compliance adjudication request, not a soft flag.
+- PEP classification and CDD level (auto-derived from PEP status + risk
+  rating, not independently settable).
+- Live-computed KYC document checklist, checked against actual uploaded
+  documents per customer segment — not a stored flag that can drift.
+- Customer number (auto-generated), address, and mandatory branch
+  assignment — added after auditing the EFS's Customer Registration
+  requirements found these three genuinely missing.
+- Document upload (Supabase Storage) with replace/version history.
 
-**Web** (`/web` — Next.js/TypeScript/Tailwind)
-- `/` — landing
-- `/onboarding` — institution + admin registration form
-- `/login`
-- `/dashboard` — shell with sidebar nav, institution stats; palette is the
-  concept doc's own ink/gold tokens (`tailwind.config.ts`), not the standard
-  Ayivi Navy/Ivory/Gold system, per your instruction.
+**Loans**
+- Flat and Reducing Balance amortization, generated from real product
+  terms.
+- Full initiation → approval → disbursement → repayment lifecycle, with
+  segregation of duties enforced (can't approve what you initiated).
+- Repayment allocation: oldest installment first, interest before
+  principal — the same rule used everywhere it matters, including
+  historical repayment replay during migration.
+
+**Savings**
+- Interest Management: 3 calculation methods (Daily Balance, Average Daily
+  Balance, Minimum Monthly Balance), 4 rate types (Fixed, Tiered, Variable,
+  Promotional), real Accrual/Posting/Suspension/Recalculation/Reversal
+  workflow, not a live-only number.
+- Deposit/withdraw with a full transaction ledger.
+
+**Products**
+- Versioned Product/ProductVersion with a real approval-gated activation
+  flow — a product's own status honestly reflects an activation request in
+  flight (Draft → Pending Approval → Active → Withdrawn → Archived).
+- Interest rate tiers, promotional rate windows.
+
+**Compliance & Audit**
+- Watchlist management, AML adjudication via the Approval Workflow.
+- Audit log: an entry on every mutating action across every module,
+  search/filter, CSV export, and genuinely immutable at the database level
+  (a Postgres trigger blocks any UPDATE/DELETE, not just "no route exposes
+  it").
+
+**Business Rules Engine**
+- Configurable conditions (field/operator/value, AND/OR logic) and actions
+  (Flag, Require Additional Approval, Reject), evaluated at 6 real trigger
+  points: Loan Initiation, Loan Approval, Loan Disbursement, Savings
+  Account Opening, Customer Creation, Employee Onboarding.
+- Rule activation goes through the same Approval Workflow as everything
+  else — a rule can't take effect without a different authorised user
+  approving it than whoever wrote it.
+
+**Data Migration**
+- Bulk-onboard an existing company's Customers, Savings Accounts, and
+  Loans via downloadable Excel templates — for institutions that already
+  have customers, not just greenfield ones.
+- Two Loan import methods: Opening Balance (clean start, remaining balance
+  split across remaining installments) and Full History (real original
+  schedule + every historical repayment replayed through the same
+  allocation logic real-time repayments use).
+- Dry-run validation with zero writes before an explicit, separate commit.
+  Every imported record traceable to a batch, with a genuine undo action.
+
+**Reporting**
+- Loan, Savings, and Customer reports with branch breakdowns, date
+  filtering, CSV export, and a KPI dashboard.
+
+**Accessibility**
+- WCAG AA color contrast (verified programmatically, not eyeballed),
+  screen-reader-announced notifications, keyboard focus indicators,
+  skip-to-content link, labeled navigation landmarks.
+
+## Tech stack
+
+- **API:** Node.js, Express, TypeScript, Prisma ORM, PostgreSQL (Supabase)
+- **Web:** Next.js 14, TypeScript, Tailwind CSS
+- **Storage:** Supabase Storage (customer documents)
+- **Hosting:** Railway (API + Web), Cloudflare
+- **Deployment:** GitHub → Railway CI/CD, auto-deploy on push to `develop`
 
 ## Running it
 
-This is source code, not a deployed app — you run it on your own machine (or
-a server) with Node.js installed. Two processes, run in two terminal tabs.
-
-**0. Prerequisites:** Node.js 18+, and a Postgres database. Easiest option is
-your existing `ayivi-dev` Supabase project — grab its connection string from
-Supabase → Project Settings → Database → Connection string (URI).
+**Prerequisites:** Node.js 18+, a Postgres database (the project's own
+Supabase instance, or your own).
 
 **1. API — terminal 1:**
 ```bash
 cd api
 cp .env.example .env
 ```
-Open `.env` and set `DATABASE_URL` to your Postgres connection string,
-keeping `?schema=nexus` on the end (the project uses a dedicated schema so
-it doesn't collide with your other Ayivi products in the same database).
-Then:
+Set `DATABASE_URL` in `.env` to your Postgres connection string, keeping
+`?schema=nexus` on the end. Also set `SUPERUSER_SETUP_KEY` — a value only
+you know, required to register a new institution (this gate went in after
+institution registration was found to be publicly reachable with no
+restriction at all).
 ```bash
 npm install
 npx prisma generate
-npx prisma migrate dev --name init
+npx prisma migrate dev
 npm run seed
 npm run dev
 ```
-`npm run dev` starts the API at `http://localhost:4100` and keeps running —
-leave this terminal open.
+`npm run dev` starts the API at `http://localhost:4100`, under `/v1` — the
+frontend already knows this, no separate configuration needed. Every
+permission/role sync also runs automatically on this boot, so `npm run
+seed` is a convenience for syncing on demand, not a required manual step
+after every change.
 
 **2. Web — terminal 2:**
 ```bash
@@ -70,43 +145,60 @@ cd web
 npm install
 npm run dev
 ```
-Starts the frontend at `http://localhost:3100` — also keeps running.
+Starts the frontend at `http://localhost:3100`.
 
-**3. Try it:** open `http://localhost:3100`, click "Register an Institution,"
-fill in the form (pick any institution type), submit. You'll be logged in
-and land on the dashboard showing your institution, with yourself as Chief
-Executive Officer and the other six roles (Branch Manager, Loan Officer,
-Credit Analyst, Field Collector, Compliance Officer, System Administrator)
-already seeded and ready to assign to staff via the `/roles/assign` API.
+**3. Try it:** visit
+`http://localhost:3100/onboarding?key=<your SUPERUSER_SETUP_KEY>` — the
+registration screen is invisible without the key in the URL, and the
+backend rejects the request regardless of what the frontend shows if the
+key doesn't match. Fill in the form, submit, and you'll land on the
+dashboard as the institution's Chief Executive Officer, with the other 7
+system roles already seeded and ready to assign.
 
 **If something breaks:**
-- `prisma migrate dev` fails to connect → double check the connection string
-  and that your IP is allowed through Supabase's connection pooling settings.
-- Web app shows a fetch/network error → the API isn't running, or it's on a
-  different port than `NEXT_PUBLIC_API_URL` expects (default assumes 4100).
-- `npx prisma generate` couldn't run inside the sandbox this was built in
-  (no network access to `binaries.prisma.sh` there) — it wasn't tested
-  end-to-end against a live database. It should work normally on your
-  machine; if it doesn't, that's the first place to look. Everything else
-  (API TypeScript, full Next.js production build) compiled clean.
+- `prisma migrate dev` fails to connect → check the connection string and
+  Supabase's connection pooling / IP allowlist settings.
+- Registration form redirects straight to `/login` → you're missing
+  `?key=...` in the URL, or the key doesn't match `SUPERUSER_SETUP_KEY`.
+- Web app shows a fetch/network error → the API isn't running, or
+  `NEXT_PUBLIC_API_URL` doesn't match where it's actually listening.
 
-## Not yet built (next slices)
+## Not yet built
 
-- Onboarding steps 2–5 in the UI (API routes exist)
-- Roles & Permissions UI (assign/revoke, view audit trail)
-- Enterprise Services layer (§21 Layer 2): Customer Management, Savings,
-  Loans, Collections
-- MFA (doc §39.10 privileged access controls)
-- Nexus multi-schema wiring into the shared `ayivi-dev` Supabase project once
-  you confirm the `nexus` schema name
+- Optimistic-locking conflict rejection has a fully working backend
+  (Customer/Employee/Role reject a stale update with a 409), wired into
+  those same three edit forms on the frontend.
+- Notification multi-channel (SMS/Email/WhatsApp) — in-app only today;
+  needs a provider decision (Twilio, SendGrid/SES, WhatsApp Business API)
+  before the integration itself can be built.
+- MFA / enhanced security controls — explicitly parked pending a dedicated
+  Enterprise Security Specification.
+- Collections, Share Management, Fixed Deposits, Treasury, General Ledger,
+  Payments modules.
+- Scheduled/automated interest posting — currently staff-triggered; real
+  job-scheduling infrastructure doesn't exist yet.
+- A systematic, section-by-section audit of the full EFS (322 sections)
+  against what's actually built. One section (Customer Registration) got
+  this treatment after a real gap surfaced it and found 3 missing
+  requirements; the rest of the document hasn't had the same check yet.
 
 ## Design decisions worth flagging
 
-- Institution-scoped roles are copied from system templates at registration
-  rather than referencing a shared global role — this lets each institution
-  customize roles later (doc §38.13 Role Lifecycle Management) without
-  affecting others.
-- Refresh tokens are stored as SHA-256 hashes, never plaintext (doc §39
-  defence-in-depth principle).
-- Frontend has no "AI" language anywhere — consistent with the Ayivi
-  invisibility rule, and there's no AI surface in this slice anyway.
+- Institution registration is gated behind a shared setup key held only as
+  an environment variable, checked server-side — not a hardcoded email
+  allowlist (which would need a code deploy to change) or a permanent
+  on/off toggle (which would either block legitimate use or leave the door
+  open indefinitely).
+- Every table carries PDDS-mandated audit columns (`created_by`,
+  `updated_by`, `version_no`, soft-delete via `deleted_at`), populated
+  automatically by a Prisma middleware reading the logged-in user from
+  request-scoped storage — no route handler sets these manually.
+- Refresh tokens are stored as SHA-256 hashes, never plaintext.
+- Loan amortization and repayment-allocation logic live in one shared
+  library, used by both real-time repayments and Data Migration's
+  historical-repayment replay — not two implementations that could drift
+  apart.
+- Data Migration's "undo" is a genuine, direct removal from active use,
+  deliberately bypassing the normal close/archive business rules — those
+  exist to stop a live customer closing an account with money in it, and
+  would block undoing exactly the imports most likely to need it.
