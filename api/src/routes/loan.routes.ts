@@ -4,6 +4,7 @@ import { prisma } from "../lib/prisma";
 import { requireAuth, AuthedRequest } from "../middleware/auth";
 import { requirePermission } from "../middleware/rbac";
 import { round2, generateSchedule, allocateRepayment } from "../lib/loanSchedule";
+import { assessCredit } from "../lib/creditAssessment";
 import { matchRules, executeMatchedRules } from "../lib/businessRules";
 import { runArrearsCheck } from "../lib/scheduler";
 
@@ -504,4 +505,119 @@ loanRouter.post("/penalties/:penaltyId/reverse", requirePermission("loans.approv
 loanRouter.post("/arrears-check/run-now", requirePermission("institution.configure"), async (_req: AuthedRequest, res) => {
   await runArrearsCheck();
   res.json({ ok: true });
+});
+
+// =========================================================================
+// doc §64 Credit Assessment
+// =========================================================================
+
+const creditAssessmentSchema = z.object({
+  monthlyIncome: z.number().nonnegative(),
+  monthlyExpenses: z.number().nonnegative(),
+  creditBureauChecked: z.boolean().optional(),
+  creditBureauNotes: z.string().optional(),
+});
+
+loanRouter.get("/:id/credit-assessment", requirePermission("reports.view"), async (req: AuthedRequest, res) => {
+  const loan = await prisma.loan.findFirst({ where: { id: req.params.id, institutionId: req.auth!.institutionId } });
+  if (!loan) return res.status(404).json({ error: "Loan not found" });
+  const assessment = await prisma.creditAssessment.findUnique({ where: { loanId: loan.id } });
+  res.json({ assessment });
+});
+
+// §64.4 "Assessment follows product policies" and "Risk scores are
+// recorded" — existingLoanObligations and the proposed installment are
+// both computed here from real data (this customer's other active loans,
+// and this loan's own generated schedule), never trusted from the
+// request — a person can only submit the two figures that genuinely
+// require self-reported input: income and expenses.
+loanRouter.post("/:id/credit-assessment", requirePermission("loans.initiate"), async (req: AuthedRequest, res) => {
+  const parsed = creditAssessmentSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+  const loan = await prisma.loan.findFirst({
+    where: { id: req.params.id, institutionId: req.auth!.institutionId },
+    include: { customer: true },
+  });
+  if (!loan) return res.status(404).json({ error: "Loan not found" });
+
+  const existing = await prisma.creditAssessment.findUnique({ where: { loanId: loan.id } });
+  if (existing) return res.status(400).json({ error: "This loan already has a credit assessment — an assessment is not re-run, only overridden if needed" });
+
+  // §64.3 Existing Loan Analysis — genuinely computed, not self-reported:
+  // every other active loan this customer holds, summed by its own
+  // installment amount.
+  const otherLoans = await prisma.loan.findMany({
+    where: { customerId: loan.customerId, status: { in: ["DISBURSED", "ACTIVE"] }, id: { not: loan.id } },
+    include: { installments: { where: { status: { in: ["PENDING", "PARTIALLY_PAID"] } }, orderBy: { installmentNumber: "asc" }, take: 1 } },
+  });
+  const existingLoanObligations = round2(otherLoans.reduce((sum, l) => sum + (l.installments[0] ? Number(l.installments[0].totalDue) : 0), 0));
+  const hasLoansInArrears = otherLoans.some((l) => l.arrearsClassification !== "CURRENT");
+
+  // The proposed installment for THIS loan, from its own real schedule —
+  // the first installment (the highest one for Reducing Balance loans,
+  // which is the more conservative, safer figure to test affordability
+  // against).
+  const schedule = generateSchedule(Number(loan.principal), Number(loan.interestRate), loan.termMonths, loan.interestMethod, loan.createdAt);
+  const proposedInstallment = round2(schedule[0].principalDue + schedule[0].interestDue);
+
+  const result = assessCredit({
+    monthlyIncome: parsed.data.monthlyIncome,
+    monthlyExpenses: parsed.data.monthlyExpenses,
+    existingLoanObligations,
+    proposedInstallment,
+    customerRiskRating: loan.customer.riskRating as any,
+    hasLoansInArrears,
+  });
+
+  const assessment = await prisma.creditAssessment.create({
+    data: {
+      institutionId: req.auth!.institutionId,
+      loanId: loan.id,
+      monthlyIncome: parsed.data.monthlyIncome,
+      monthlyExpenses: parsed.data.monthlyExpenses,
+      existingLoanObligations,
+      proposedInstallment,
+      debtToIncomeRatio: result.debtToIncomeRatio,
+      repaymentCapacityRatio: result.repaymentCapacityRatio,
+      riskScore: result.riskScore,
+      scoreBreakdown: result.scoreBreakdown as any,
+      recommendation: result.recommendation as any,
+      creditBureauChecked: parsed.data.creditBureauChecked ?? false,
+      creditBureauNotes: parsed.data.creditBureauNotes,
+      assessedById: req.auth!.userId,
+    },
+  });
+
+  await prisma.auditLog.create({
+    data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "loan.credit_assessment_created", resource: "loan", resourceId: loan.id, metadata: { assessmentId: assessment.id, riskScore: result.riskScore, recommendation: result.recommendation } },
+  });
+
+  res.status(201).json({ assessment });
+});
+
+// §64.4 "Manual overrides require authorisation" — a higher permission
+// tier than creating the original assessment, since overriding the
+// system's own recommendation is a more consequential action than
+// recording one.
+loanRouter.post("/:id/credit-assessment/override", requirePermission("loans.approve"), async (req: AuthedRequest, res) => {
+  const { reason } = req.body as { reason?: string };
+  if (!reason) return res.status(400).json({ error: "A reason is required to override a credit assessment" });
+
+  const loan = await prisma.loan.findFirst({ where: { id: req.params.id, institutionId: req.auth!.institutionId } });
+  if (!loan) return res.status(404).json({ error: "Loan not found" });
+
+  const assessment = await prisma.creditAssessment.findUnique({ where: { loanId: loan.id } });
+  if (!assessment) return res.status(404).json({ error: "No credit assessment exists for this loan yet" });
+
+  const updated = await prisma.creditAssessment.update({
+    where: { id: assessment.id },
+    data: { overridden: true, overriddenById: req.auth!.userId, overriddenAt: new Date(), overrideReason: reason },
+  });
+
+  await prisma.auditLog.create({
+    data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "loan.credit_assessment_overridden", resource: "loan", resourceId: loan.id, metadata: { assessmentId: assessment.id, reason } },
+  });
+
+  res.json({ assessment: updated });
 });

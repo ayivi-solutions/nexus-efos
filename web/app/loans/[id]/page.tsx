@@ -48,11 +48,14 @@ export default function LoanDetailPage() {
   const [promiseForm, setPromiseForm] = useState({ promisedAmount: "", promisedDate: "", notes: "" });
   const [penalties, setPenalties] = useState<any[]>([]);
   const [penaltyForm, setPenaltyForm] = useState({ calculationMethod: "PERCENTAGE", rateOrAmount: "" });
+  const [assessment, setAssessment] = useState<any>(null);
+  const [assessmentForm, setAssessmentForm] = useState({ monthlyIncome: "", monthlyExpenses: "", creditBureauChecked: false, creditBureauNotes: "" });
 
   function load() {
     api.getLoan(id).then((res) => setLoan(res.loan)).catch((err) => setError(err.message));
     api.listPromisesToPay(id).then((res) => setPromises(res.promises)).catch(() => {});
     api.listLoanPenalties(id).then((res) => setPenalties(res.penalties)).catch(() => {});
+    api.getCreditAssessment(id).then((res) => setAssessment(res.assessment)).catch(() => {});
   }
 
   useEffect(() => {
@@ -97,6 +100,31 @@ export default function LoanDetailPage() {
     setBusy(true); setError(null);
     try { await api.waiveLoanPenalty(penaltyId, reason); load(); }
     catch (err: any) { setError(err.message || "Could not waive penalty"); }
+    finally { setBusy(false); }
+  }
+
+  async function handleRunAssessment(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy(true); setError(null);
+    try {
+      await api.createCreditAssessment(id, {
+        monthlyIncome: Number(assessmentForm.monthlyIncome),
+        monthlyExpenses: Number(assessmentForm.monthlyExpenses),
+        creditBureauChecked: assessmentForm.creditBureauChecked,
+        creditBureauNotes: assessmentForm.creditBureauNotes || undefined,
+      });
+      toast.success("Credit assessment recorded.");
+      load();
+    } catch (err: any) { setError(err.message || "Could not run assessment"); }
+    finally { setBusy(false); }
+  }
+
+  async function handleOverrideAssessment() {
+    const reason = window.prompt("Reason for overriding this assessment's recommendation:");
+    if (!reason) return;
+    setBusy(true); setError(null);
+    try { await api.overrideCreditAssessment(id, reason); load(); }
+    catch (err: any) { setError(err.message || "Could not override assessment"); }
     finally { setBusy(false); }
   }
 
@@ -185,6 +213,63 @@ export default function LoanDetailPage() {
               <div className="card p-4 mb-8 bg-rose-100/40 border-rose-600/30">
                 <p className="text-rose-600 text-sm font-medium">{loan.daysInArrears} day(s) in arrears — GHS {Number(loan.arrearsAmount).toLocaleString()} overdue</p>
                 <p className="text-text-muted text-xs mt-1">Recalculated automatically every day. Last checked: {loan.lastArrearsCheckAt ? new Date(loan.lastArrearsCheckAt).toLocaleString() : "not yet checked"}</p>
+              </div>
+            )}
+
+            {/* doc §64 Credit Assessment — shown before Actions since it
+                should inform, and typically precede, the approval decision. */}
+            {loan.status === "PENDING" && !assessment && (
+              <form onSubmit={handleRunAssessment} className="card p-6 mb-8">
+                <h2 className="font-display font-semibold text-base text-ink-900 mb-4">Credit Assessment</h2>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
+                  <label className="block">
+                    <span className="block text-[13px] text-text-500 mb-1.5">Monthly income (GHS)</span>
+                    <input required type="number" step="0.01" min="0" className="input" value={assessmentForm.monthlyIncome} onChange={(e) => setAssessmentForm((f) => ({ ...f, monthlyIncome: e.target.value }))} />
+                  </label>
+                  <label className="block">
+                    <span className="block text-[13px] text-text-500 mb-1.5">Monthly expenses (GHS)</span>
+                    <input required type="number" step="0.01" min="0" className="input" value={assessmentForm.monthlyExpenses} onChange={(e) => setAssessmentForm((f) => ({ ...f, monthlyExpenses: e.target.value }))} />
+                  </label>
+                </div>
+                <label className="flex items-center gap-2 mb-2 text-[13px] text-text-700">
+                  <input type="checkbox" checked={assessmentForm.creditBureauChecked} onChange={(e) => setAssessmentForm((f) => ({ ...f, creditBureauChecked: e.target.checked }))} />
+                  Credit bureau checked manually outside the system
+                </label>
+                {assessmentForm.creditBureauChecked && (
+                  <input className="input mb-4" placeholder="Bureau check notes" value={assessmentForm.creditBureauNotes} onChange={(e) => setAssessmentForm((f) => ({ ...f, creditBureauNotes: e.target.value }))} />
+                )}
+                <button type="submit" disabled={busy} className="btn-primary">Run assessment</button>
+                <p className="text-text-muted text-xs mt-2">Existing loan obligations and this loan's own installment are computed automatically from real data — only income and expenses need entering.</p>
+              </form>
+            )}
+
+            {assessment && (
+              <div className="card p-6 mb-8">
+                <div className="flex items-center justify-between mb-4">
+                  <h2 className="font-display font-semibold text-base text-ink-900">Credit Assessment</h2>
+                  <span className={`badge ${assessment.recommendation === "APPROVE" ? "bg-green-100 text-green-600" : assessment.recommendation === "DECLINE" ? "bg-rose-100 text-rose-600" : "bg-gold-500/15 text-gold-600"}`}>
+                    {assessment.overridden ? "OVERRIDDEN" : assessment.recommendation}
+                  </span>
+                </div>
+                <div className="grid grid-cols-2 dt:grid-cols-4 gap-3 mb-4">
+                  <Stat label="Risk score" value={`${assessment.riskScore}/100`} />
+                  <Stat label="Debt-to-income" value={`${assessment.debtToIncomeRatio}%`} />
+                  <Stat label="Repayment capacity" value={`${assessment.repaymentCapacityRatio}%`} />
+                  <Stat label="Other obligations" value={`GHS ${Number(assessment.existingLoanObligations).toLocaleString()}`} />
+                </div>
+                <div className="text-[13px] text-text-700 space-y-1 mb-4">
+                  {assessment.scoreBreakdown.map((f: any, i: number) => (
+                    <div key={i} className="flex justify-between border-t border-paper-100 pt-1 first:border-0 first:pt-0">
+                      <span>{f.factor}</span><span className={f.points < 0 ? "text-rose-600" : "text-text-muted"}>{f.points > 0 ? "+" : ""}{f.points}</span>
+                    </div>
+                  ))}
+                </div>
+                {assessment.creditBureauChecked && <p className="text-text-muted text-xs mb-2">Credit bureau: checked manually — {assessment.creditBureauNotes || "no notes"}</p>}
+                {assessment.overridden ? (
+                  <p className="text-gold-600 text-xs">Overridden: {assessment.overrideReason}</p>
+                ) : (
+                  loan.status === "PENDING" && <button onClick={handleOverrideAssessment} className="btn-text text-gold-600">Override this recommendation</button>
+                )}
               </div>
             )}
 

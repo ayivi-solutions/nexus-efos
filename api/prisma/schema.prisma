@@ -74,6 +74,7 @@ model Institution {
   positions               Position[]
   promisesToPay           PromiseToPay[]
   loanPenalties           LoanPenalty[]
+  creditAssessments       CreditAssessment[]
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -1029,6 +1030,7 @@ model Loan {
   accountHolders AccountHolder[]
   promisesToPay  PromiseToPay[]
   penalties      LoanPenalty[]
+  creditAssessment CreditAssessment?
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -1789,5 +1791,59 @@ model LoanPenalty {
   waivedReason String?   @map("waived_reason")
 
   @@map("loan_penalty")
+  @@schema("nexus")
+}
+
+// doc §64 Credit Assessment. §64.3's "Credit Bureau Enquiries" is
+// deliberately NOT integrated — that needs a real contract and API
+// credentials with an actual Ghana credit bureau, the same category of
+// external dependency as the SMS/Email provider gap. creditBureauChecked
+// is a manual attestation field, honest about being outside the system
+// rather than a fake integration pretending to check something it can't.
+enum CreditRecommendation {
+  APPROVE
+  REVIEW
+  DECLINE
+
+  @@schema("nexus")
+}
+
+model CreditAssessment {
+  id            String       @id(map: "pk_credit_assessment") @default(uuid())
+  institution   Institution  @relation(fields: [institutionId], references: [id], onDelete: Cascade, map: "fk_credit_assessment_institution")
+  institutionId String       @map("institution_id")
+  loan          Loan         @relation(fields: [loanId], references: [id], onDelete: Cascade, map: "fk_credit_assessment_loan")
+  loanId        String       @unique @map("loan_id")
+
+  // §64.3 Income/Expense/Debt-to-Income Analysis
+  monthlyIncome           Decimal @map("monthly_income") @db.Decimal(14, 2)
+  monthlyExpenses         Decimal @map("monthly_expenses") @db.Decimal(14, 2)
+  existingLoanObligations Decimal @default(0) @map("existing_loan_obligations") @db.Decimal(14, 2) // auto-computed from this customer's other active loans at assessment time
+  proposedInstallment     Decimal @map("proposed_installment") @db.Decimal(14, 2) // this loan's own monthly installment, from its generated schedule
+
+  debtToIncomeRatio       Decimal @map("debt_to_income_ratio") @db.Decimal(5, 2) // existingLoanObligations / monthlyIncome, as a percentage
+  repaymentCapacityRatio  Decimal @map("repayment_capacity_ratio") @db.Decimal(5, 2) // (existingLoanObligations + proposedInstallment) / monthlyIncome, as a percentage — the real affordability test
+
+  // §64.3 Risk Scoring — stored with its components, not just a final
+  // number, so §64.4 "Recommendations remain auditable" means something
+  // real: the reasoning is visible, not a black box.
+  riskScore      Int      @map("risk_score") // 0-100
+  scoreBreakdown Json     @map("score_breakdown") // { factor: string, points: number }[]
+  recommendation CreditRecommendation
+
+  // §64.3 Credit Bureau Enquiries — see note above.
+  creditBureauChecked Boolean  @default(false) @map("credit_bureau_checked")
+  creditBureauNotes   String?  @map("credit_bureau_notes")
+
+  // §64.4 "Manual overrides require authorisation"
+  overridden       Boolean   @default(false)
+  overriddenById   String?   @map("overridden_by_id")
+  overriddenAt     DateTime? @map("overridden_at")
+  overrideReason   String?   @map("override_reason")
+
+  assessedById String   @map("assessed_by_id")
+  assessedAt   DateTime @default(now()) @map("assessed_at")
+
+  @@map("credit_assessment")
   @@schema("nexus")
 }

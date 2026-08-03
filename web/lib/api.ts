@@ -238,6 +238,11 @@ export const api = {
 
   runArrearsCheckNow: () => request("/loans/arrears-check/run-now", { method: "POST" }),
 
+  getCreditAssessment: (loanId: string) => request(`/loans/${loanId}/credit-assessment`),
+  createCreditAssessment: (loanId: string, data: { monthlyIncome: number; monthlyExpenses: number; creditBureauChecked?: boolean; creditBureauNotes?: string }) =>
+    request(`/loans/${loanId}/credit-assessment`, { method: "POST", body: JSON.stringify(data) }),
+  overrideCreditAssessment: (loanId: string, reason: string) => request(`/loans/${loanId}/credit-assessment/override`, { method: "POST", body: JSON.stringify({ reason }) }),
+
   listSavingsAccounts: () => request("/savings"),
   getSavingsAccount: (id: string) => request(`/savings/${id}`),
   addSavingsHolder: (id: string, data: { customerId: string; role: string }) => request(`/savings/${id}/holders`, { method: "POST", body: JSON.stringify(data) }),
