@@ -801,6 +801,9 @@ enum ApprovalRequestType {
   AML_ADJUDICATION
   BUSINESS_RULE_ACTIVATION // §41.6 — a rule itself needs authorised approval before going live
   BUSINESS_RULE_TRIGGERED  // a rule's REQUIRE_ADDITIONAL_APPROVAL action fired against a real loan
+  LOAN_RESTRUCTURE // doc §72
+  LOAN_RESCHEDULE  // doc §73
+  LOAN_WRITE_OFF   // doc §74
 
   @@schema("nexus")
 }
@@ -986,6 +989,7 @@ enum LoanStatus {
   ACTIVE
   CLOSED
   DEFAULTED
+  WRITTEN_OFF
 
   @@schema("nexus")
 }
@@ -1035,6 +1039,9 @@ model Loan {
   creditAssessment CreditAssessment?
   guarantors     Guarantor[]
   collateral     Collateral[]
+  restructures   LoanRestructure[]
+  reschedules    LoanReschedule[]
+  writeOffs      LoanWriteOff[]
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -1939,5 +1946,64 @@ model Collateral {
   createdAt DateTime @default(now()) @map("created_at")
 
   @@map("collateral")
+  @@schema("nexus")
+}
+
+// doc §72 Loan Restructuring, §73 Loan Rescheduling, §74 Loan Write-Off —
+// all three route through the existing generic Approval Workflow
+// (ApprovalRequest), the same pattern every other high-stakes action in
+// this app already uses, rather than a bespoke approval mechanism per
+// action.
+model LoanRestructure {
+  id            String      @id(map: "pk_loan_restructure") @default(uuid())
+  loan          Loan        @relation(fields: [loanId], references: [id], onDelete: Cascade, map: "fk_loan_restructure_loan")
+  loanId        String      @map("loan_id")
+
+  originalPrincipal   Decimal @map("original_principal") @db.Decimal(14, 2)
+  originalRate        Decimal @map("original_rate") @db.Decimal(6, 3)
+  originalTermMonths  Int     @map("original_term_months")
+  newPrincipal        Decimal @map("new_principal") @db.Decimal(14, 2)
+  newRate             Decimal @map("new_rate") @db.Decimal(6, 3)
+  newTermMonths       Int     @map("new_term_months")
+  reason              String
+
+  requestedById String    @map("requested_by_id")
+  appliedAt     DateTime? @map("applied_at")
+  createdAt     DateTime  @default(now()) @map("created_at")
+
+  @@map("loan_restructure")
+  @@schema("nexus")
+}
+
+model LoanReschedule {
+  id       String @id(map: "pk_loan_reschedule") @default(uuid())
+  loan     Loan   @relation(fields: [loanId], references: [id], onDelete: Cascade, map: "fk_loan_reschedule_loan")
+  loanId   String @map("loan_id")
+
+  shiftDays Int    @map("shift_days") // positive = pushed later, negative = pulled earlier
+  reason    String
+
+  requestedById String    @map("requested_by_id")
+  appliedAt     DateTime? @map("applied_at")
+  createdAt     DateTime  @default(now()) @map("created_at")
+
+  @@map("loan_reschedule")
+  @@schema("nexus")
+}
+
+model LoanWriteOff {
+  id       String @id(map: "pk_loan_write_off") @default(uuid())
+  loan     Loan   @relation(fields: [loanId], references: [id], onDelete: Cascade, map: "fk_loan_write_off_loan")
+  loanId   String @map("loan_id")
+
+  amount          Decimal  @db.Decimal(14, 2)
+  reason          String
+  recoveredAmount Decimal  @default(0) @map("recovered_amount") @db.Decimal(14, 2)
+
+  requestedById String    @map("requested_by_id")
+  appliedAt     DateTime? @map("applied_at")
+  createdAt     DateTime  @default(now()) @map("created_at")
+
+  @@map("loan_write_off")
   @@schema("nexus")
 }

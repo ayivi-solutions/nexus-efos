@@ -815,3 +815,107 @@ loanRouter.post("/collateral/:collateralId/realise", requirePermission("loans.ap
 
   res.json({ collateral: updated });
 });
+
+// =========================================================================
+// doc §72 Restructuring, §73 Rescheduling, §74 Write-Off — all request via
+// the generic Approval Workflow; actual application happens in
+// approvals.routes.ts's apply-side switch once a different authorised
+// user approves.
+// =========================================================================
+
+const restructureSchema = z.object({ newPrincipal: z.number().positive(), newRate: z.number().nonnegative(), newTermMonths: z.number().int().positive(), reason: z.string().min(2) });
+
+loanRouter.post("/:id/restructure", requirePermission("loans.initiate"), async (req: AuthedRequest, res) => {
+  const parsed = restructureSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+  const loan = await prisma.loan.findFirst({ where: { id: req.params.id, institutionId: req.auth!.institutionId } });
+  if (!loan) return res.status(404).json({ error: "Loan not found" });
+  if (!["DISBURSED", "ACTIVE"].includes(loan.status)) return res.status(400).json({ error: "Only a disbursed/active loan can be restructured" });
+
+  const restructure = await prisma.loanRestructure.create({
+    data: {
+      loanId: loan.id, originalPrincipal: loan.principal, originalRate: loan.interestRate, originalTermMonths: loan.termMonths,
+      newPrincipal: parsed.data.newPrincipal, newRate: parsed.data.newRate, newTermMonths: parsed.data.newTermMonths,
+      reason: parsed.data.reason, requestedById: req.auth!.userId,
+    },
+  });
+
+  const approval = await prisma.approvalRequest.create({
+    data: { institutionId: req.auth!.institutionId, type: "LOAN_RESTRUCTURE", targetType: "LoanRestructure", targetId: restructure.id, payload: { loanId: loan.id }, reason: parsed.data.reason, requestedById: req.auth!.userId },
+  });
+
+  await prisma.auditLog.create({ data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "loan.restructure_requested", resource: "loan", resourceId: loan.id, metadata: { restructureId: restructure.id, approvalRequestId: approval.id } } });
+
+  res.status(202).json({ pendingApproval: true, approvalRequestId: approval.id });
+});
+
+const rescheduleSchema = z.object({ shiftDays: z.number().int().refine((v) => v !== 0, "shiftDays cannot be 0"), reason: z.string().min(2) });
+
+loanRouter.post("/:id/reschedule", requirePermission("loans.initiate"), async (req: AuthedRequest, res) => {
+  const parsed = rescheduleSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+  const loan = await prisma.loan.findFirst({ where: { id: req.params.id, institutionId: req.auth!.institutionId } });
+  if (!loan) return res.status(404).json({ error: "Loan not found" });
+  if (!["DISBURSED", "ACTIVE"].includes(loan.status)) return res.status(400).json({ error: "Only a disbursed/active loan can be rescheduled" });
+
+  const reschedule = await prisma.loanReschedule.create({
+    data: { loanId: loan.id, shiftDays: parsed.data.shiftDays, reason: parsed.data.reason, requestedById: req.auth!.userId },
+  });
+
+  const approval = await prisma.approvalRequest.create({
+    data: { institutionId: req.auth!.institutionId, type: "LOAN_RESCHEDULE", targetType: "LoanReschedule", targetId: reschedule.id, payload: { loanId: loan.id }, reason: parsed.data.reason, requestedById: req.auth!.userId },
+  });
+
+  await prisma.auditLog.create({ data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "loan.reschedule_requested", resource: "loan", resourceId: loan.id, metadata: { rescheduleId: reschedule.id, approvalRequestId: approval.id } } });
+
+  res.status(202).json({ pendingApproval: true, approvalRequestId: approval.id });
+});
+
+const writeOffSchema = z.object({ amount: z.number().positive(), reason: z.string().min(2) });
+
+loanRouter.post("/:id/write-off", requirePermission("loans.initiate"), async (req: AuthedRequest, res) => {
+  const parsed = writeOffSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+  const loan = await prisma.loan.findFirst({ where: { id: req.params.id, institutionId: req.auth!.institutionId } });
+  if (!loan) return res.status(404).json({ error: "Loan not found" });
+  if (!["DISBURSED", "ACTIVE"].includes(loan.status)) return res.status(400).json({ error: "Only a disbursed/active loan can be written off" });
+
+  const writeOff = await prisma.loanWriteOff.create({
+    data: { loanId: loan.id, amount: parsed.data.amount, reason: parsed.data.reason, requestedById: req.auth!.userId },
+  });
+
+  const approval = await prisma.approvalRequest.create({
+    data: { institutionId: req.auth!.institutionId, type: "LOAN_WRITE_OFF", targetType: "LoanWriteOff", targetId: writeOff.id, payload: { loanId: loan.id }, reason: parsed.data.reason, requestedById: req.auth!.userId },
+  });
+
+  await prisma.auditLog.create({ data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "loan.write_off_requested", resource: "loan", resourceId: loan.id, metadata: { writeOffId: writeOff.id, approvalRequestId: approval.id } } });
+
+  res.status(202).json({ pendingApproval: true, approvalRequestId: approval.id });
+});
+
+// Recovery tracking after write-off (§74.3)
+loanRouter.post("/write-offs/:writeOffId/record-recovery", requirePermission("loans.approve"), async (req: AuthedRequest, res) => {
+  const { amount } = req.body as { amount?: number };
+  if (!amount || amount <= 0) return res.status(400).json({ error: "amount must be positive" });
+  const writeOff = await prisma.loanWriteOff.findFirst({ where: { id: req.params.writeOffId } });
+  if (!writeOff) return res.status(404).json({ error: "Write-off not found" });
+
+  const updated = await prisma.loanWriteOff.update({ where: { id: writeOff.id }, data: { recoveredAmount: { increment: amount } } });
+
+  await prisma.auditLog.create({ data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "loan.write_off_recovery_recorded", resource: "loan", resourceId: writeOff.loanId, metadata: { writeOffId: writeOff.id, amount } } });
+
+  res.json({ writeOff: updated });
+});
+
+loanRouter.get("/:id/restructures", requirePermission("reports.view"), async (req: AuthedRequest, res) => {
+  const items = await prisma.loanRestructure.findMany({ where: { loanId: req.params.id }, orderBy: { createdAt: "desc" } });
+  res.json({ restructures: items });
+});
+loanRouter.get("/:id/reschedules", requirePermission("reports.view"), async (req: AuthedRequest, res) => {
+  const items = await prisma.loanReschedule.findMany({ where: { loanId: req.params.id }, orderBy: { createdAt: "desc" } });
+  res.json({ reschedules: items });
+});
+loanRouter.get("/:id/write-offs", requirePermission("reports.view"), async (req: AuthedRequest, res) => {
+  const items = await prisma.loanWriteOff.findMany({ where: { loanId: req.params.id }, orderBy: { createdAt: "desc" } });
+  res.json({ writeOffs: items });
+});

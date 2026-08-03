@@ -54,6 +54,12 @@ export default function LoanDetailPage() {
   const [guarantorForm, setGuarantorForm] = useState({ fullName: "", phone: "", relationship: "", guaranteeLimit: "" });
   const [collateralList, setCollateralList] = useState<any[]>([]);
   const [collateralForm, setCollateralForm] = useState({ type: "LAND", description: "", ownerName: "", estimatedValue: "", valuationDate: "" });
+  const [restructures, setRestructures] = useState<any[]>([]);
+  const [restructureForm, setRestructureForm] = useState({ newPrincipal: "", newRate: "", newTermMonths: "", reason: "" });
+  const [reschedules, setReschedules] = useState<any[]>([]);
+  const [rescheduleForm, setRescheduleForm] = useState({ shiftDays: "", reason: "" });
+  const [writeOffs, setWriteOffs] = useState<any[]>([]);
+  const [writeOffForm, setWriteOffForm] = useState({ amount: "", reason: "" });
 
   function load() {
     api.getLoan(id).then((res) => setLoan(res.loan)).catch((err) => setError(err.message));
@@ -62,6 +68,9 @@ export default function LoanDetailPage() {
     api.getCreditAssessment(id).then((res) => setAssessment(res.assessment)).catch(() => {});
     api.listGuarantors(id).then((res) => setGuarantors(res.guarantors)).catch(() => {});
     api.listCollateral(id).then((res) => setCollateralList(res.collateral)).catch(() => {});
+    api.listRestructures(id).then((res) => setRestructures(res.restructures)).catch(() => {});
+    api.listReschedules(id).then((res) => setReschedules(res.reschedules)).catch(() => {});
+    api.listWriteOffs(id).then((res) => setWriteOffs(res.writeOffs)).catch(() => {});
   }
 
   useEffect(() => {
@@ -180,6 +189,51 @@ export default function LoanDetailPage() {
     setBusy(true); setError(null);
     try { await api.releaseCollateral(cid, reason); load(); }
     catch (err: any) { setError(err.message || "Could not release collateral"); }
+    finally { setBusy(false); }
+  }
+
+  async function handleRequestRestructure(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy(true); setError(null);
+    try {
+      await api.requestRestructure(id, { newPrincipal: Number(restructureForm.newPrincipal), newRate: Number(restructureForm.newRate), newTermMonths: Number(restructureForm.newTermMonths), reason: restructureForm.reason });
+      setRestructureForm({ newPrincipal: "", newRate: "", newTermMonths: "", reason: "" });
+      toast.info("Restructure submitted for approval.");
+      load();
+    } catch (err: any) { setError(err.message || "Could not request restructure"); }
+    finally { setBusy(false); }
+  }
+
+  async function handleRequestReschedule(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy(true); setError(null);
+    try {
+      await api.requestReschedule(id, { shiftDays: Number(rescheduleForm.shiftDays), reason: rescheduleForm.reason });
+      setRescheduleForm({ shiftDays: "", reason: "" });
+      toast.info("Reschedule submitted for approval.");
+      load();
+    } catch (err: any) { setError(err.message || "Could not request reschedule"); }
+    finally { setBusy(false); }
+  }
+
+  async function handleRequestWriteOff(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy(true); setError(null);
+    try {
+      await api.requestWriteOff(id, { amount: Number(writeOffForm.amount), reason: writeOffForm.reason });
+      setWriteOffForm({ amount: "", reason: "" });
+      toast.info("Write-off submitted for approval.");
+      load();
+    } catch (err: any) { setError(err.message || "Could not request write-off"); }
+    finally { setBusy(false); }
+  }
+
+  async function handleRecordRecovery(writeOffId: string) {
+    const amtStr = window.prompt("Amount recovered:");
+    if (!amtStr) return;
+    setBusy(true); setError(null);
+    try { await api.recordWriteOffRecovery(writeOffId, Number(amtStr)); load(); }
+    catch (err: any) { setError(err.message || "Could not record recovery"); }
     finally { setBusy(false); }
   }
 
@@ -529,6 +583,47 @@ export default function LoanDetailPage() {
                 </tbody>
               </table>
             </div>
+
+            {/* doc §72/§73/§74 — all route through the Approval Workflow */}
+            {["DISBURSED", "ACTIVE"].includes(loan.status) && (
+              <>
+                <h2 className="font-display font-semibold text-lg text-ink-900 mb-3 mt-10">Restructure / Reschedule / Write-Off</h2>
+                <div className="grid grid-cols-1 dt:grid-cols-3 gap-4 mb-10">
+                  <form onSubmit={handleRequestRestructure} className="card p-4">
+                    <div className="font-medium text-[13px] text-text-900 mb-2">Restructure</div>
+                    <input required type="number" step="0.01" placeholder="New principal" className="input !text-[12px] mb-2" value={restructureForm.newPrincipal} onChange={(e) => setRestructureForm((f) => ({ ...f, newPrincipal: e.target.value }))} />
+                    <input required type="number" step="0.01" placeholder="New rate %" className="input !text-[12px] mb-2" value={restructureForm.newRate} onChange={(e) => setRestructureForm((f) => ({ ...f, newRate: e.target.value }))} />
+                    <input required type="number" placeholder="New term (months)" className="input !text-[12px] mb-2" value={restructureForm.newTermMonths} onChange={(e) => setRestructureForm((f) => ({ ...f, newTermMonths: e.target.value }))} />
+                    <input required placeholder="Reason" className="input !text-[12px] mb-2" value={restructureForm.reason} onChange={(e) => setRestructureForm((f) => ({ ...f, reason: e.target.value }))} />
+                    <button type="submit" disabled={busy} className="btn-text text-gold-600">Request</button>
+                  </form>
+                  <form onSubmit={handleRequestReschedule} className="card p-4">
+                    <div className="font-medium text-[13px] text-text-900 mb-2">Reschedule</div>
+                    <input required type="number" placeholder="Shift days (+/-)" className="input !text-[12px] mb-2" value={rescheduleForm.shiftDays} onChange={(e) => setRescheduleForm((f) => ({ ...f, shiftDays: e.target.value }))} />
+                    <input required placeholder="Reason" className="input !text-[12px] mb-2" value={rescheduleForm.reason} onChange={(e) => setRescheduleForm((f) => ({ ...f, reason: e.target.value }))} />
+                    <button type="submit" disabled={busy} className="btn-text text-gold-600">Request</button>
+                  </form>
+                  <form onSubmit={handleRequestWriteOff} className="card p-4">
+                    <div className="font-medium text-[13px] text-text-900 mb-2">Write-off</div>
+                    <input required type="number" step="0.01" placeholder="Amount (GHS)" className="input !text-[12px] mb-2" value={writeOffForm.amount} onChange={(e) => setWriteOffForm((f) => ({ ...f, amount: e.target.value }))} />
+                    <input required placeholder="Reason" className="input !text-[12px] mb-2" value={writeOffForm.reason} onChange={(e) => setWriteOffForm((f) => ({ ...f, reason: e.target.value }))} />
+                    <button type="submit" disabled={busy} className="btn-text text-rose-600">Request</button>
+                  </form>
+                </div>
+                {(restructures.length > 0 || reschedules.length > 0 || writeOffs.length > 0) && (
+                  <div className="text-[12.5px] text-text-700 mb-10 space-y-1">
+                    {restructures.map((r: any) => <div key={r.id}>Restructure to GHS {Number(r.newPrincipal).toLocaleString()} @ {r.newRate}% / {r.newTermMonths}mo — {r.appliedAt ? "applied" : "pending approval"}</div>)}
+                    {reschedules.map((r: any) => <div key={r.id}>Reschedule {r.shiftDays > 0 ? "+" : ""}{r.shiftDays} days — {r.appliedAt ? "applied" : "pending approval"}</div>)}
+                    {writeOffs.map((w: any) => (
+                      <div key={w.id} className="flex items-center gap-2">
+                        Write-off GHS {Number(w.amount).toLocaleString()} — {w.appliedAt ? `applied, GHS ${Number(w.recoveredAmount).toLocaleString()} recovered` : "pending approval"}
+                        {w.appliedAt && <button onClick={() => handleRecordRecovery(w.id)} className="btn-text text-gold-600">Record recovery</button>}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
 
             <h2 className="font-display font-semibold text-lg text-ink-900 mb-3 mt-10">Penalties</h2>
             {["DISBURSED", "ACTIVE"].includes(loan.status) && (

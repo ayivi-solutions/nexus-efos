@@ -2,6 +2,7 @@ import { Router } from "express";
 import { prisma } from "../lib/prisma";
 import { requireAuth, AuthedRequest } from "../middleware/auth";
 import { requirePermission } from "../middleware/rbac";
+import { generateSchedule, round2 } from "../lib/loanSchedule";
 
 export const approvalsRouter = Router();
 approvalsRouter.use(requireAuth);
@@ -48,6 +49,53 @@ async function applyApproval(request: { id: string; type: string; targetId: stri
     case "BUSINESS_RULE_ACTIVATION":
       await prisma.businessRule.update({ where: { id: request.targetId }, data: { status: "ACTIVE" } });
       break;
+
+    // doc §72 Loan Restructuring — pending installments are superseded
+    // (soft-deleted, never hard-deleted, so the original schedule stays
+    // historically visible) and a fresh schedule is generated from the
+    // new terms using the exact same generateSchedule function real
+    // disbursement uses, starting today. Already-paid installments are
+    // left untouched.
+    case "LOAN_RESTRUCTURE": {
+      const restructure = await prisma.loanRestructure.findUniqueOrThrow({ where: { id: request.targetId } });
+      await prisma.loanInstallment.updateMany({
+        where: { loanId: restructure.loanId, status: { in: ["PENDING", "PARTIALLY_PAID"] } },
+        data: { deletedAt: new Date() },
+      });
+      const schedule = generateSchedule(Number(restructure.newPrincipal), Number(restructure.newRate), restructure.newTermMonths, "FLAT", new Date());
+      await prisma.loanInstallment.createMany({
+        data: schedule.map((s) => ({ loanId: restructure.loanId, installmentNumber: s.installmentNumber, dueDate: s.dueDate, principalDue: s.principalDue, interestDue: s.interestDue, totalDue: round2(s.principalDue + s.interestDue) })),
+      });
+      await prisma.loan.update({ where: { id: restructure.loanId }, data: { principal: restructure.newPrincipal, interestRate: restructure.newRate, termMonths: restructure.newTermMonths } });
+      await prisma.loanRestructure.update({ where: { id: restructure.id }, data: { appliedAt: new Date() } });
+      break;
+    }
+
+    // doc §73 Loan Rescheduling — a lighter action than restructuring:
+    // only the due dates of not-yet-fully-paid installments shift,
+    // principal/rate/term are untouched.
+    case "LOAN_RESCHEDULE": {
+      const reschedule = await prisma.loanReschedule.findUniqueOrThrow({ where: { id: request.targetId } });
+      const installments = await prisma.loanInstallment.findMany({ where: { loanId: reschedule.loanId, status: { in: ["PENDING", "PARTIALLY_PAID"] } } });
+      for (const inst of installments) {
+        const newDate = new Date(inst.dueDate);
+        newDate.setDate(newDate.getDate() + reschedule.shiftDays);
+        await prisma.loanInstallment.update({ where: { id: inst.id }, data: { dueDate: newDate } });
+      }
+      await prisma.loanReschedule.update({ where: { id: reschedule.id }, data: { appliedAt: new Date() } });
+      break;
+    }
+
+    // doc §74 Loan Write-Off — the loan is marked WRITTEN_OFF; unpaid
+    // installments are left exactly as they are (not deleted, not zeroed)
+    // so the historical record of what was actually owed stays intact for
+    // any future recovery tracking.
+    case "LOAN_WRITE_OFF": {
+      const writeOff = await prisma.loanWriteOff.findUniqueOrThrow({ where: { id: request.targetId } });
+      await prisma.loan.update({ where: { id: writeOff.loanId }, data: { status: "WRITTEN_OFF" } });
+      await prisma.loanWriteOff.update({ where: { id: writeOff.id }, data: { appliedAt: new Date() } });
+      break;
+    }
     // BUSINESS_RULE_TRIGGERED needs no apply-side effect — it's a pure
     // blocking gate checked at loan disbursement time (see loan.routes.ts);
     // approving it just resolves the record so disbursement is unblocked.

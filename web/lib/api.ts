@@ -254,6 +254,14 @@ export const api = {
   releaseCollateral: (collateralId: string, reason?: string) => request(`/loans/collateral/${collateralId}/release`, { method: "POST", body: JSON.stringify({ reason }) }),
   realiseCollateral: (collateralId: string, realisedAmount: number) => request(`/loans/collateral/${collateralId}/realise`, { method: "POST", body: JSON.stringify({ realisedAmount }) }),
 
+  requestRestructure: (loanId: string, data: { newPrincipal: number; newRate: number; newTermMonths: number; reason: string }) => request(`/loans/${loanId}/restructure`, { method: "POST", body: JSON.stringify(data) }),
+  listRestructures: (loanId: string) => request(`/loans/${loanId}/restructures`),
+  requestReschedule: (loanId: string, data: { shiftDays: number; reason: string }) => request(`/loans/${loanId}/reschedule`, { method: "POST", body: JSON.stringify(data) }),
+  listReschedules: (loanId: string) => request(`/loans/${loanId}/reschedules`),
+  requestWriteOff: (loanId: string, data: { amount: number; reason: string }) => request(`/loans/${loanId}/write-off`, { method: "POST", body: JSON.stringify(data) }),
+  listWriteOffs: (loanId: string) => request(`/loans/${loanId}/write-offs`),
+  recordWriteOffRecovery: (writeOffId: string, amount: number) => request(`/loans/write-offs/${writeOffId}/record-recovery`, { method: "POST", body: JSON.stringify({ amount }) }),
+
   listSavingsAccounts: () => request("/savings"),
   getSavingsAccount: (id: string) => request(`/savings/${id}`),
   addSavingsHolder: (id: string, data: { customerId: string; role: string }) => request(`/savings/${id}/holders`, { method: "POST", body: JSON.stringify(data) }),
