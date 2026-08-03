@@ -18,6 +18,7 @@ const NAV_FULL: { label: string; icon: string; href: string; perm: string | null
   { label: "Approvals", icon: "✓", href: "/approvals", perm: "institution.configure" },
   { label: "Migration", icon: "⇪", href: "/migration/customers", perm: "data.migrate" },
   { label: "Business Rules", icon: "⚡", href: "/business-rules", perm: "institution.configure" },
+  { label: "Collections", icon: "⚑", href: "/collections", perm: "users.administer" },
 ];
 
 export function AppShell({ active, children }: { active: string; children: React.ReactNode }) {

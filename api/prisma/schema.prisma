@@ -77,6 +77,8 @@ model Institution {
   creditAssessments       CreditAssessment[]
   guarantors              Guarantor[]
   collateral              Collateral[]
+  collectors              Collector[]
+  collectionRoutes        CollectionRoute[]
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -111,6 +113,7 @@ model Branch {
   loans           Loan[]
   savingsAccounts SavingsAccount[]
   employees       Employee[]
+  collectionRoutes CollectionRoute[]
 
   archived   Boolean   @default(false)
   archivedAt DateTime? @map("archived_at")
@@ -2005,5 +2008,78 @@ model LoanWriteOff {
   createdAt     DateTime  @default(now()) @map("created_at")
 
   @@map("loan_write_off")
+  @@schema("nexus")
+}
+
+// doc §79 Collector Management, §80 Collection Route Management.
+enum CollectorAvailability {
+  AVAILABLE
+  ON_LEAVE
+  SUSPENDED
+
+  @@schema("nexus")
+}
+
+// A Collector is a role played by an existing Employee — not a separate
+// person record — since every HR field (name, contact, branch) already
+// exists on Employee. One collector record per employee.
+model Collector {
+  id            String                @id(map: "pk_collector") @default(uuid())
+  institution   Institution           @relation(fields: [institutionId], references: [id], onDelete: Cascade, map: "fk_collector_institution")
+  institutionId String                @map("institution_id")
+  employeeId    String                @unique @map("employee_id")
+  branchId      String?               @map("branch_id")
+  availability  CollectorAvailability @default(AVAILABLE)
+
+  suspendedById   String?   @map("suspended_by_id")
+  suspendedAt     DateTime? @map("suspended_at")
+  suspendedReason String?   @map("suspended_reason")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  routes CollectionRoute[]
+
+  @@map("collector")
+  @@schema("nexus")
+}
+
+model CollectionRoute {
+  id            String      @id(map: "pk_collection_route") @default(uuid())
+  institution   Institution @relation(fields: [institutionId], references: [id], onDelete: Cascade, map: "fk_collection_route_institution")
+  institutionId String      @map("institution_id")
+  branch        Branch?     @relation(fields: [branchId], references: [id], onDelete: SetNull, map: "fk_collection_route_branch")
+  branchId      String?     @map("branch_id")
+
+  name        String
+  collector   Collector? @relation(fields: [collectorId], references: [id], onDelete: SetNull, map: "fk_collection_route_collector")
+  collectorId String?    @map("collector_id")
+  isTemporary Boolean    @default(false) @map("is_temporary")
+  active      Boolean    @default(true)
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  customers CollectionRouteCustomer[]
+
+  @@unique([institutionId, name], map: "uq_collection_route_institution_id_name")
+  @@map("collection_route")
+  @@schema("nexus")
+}
+
+// §80.3 "Customers belong to authorised routes" / "Route conflicts are
+// prevented" — a customer can only be on one ACTIVE route assignment at a
+// time, enforced at the application layer (see routes/collections.routes.ts)
+// rather than a DB constraint, since moving a customer between routes is a
+// normal, expected operation (old assignment ends, new one begins).
+model CollectionRouteCustomer {
+  id         String          @id(map: "pk_collection_route_customer") @default(uuid())
+  route      CollectionRoute @relation(fields: [routeId], references: [id], onDelete: Cascade, map: "fk_crc_route")
+  routeId    String          @map("route_id")
+  customerId String          @map("customer_id")
+  sequence   Int?
+  active     Boolean         @default(true)
+  assignedAt DateTime        @default(now()) @map("assigned_at")
+  removedAt  DateTime?       @map("removed_at")
+
+  @@map("collection_route_customer")
   @@schema("nexus")
 }

@@ -262,6 +262,19 @@ export const api = {
   listWriteOffs: (loanId: string) => request(`/loans/${loanId}/write-offs`),
   recordWriteOffRecovery: (writeOffId: string, amount: number) => request(`/loans/write-offs/${writeOffId}/record-recovery`, { method: "POST", body: JSON.stringify({ amount }) }),
 
+  listCollectors: () => request("/collections/collectors"),
+  registerCollector: (data: { employeeId: string; branchId?: string }) => request("/collections/collectors", { method: "POST", body: JSON.stringify(data) }),
+  transferCollector: (id: string, branchId: string) => request(`/collections/collectors/${id}/transfer`, { method: "PATCH", body: JSON.stringify({ branchId }) }),
+  suspendCollector: (id: string, reason?: string) => request(`/collections/collectors/${id}/suspend`, { method: "POST", body: JSON.stringify({ reason }) }),
+  reinstateCollector: (id: string) => request(`/collections/collectors/${id}/reinstate`, { method: "POST" }),
+  setCollectorAvailability: (id: string, availability: "AVAILABLE" | "ON_LEAVE") => request(`/collections/collectors/${id}/availability`, { method: "PATCH", body: JSON.stringify({ availability }) }),
+
+  listCollectionRoutes: () => request("/collections/routes"),
+  createCollectionRoute: (data: { name: string; branchId?: string; collectorId?: string; isTemporary?: boolean }) => request("/collections/routes", { method: "POST", body: JSON.stringify(data) }),
+  reassignRouteCollector: (routeId: string, collectorId: string | null) => request(`/collections/routes/${routeId}/collector`, { method: "PATCH", body: JSON.stringify({ collectorId }) }),
+  assignCustomerToRoute: (routeId: string, customerId: string, sequence?: number) => request(`/collections/routes/${routeId}/customers`, { method: "POST", body: JSON.stringify({ customerId, sequence }) }),
+  removeCustomerFromRoute: (routeId: string, assignmentId: string) => request(`/collections/routes/${routeId}/customers/${assignmentId}`, { method: "DELETE" }),
+
   listSavingsAccounts: () => request("/savings"),
   getSavingsAccount: (id: string) => request(`/savings/${id}`),
   addSavingsHolder: (id: string, data: { customerId: string; role: string }) => request(`/savings/${id}/holders`, { method: "POST", body: JSON.stringify(data) }),
