@@ -81,6 +81,8 @@ model Institution {
   collectionRoutes        CollectionRoute[]
   collectionTransactions  CollectionTransaction[]
   collectionSettlements   CollectionSettlement[]
+  commissionStructures    CommissionStructure[]
+  commissionRecords       CommissionRecord[]
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -810,6 +812,7 @@ enum ApprovalRequestType {
   LOAN_RESCHEDULE  // doc §73
   LOAN_WRITE_OFF   // doc §74
   COLLECTION_VARIANCE_ADJUSTMENT // doc §82
+  COMMISSION_PAYMENT // doc §83
 
   @@schema("nexus")
 }
@@ -2165,5 +2168,59 @@ model CollectionSettlement {
 
   @@unique([collectorId, settlementDate], map: "uq_settlement_collector_date")
   @@map("collection_settlement")
+  @@schema("nexus")
+}
+
+// doc §83 Commission Management. §83.3 "Approval required before payment"
+// — payment routes through the existing Approval Workflow.
+enum CommissionType {
+  PERCENTAGE_OF_COLLECTIONS
+  FIXED_PER_COLLECTION
+
+  @@schema("nexus")
+}
+
+model CommissionStructure {
+  id            String         @id(map: "pk_commission_structure") @default(uuid())
+  institution   Institution    @relation(fields: [institutionId], references: [id], onDelete: Cascade, map: "fk_commission_structure_institution")
+  institutionId String         @map("institution_id")
+
+  name   String
+  type   CommissionType
+  rate   Decimal        @db.Decimal(6, 3) // a percentage (e.g. 2 = 2%) or a fixed GHS amount per collection, per type
+  active Boolean        @default(true)
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("commission_structure")
+  @@schema("nexus")
+}
+
+enum CommissionStatus {
+  PENDING
+  PENDING_APPROVAL
+  PAID
+
+  @@schema("nexus")
+}
+
+model CommissionRecord {
+  id            String            @id(map: "pk_commission_record") @default(uuid())
+  institution   Institution       @relation(fields: [institutionId], references: [id], onDelete: Cascade, map: "fk_commission_record_institution")
+  institutionId String            @map("institution_id")
+  collectorId   String            @map("collector_id")
+  structureId   String            @map("structure_id")
+
+  periodStart      DateTime @map("period_start")
+  periodEnd        DateTime @map("period_end")
+  totalCollected   Decimal  @map("total_collected") @db.Decimal(14, 2)
+  collectionCount  Int      @map("collection_count")
+  commissionAmount Decimal  @map("commission_amount") @db.Decimal(14, 2)
+  status           CommissionStatus @default(PENDING)
+
+  paidAt    DateTime? @map("paid_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  @@map("commission_record")
   @@schema("nexus")
 }

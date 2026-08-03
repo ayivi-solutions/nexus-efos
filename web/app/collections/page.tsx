@@ -9,7 +9,7 @@ export default function CollectionsPage() {
   const toast = useToast();
   const [error, setError] = useState<string | null>(null);
   useErrorToast(error);
-  const [tab, setTab] = useState<"collectors" | "routes" | "transactions" | "settlements">("collectors");
+  const [tab, setTab] = useState<"collectors" | "routes" | "transactions" | "settlements" | "commission">("collectors");
 
   const [collectors, setCollectors] = useState<any[]>([]);
   const [employees, setEmployees] = useState<any[]>([]);
@@ -24,6 +24,10 @@ export default function CollectionsPage() {
   const [collectForm, setCollectForm] = useState({ type: "SAVINGS_DEPOSIT", collectorId: "", customerId: "", targetId: "", amount: "" });
   const [settlements, setSettlements] = useState<any[]>([]);
   const [settleForm, setSettleForm] = useState({ collectorId: "", settlementDate: "", actualAmount: "", notes: "" });
+  const [structures, setStructures] = useState<any[]>([]);
+  const [records, setRecords] = useState<any[]>([]);
+  const [structureForm, setStructureForm] = useState({ name: "", type: "PERCENTAGE_OF_COLLECTIONS", rate: "" });
+  const [calcForm, setCalcForm] = useState({ collectorId: "", structureId: "", periodStart: "", periodEnd: "" });
   const [busy, setBusy] = useState(false);
 
   function load() {
@@ -34,6 +38,35 @@ export default function CollectionsPage() {
     api.listCustomers().then((r) => setCustomers(r.customers)).catch(() => {});
     api.listCollectionTransactions().then((r) => setTransactions(r.transactions)).catch(() => {});
     api.listSettlements().then((r) => setSettlements(r.settlements)).catch(() => {});
+    api.listCommissionStructures().then((r) => setStructures(r.structures)).catch(() => {});
+    api.listCommissionRecords().then((r) => setRecords(r.records)).catch(() => {});
+  }
+
+  async function handleCreateStructure(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy(true); setError(null);
+    try {
+      await api.createCommissionStructure({ ...structureForm, rate: Number(structureForm.rate) });
+      setStructureForm({ name: "", type: "PERCENTAGE_OF_COLLECTIONS", rate: "" });
+      load();
+    } catch (err: any) { setError(err.message || "Could not create structure"); } finally { setBusy(false); }
+  }
+
+  async function handleCalculate(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy(true); setError(null);
+    try {
+      await api.calculateCommission(calcForm);
+      toast.success("Commission calculated.");
+      setCalcForm({ collectorId: "", structureId: "", periodStart: "", periodEnd: "" });
+      load();
+    } catch (err: any) { setError(err.message || "Could not calculate commission"); } finally { setBusy(false); }
+  }
+
+  async function handleRequestPayment(id: string) {
+    setBusy(true); setError(null);
+    try { await api.requestCommissionPayment(id); toast.info("Payment submitted for approval."); load(); }
+    catch (err: any) { setError(err.message || "Could not request payment"); } finally { setBusy(false); }
   }
 
   async function handleRecordSettlement(e: React.FormEvent) {
@@ -128,6 +161,7 @@ export default function CollectionsPage() {
           <button onClick={() => setTab("routes")} className={`btn-text ${tab === "routes" ? "text-gold-600 font-semibold" : "text-text-muted"}`}>Routes</button>
           <button onClick={() => setTab("transactions")} className={`btn-text ${tab === "transactions" ? "text-gold-600 font-semibold" : "text-text-muted"}`}>Daily Collections</button>
           <button onClick={() => setTab("settlements")} className={`btn-text ${tab === "settlements" ? "text-gold-600 font-semibold" : "text-text-muted"}`}>Settlements</button>
+          <button onClick={() => setTab("commission")} className={`btn-text ${tab === "commission" ? "text-gold-600 font-semibold" : "text-text-muted"}`}>Commission</button>
         </div>
 
         {tab === "collectors" && (
@@ -280,6 +314,53 @@ export default function CollectionsPage() {
                     </tr>
                   ))}
                   {settlements.length === 0 && <tr><td colSpan={6} className="text-center text-text-muted text-sm py-8">No settlements recorded.</td></tr>}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
+        {tab === "commission" && (
+          <>
+            <form onSubmit={handleCreateStructure} className="card p-4 mb-4 flex flex-wrap items-end gap-3">
+              <div className="font-medium text-[13px] text-text-900 mr-2">New structure:</div>
+              <input required placeholder="Name" className="input !text-[12px] !w-32" value={structureForm.name} onChange={(e) => setStructureForm((f) => ({ ...f, name: e.target.value }))} />
+              <select className="input !text-[12px]" value={structureForm.type} onChange={(e) => setStructureForm((f) => ({ ...f, type: e.target.value }))}>
+                <option value="PERCENTAGE_OF_COLLECTIONS">% of collections</option>
+                <option value="FIXED_PER_COLLECTION">Fixed per collection</option>
+              </select>
+              <input required type="number" step="0.01" placeholder="Rate" className="input !text-[12px] !w-24" value={structureForm.rate} onChange={(e) => setStructureForm((f) => ({ ...f, rate: e.target.value }))} />
+              <button type="submit" disabled={busy} className="btn-text text-gold-600">Add</button>
+            </form>
+
+            <form onSubmit={handleCalculate} className="card p-5 mb-6 flex flex-wrap items-end gap-3">
+              <select required className="input" value={calcForm.collectorId} onChange={(e) => setCalcForm((f) => ({ ...f, collectorId: e.target.value }))}>
+                <option value="">Collector…</option>
+                {collectors.map((c: any) => (<option key={c.id} value={c.id}>{c.employee?.fullName}</option>))}
+              </select>
+              <select required className="input" value={calcForm.structureId} onChange={(e) => setCalcForm((f) => ({ ...f, structureId: e.target.value }))}>
+                <option value="">Structure…</option>
+                {structures.map((s: any) => (<option key={s.id} value={s.id}>{s.name}</option>))}
+              </select>
+              <input required type="date" className="input" value={calcForm.periodStart} onChange={(e) => setCalcForm((f) => ({ ...f, periodStart: e.target.value }))} />
+              <input required type="date" className="input" value={calcForm.periodEnd} onChange={(e) => setCalcForm((f) => ({ ...f, periodEnd: e.target.value }))} />
+              <button type="submit" disabled={busy} className="btn-primary">Calculate</button>
+            </form>
+
+            <div className="card overflow-x-auto">
+              <table className="w-full min-w-[720px] text-sm table-modern">
+                <thead><tr><th>Period</th><th>Collector</th><th>Collected</th><th>Commission</th><th>Status</th><th></th></tr></thead>
+                <tbody>
+                  {records.map((r: any) => (
+                    <tr key={r.id}>
+                      <td className="text-text-700">{new Date(r.periodStart).toLocaleDateString()} – {new Date(r.periodEnd).toLocaleDateString()}</td>
+                      <td className="text-text-700">{collectors.find((c: any) => c.id === r.collectorId)?.employee?.fullName || "—"}</td>
+                      <td className="text-text-700">GHS {Number(r.totalCollected).toLocaleString()} ({r.collectionCount})</td>
+                      <td className="text-text-900 font-medium">GHS {Number(r.commissionAmount).toLocaleString()}</td>
+                      <td><span className={`badge ${r.status === "PAID" ? "bg-green-100 text-green-600" : r.status === "PENDING_APPROVAL" ? "bg-gold-500/15 text-gold-600" : "bg-paper-100 text-text-muted"}`}>{r.status.replaceAll("_", " ")}</span></td>
+                      <td>{r.status === "PENDING" && <button onClick={() => handleRequestPayment(r.id)} className="btn-text text-gold-600">Request payment</button>}</td>
+                    </tr>
+                  ))}
+                  {records.length === 0 && <tr><td colSpan={6} className="text-center text-text-muted text-sm py-8">No commission records.</td></tr>}
                 </tbody>
               </table>
             </div>

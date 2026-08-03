@@ -282,6 +282,12 @@ export const api = {
   listSettlements: () => request("/collections/settlements"),
   recordSettlement: (data: { collectorId: string; settlementDate: string; actualAmount: number; notes?: string }) => request("/collections/settlements", { method: "POST", body: JSON.stringify(data) }),
 
+  listCommissionStructures: () => request("/collections/commission-structures"),
+  createCommissionStructure: (data: { name: string; type: string; rate: number }) => request("/collections/commission-structures", { method: "POST", body: JSON.stringify(data) }),
+  listCommissionRecords: () => request("/collections/commission-records"),
+  calculateCommission: (data: { collectorId: string; structureId: string; periodStart: string; periodEnd: string }) => request("/collections/commission-records/calculate", { method: "POST", body: JSON.stringify(data) }),
+  requestCommissionPayment: (id: string) => request(`/collections/commission-records/${id}/request-payment`, { method: "POST" }),
+
   listSavingsAccounts: () => request("/savings"),
   getSavingsAccount: (id: string) => request(`/savings/${id}`),
   addSavingsHolder: (id: string, data: { customerId: string; role: string }) => request(`/savings/${id}/holders`, { method: "POST", body: JSON.stringify(data) }),

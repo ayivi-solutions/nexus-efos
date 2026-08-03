@@ -375,3 +375,77 @@ collectionsRouter.post("/settlements", requirePermission("collections.record"), 
 
   res.status(201).json({ settlement });
 });
+
+// -------------------------------------------------------------------------
+// §83 Commission Management
+// -------------------------------------------------------------------------
+
+collectionsRouter.get("/commission-structures", requirePermission("reports.view"), async (req: AuthedRequest, res) => {
+  const structures = await prisma.commissionStructure.findMany({ where: { institutionId: req.auth!.institutionId }, orderBy: { createdAt: "desc" } });
+  res.json({ structures });
+});
+
+const structureSchema = z.object({ name: z.string().min(1), type: z.enum(["PERCENTAGE_OF_COLLECTIONS", "FIXED_PER_COLLECTION"]), rate: z.number().positive() });
+
+collectionsRouter.post("/commission-structures", requirePermission("institution.configure"), async (req: AuthedRequest, res) => {
+  const parsed = structureSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+  const structure = await prisma.commissionStructure.create({ data: { institutionId: req.auth!.institutionId, ...parsed.data } as any });
+  res.status(201).json({ structure });
+});
+
+collectionsRouter.get("/commission-records", requirePermission("reports.view"), async (req: AuthedRequest, res) => {
+  const records = await prisma.commissionRecord.findMany({ where: { institutionId: req.auth!.institutionId }, orderBy: { periodStart: "desc" } });
+  res.json({ records });
+});
+
+const calcSchema = z.object({ collectorId: z.string(), structureId: z.string(), periodStart: z.string(), periodEnd: z.string() });
+
+// §83.2 "Commission Calculation" — totalCollected and collectionCount are
+// always computed here from real, completed CollectionTransactions for
+// the given collector and period; nothing about the underlying activity
+// is trusted from the request.
+collectionsRouter.post("/commission-records/calculate", requirePermission("institution.configure"), async (req: AuthedRequest, res) => {
+  const parsed = calcSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+  const structure = await prisma.commissionStructure.findFirst({ where: { id: parsed.data.structureId, institutionId: req.auth!.institutionId, active: true } });
+  if (!structure) return res.status(404).json({ error: "Active commission structure not found" });
+
+  const periodStart = new Date(parsed.data.periodStart);
+  const periodEnd = new Date(parsed.data.periodEnd);
+
+  const txns = await prisma.collectionTransaction.findMany({
+    where: { collectorId: parsed.data.collectorId, status: "COMPLETED", collectedAt: { gte: periodStart, lte: periodEnd } },
+  });
+  const totalCollected = txns.reduce((sum, t) => sum + Number(t.amount), 0);
+  const collectionCount = txns.length;
+
+  const commissionAmount =
+    structure.type === "PERCENTAGE_OF_COLLECTIONS"
+      ? Math.round(totalCollected * (Number(structure.rate) / 100) * 100) / 100
+      : Math.round(collectionCount * Number(structure.rate) * 100) / 100;
+
+  const record = await prisma.commissionRecord.create({
+    data: {
+      institutionId: req.auth!.institutionId, collectorId: parsed.data.collectorId, structureId: structure.id,
+      periodStart, periodEnd, totalCollected, collectionCount, commissionAmount,
+    },
+  });
+
+  res.status(201).json({ record });
+});
+
+// §83.3 "Approval required before payment"
+collectionsRouter.post("/commission-records/:id/request-payment", requirePermission("institution.configure"), async (req: AuthedRequest, res) => {
+  const record = await prisma.commissionRecord.findFirst({ where: { id: req.params.id, institutionId: req.auth!.institutionId } });
+  if (!record) return res.status(404).json({ error: "Commission record not found" });
+  if (record.status !== "PENDING") return res.status(400).json({ error: `Only a PENDING record can request payment (currently ${record.status})` });
+
+  await prisma.approvalRequest.create({
+    data: { institutionId: req.auth!.institutionId, type: "COMMISSION_PAYMENT", targetType: "CommissionRecord", targetId: record.id, payload: {}, reason: `Commission payment of GHS ${record.commissionAmount}`, requestedById: req.auth!.userId },
+  });
+  const updated = await prisma.commissionRecord.update({ where: { id: record.id }, data: { status: "PENDING_APPROVAL" } });
+
+  res.json({ record: updated });
+});

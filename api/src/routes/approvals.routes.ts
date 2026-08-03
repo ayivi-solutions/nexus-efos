@@ -107,6 +107,11 @@ async function applyApproval(request: { id: string; type: string; targetId: stri
       });
       break;
     }
+
+    case "COMMISSION_PAYMENT": {
+      await prisma.commissionRecord.update({ where: { id: request.targetId }, data: { status: "PAID", paidAt: new Date() } });
+      break;
+    }
     // BUSINESS_RULE_TRIGGERED needs no apply-side effect — it's a pure
     // blocking gate checked at loan disbursement time (see loan.routes.ts);
     // approving it just resolves the record so disbursement is unblocked.
@@ -163,6 +168,9 @@ approvalsRouter.post("/:id/reject", requirePermission("institution.configure"), 
   }
   if (request.type === "BUSINESS_RULE_ACTIVATION") {
     await prisma.businessRule.update({ where: { id: request.targetId }, data: { status: "DRAFT" } });
+  }
+  if (request.type === "COMMISSION_PAYMENT") {
+    await prisma.commissionRecord.update({ where: { id: request.targetId }, data: { status: "PENDING" } });
   }
 
   await prisma.approvalRequest.update({
