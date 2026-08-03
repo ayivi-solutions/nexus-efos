@@ -351,6 +351,14 @@ export const api = {
   listCashBalancings: () => request("/cash-vault/balancings"),
   recordCashBalancing: (data: any) => request("/cash-vault/balancings", { method: "POST", body: JSON.stringify(data) }),
 
+  listGLAccounts: () => request("/general-ledger/accounts"),
+  createGLAccount: (data: any) => request("/general-ledger/accounts", { method: "POST", body: JSON.stringify(data) }),
+  setGLAccountStatus: (id: string, status: "ACTIVE" | "INACTIVE") => request(`/general-ledger/accounts/${id}/status`, { method: "PATCH", body: JSON.stringify({ status }) }),
+
+  listJournals: () => request("/general-ledger/journals"),
+  createJournal: (data: any) => request("/general-ledger/journals", { method: "POST", body: JSON.stringify(data) }),
+  requestJournalPosting: (id: string) => request(`/general-ledger/journals/${id}/request-posting`, { method: "POST" }),
+
   listSavingsAccounts: () => request("/savings"),
   getSavingsAccount: (id: string) => request(`/savings/${id}`),
   addSavingsHolder: (id: string, data: { customerId: string; role: string }) => request(`/savings/${id}/holders`, { method: "POST", body: JSON.stringify(data) }),

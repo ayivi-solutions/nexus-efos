@@ -3,6 +3,7 @@ import { prisma } from "../lib/prisma";
 import { requireAuth, AuthedRequest } from "../middleware/auth";
 import { requirePermission } from "../middleware/rbac";
 import { generateSchedule, round2 } from "../lib/loanSchedule";
+import { isBalanced, balanceEffect } from "../lib/generalLedger";
 
 export const approvalsRouter = Router();
 approvalsRouter.use(requireAuth);
@@ -157,6 +158,32 @@ async function applyApproval(request: { id: string; type: string; targetId: stri
       break;
     }
 
+    // doc §119.3 "Only validated transactions are posted" / "Balanced
+    // accounting entries are maintained" — everything is re-checked here
+    // at posting time, not trusted from when the journal was created:
+    // debits still equal credits, and every account is still ACTIVE. If
+    // either check fails now, the journal is rejected rather than posted
+    // with stale validation.
+    case "JOURNAL_POSTING": {
+      const journal = await prisma.journal.findUniqueOrThrow({ where: { id: request.targetId }, include: { lines: { include: { account: true } } } });
+
+      const stillBalanced = isBalanced(journal.lines.map((l) => ({ debit: Number(l.debit), credit: Number(l.credit) })));
+      const allActive = journal.lines.every((l) => l.account.status === "ACTIVE");
+
+      if (!stillBalanced || !allActive) {
+        await prisma.journal.update({ where: { id: journal.id }, data: { status: "REJECTED" } });
+        break;
+      }
+
+      for (const line of journal.lines) {
+        const effect = balanceEffect(line.account.category as any, Number(line.debit), Number(line.credit));
+        await prisma.gLAccount.update({ where: { id: line.accountId }, data: { balance: { increment: effect } } });
+      }
+
+      await prisma.journal.update({ where: { id: journal.id }, data: { status: "POSTED", postedById: approvedById, postedAt: new Date() } });
+      break;
+    }
+
     case "SAVINGS_RESTRICTION_CREATE": {
       await prisma.savingsRestriction.update({ where: { id: request.targetId }, data: { status: "ACTIVE", approvedById, activatedAt: new Date() } });
       break;
@@ -244,6 +271,13 @@ approvalsRouter.post("/:id/reject", requirePermission("institution.configure"), 
   // correctly keeps the vault blocked from closing (see §115.3's gate on
   // the close endpoint) until the variance is genuinely investigated and
   // re-resolved, rather than a dangling state needing cleanup.
+  if (request.type === "JOURNAL_POSTING") {
+    // Reverts to DRAFT, not a terminal REJECTED state, since the natural
+    // next step is fixing whatever the approver objected to and
+    // resubmitting — unlike a cash variance, there's no reason to force
+    // the account and journal to stay locked out of correction.
+    await prisma.journal.update({ where: { id: request.targetId }, data: { status: "DRAFT" } });
+  }
 
   await prisma.approvalRequest.update({
     where: { id: request.id },

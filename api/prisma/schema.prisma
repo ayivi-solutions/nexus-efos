@@ -93,6 +93,8 @@ model Institution {
   cashLedgerEntries       CashLedgerEntry[]
   cashTransfers           CashTransfer[]
   cashBalancings          CashBalancing[]
+  glAccounts              GLAccount[]
+  journals                Journal[]
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -827,6 +829,7 @@ enum ApprovalRequestType {
   SAVINGS_RESTRICTION_REMOVE  // doc §54
   CASH_TRANSFER  // doc §114
   CASH_BALANCING_VARIANCE  // doc §115
+  JOURNAL_POSTING  // doc §118
 
   @@schema("nexus")
 }
@@ -2674,5 +2677,122 @@ model CashBalancing {
 
   @@unique([holderType, holderId, balancingDate], map: "uq_cash_balancing_holder_date")
   @@map("cash_balancing")
+  @@schema("nexus")
+}
+
+// doc §117 Chart of Accounts Management, §118 Journal Management, §119
+// Ledger Posting Management — the foundational double-entry engine.
+// §116.4's full integration (every other module auto-posting into this)
+// is a deliberately separate, later increment — this is the engine
+// itself, real and standalone, not yet wired to Savings/Loans/Cash-Vault.
+enum GLAccountCategory {
+  ASSET
+  LIABILITY
+  EQUITY
+  INCOME
+  EXPENSE
+
+  @@schema("nexus")
+}
+
+enum GLAccountStatus {
+  ACTIVE
+  INACTIVE
+
+  @@schema("nexus")
+}
+
+model GLAccount {
+  id            String            @id(map: "pk_gl_account") @default(uuid())
+  institution   Institution       @relation(fields: [institutionId], references: [id], onDelete: Cascade, map: "fk_gl_account_institution")
+  institutionId String            @map("institution_id")
+
+  code     String
+  name     String
+  category GLAccountCategory
+  parent   GLAccount?        @relation("AccountHierarchy", fields: [parentId], references: [id], onDelete: SetNull, map: "fk_gl_account_parent")
+  parentId String?           @map("parent_id")
+  children GLAccount[]       @relation("AccountHierarchy")
+  currency String            @default("GHS")
+  branchId String?           @map("branch_id") // null = institution-wide account
+  status   GLAccountStatus   @default(ACTIVE)
+  // §117 doesn't literally require a live running balance, but a real
+  // ledger without one isn't genuinely useful — maintained on every
+  // posting, same discipline as every other balance field in this app.
+  balance  Decimal           @default(0) @db.Decimal(16, 2)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  journalLines JournalLine[]
+
+  @@unique([institutionId, code], map: "uq_gl_account_institution_code")
+  @@map("gl_account")
+  @@schema("nexus")
+}
+
+enum JournalType {
+  MANUAL
+  AUTOMATIC
+  RECURRING
+  REVERSING
+  ADJUSTMENT
+
+  @@schema("nexus")
+}
+
+enum JournalStatus {
+  DRAFT
+  PENDING_APPROVAL
+  POSTED
+  REJECTED
+
+  @@schema("nexus")
+}
+
+// §118.3 "Debits equal credits" is enforced at posting time (see
+// lib/generalLedger.ts, tested before it touches a route), not just at
+// the UI layer. "Posted journals cannot be deleted" — there is
+// deliberately no delete endpoint for a POSTED journal, not just a rule
+// nobody happens to break.
+model Journal {
+  id            String        @id(map: "pk_journal") @default(uuid())
+  institution   Institution   @relation(fields: [institutionId], references: [id], onDelete: Cascade, map: "fk_journal_institution")
+  institutionId String        @map("institution_id")
+
+  journalNumber String        @unique @map("journal_number")
+  type          JournalType   @default(MANUAL)
+  description   String
+  status        JournalStatus @default(DRAFT)
+
+  // §118.3 "Reversals preserve original journal references"
+  reversalOf   Journal?  @relation("JournalReversal", fields: [reversalOfId], references: [id], onDelete: SetNull, map: "fk_journal_reversal_of")
+  reversalOfId String?   @map("reversal_of_id")
+  reversedBy   Journal[] @relation("JournalReversal")
+
+  postedById String?   @map("posted_by_id")
+  postedAt   DateTime? @map("posted_at")
+
+  createdById String   @map("created_by_id")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  lines JournalLine[]
+
+  @@map("journal")
+  @@schema("nexus")
+}
+
+model JournalLine {
+  id        String   @id(map: "pk_journal_line") @default(uuid())
+  journal   Journal  @relation(fields: [journalId], references: [id], onDelete: Cascade, map: "fk_journal_line_journal")
+  journalId String   @map("journal_id")
+  account   GLAccount @relation(fields: [accountId], references: [id], onDelete: Restrict, map: "fk_journal_line_account")
+  accountId String   @map("account_id")
+
+  debit       Decimal @default(0) @db.Decimal(16, 2)
+  credit      Decimal @default(0) @db.Decimal(16, 2)
+  description String?
+
+  @@map("journal_line")
   @@schema("nexus")
 }
