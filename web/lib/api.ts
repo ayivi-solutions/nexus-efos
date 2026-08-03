@@ -248,6 +248,12 @@ export const api = {
   approveGuarantor: (guarantorId: string) => request(`/loans/guarantors/${guarantorId}/approve`, { method: "POST" }),
   releaseGuarantor: (guarantorId: string, reason?: string) => request(`/loans/guarantors/${guarantorId}/release`, { method: "POST", body: JSON.stringify({ reason }) }),
 
+  listCollateral: (loanId: string) => request(`/loans/${loanId}/collateral`),
+  addCollateral: (loanId: string, data: any) => request(`/loans/${loanId}/collateral`, { method: "POST", body: JSON.stringify(data) }),
+  revalueCollateral: (collateralId: string, estimatedValue: number) => request(`/loans/collateral/${collateralId}/revalue`, { method: "POST", body: JSON.stringify({ estimatedValue }) }),
+  releaseCollateral: (collateralId: string, reason?: string) => request(`/loans/collateral/${collateralId}/release`, { method: "POST", body: JSON.stringify({ reason }) }),
+  realiseCollateral: (collateralId: string, realisedAmount: number) => request(`/loans/collateral/${collateralId}/realise`, { method: "POST", body: JSON.stringify({ realisedAmount }) }),
+
   listSavingsAccounts: () => request("/savings"),
   getSavingsAccount: (id: string) => request(`/savings/${id}`),
   addSavingsHolder: (id: string, data: { customerId: string; role: string }) => request(`/savings/${id}/holders`, { method: "POST", body: JSON.stringify(data) }),

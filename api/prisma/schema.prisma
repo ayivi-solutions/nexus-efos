@@ -76,6 +76,7 @@ model Institution {
   loanPenalties           LoanPenalty[]
   creditAssessments       CreditAssessment[]
   guarantors              Guarantor[]
+  collateral              Collateral[]
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -1033,6 +1034,7 @@ model Loan {
   penalties      LoanPenalty[]
   creditAssessment CreditAssessment?
   guarantors     Guarantor[]
+  collateral     Collateral[]
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -1884,5 +1886,58 @@ model Guarantor {
   createdAt DateTime @default(now()) @map("created_at")
 
   @@map("guarantor")
+  @@schema("nexus")
+}
+
+// doc §66 Collateral Management.
+enum CollateralType {
+  LAND
+  BUILDING
+  VEHICLE
+  EQUIPMENT
+  INVENTORY
+  OTHER
+
+  @@schema("nexus")
+}
+
+enum CollateralStatus {
+  PLEDGED
+  RELEASED
+  REALISED
+
+  @@schema("nexus")
+}
+
+model Collateral {
+  id            String           @id(map: "pk_collateral") @default(uuid())
+  institution   Institution      @relation(fields: [institutionId], references: [id], onDelete: Cascade, map: "fk_collateral_institution")
+  institutionId String           @map("institution_id")
+  loan          Loan             @relation(fields: [loanId], references: [id], onDelete: Cascade, map: "fk_collateral_loan")
+  loanId        String           @map("loan_id")
+
+  type              CollateralType
+  description       String
+  ownerName         String    @map("owner_name")
+  ownershipVerified Boolean   @default(false) @map("ownership_verified")
+
+  estimatedValue Decimal   @map("estimated_value") @db.Decimal(14, 2)
+  valuationDate  DateTime  @map("valuation_date")
+  valuedById     String?   @map("valued_by_id")
+
+  insuranceRequired   Boolean   @default(false) @map("insurance_required")
+  insurancePolicyNo   String?   @map("insurance_policy_no")
+  insuranceExpiryDate DateTime? @map("insurance_expiry_date")
+
+  status       CollateralStatus @default(PLEDGED)
+  releasedById String?          @map("released_by_id")
+  releasedAt   DateTime?        @map("released_at")
+  releaseReason String?         @map("release_reason")
+  realisedAt   DateTime?        @map("realised_at")
+  realisedAmount Decimal?       @map("realised_amount") @db.Decimal(14, 2)
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("collateral")
   @@schema("nexus")
 }

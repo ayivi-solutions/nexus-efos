@@ -703,3 +703,115 @@ loanRouter.post("/guarantors/:guarantorId/release", requirePermission("loans.app
 
   res.json({ guarantor: updated });
 });
+
+// =========================================================================
+// doc §66 Collateral Management
+// =========================================================================
+
+const collateralSchema = z.object({
+  type: z.enum(["LAND", "BUILDING", "VEHICLE", "EQUIPMENT", "INVENTORY", "OTHER"]),
+  description: z.string().min(2),
+  ownerName: z.string().min(2),
+  ownershipVerified: z.boolean().optional(),
+  estimatedValue: z.number().positive(),
+  valuationDate: z.string(),
+  insuranceRequired: z.boolean().optional(),
+  insurancePolicyNo: z.string().optional(),
+  insuranceExpiryDate: z.string().optional(),
+});
+
+loanRouter.get("/:id/collateral", requirePermission("reports.view"), async (req: AuthedRequest, res) => {
+  const loan = await prisma.loan.findFirst({ where: { id: req.params.id, institutionId: req.auth!.institutionId } });
+  if (!loan) return res.status(404).json({ error: "Loan not found" });
+  const collateral = await prisma.collateral.findMany({ where: { loanId: loan.id }, orderBy: { createdAt: "asc" } });
+  res.json({ collateral });
+});
+
+// §66.4 "Collateral is linked to approved loans" — registration is
+// blocked before the loan reaches at least APPROVED status.
+loanRouter.post("/:id/collateral", requirePermission("loans.initiate"), async (req: AuthedRequest, res) => {
+  const parsed = collateralSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+  const loan = await prisma.loan.findFirst({ where: { id: req.params.id, institutionId: req.auth!.institutionId } });
+  if (!loan) return res.status(404).json({ error: "Loan not found" });
+  if (!["APPROVED", "DISBURSED", "ACTIVE"].includes(loan.status)) {
+    return res.status(400).json({ error: "Collateral can only be linked to an APPROVED or later-stage loan" });
+  }
+
+  const collateral = await prisma.collateral.create({
+    data: {
+      institutionId: req.auth!.institutionId, loanId: loan.id,
+      type: parsed.data.type as any, description: parsed.data.description, ownerName: parsed.data.ownerName,
+      ownershipVerified: parsed.data.ownershipVerified ?? false, estimatedValue: parsed.data.estimatedValue,
+      valuationDate: new Date(parsed.data.valuationDate), valuedById: req.auth!.userId,
+      insuranceRequired: parsed.data.insuranceRequired ?? false, insurancePolicyNo: parsed.data.insurancePolicyNo,
+      insuranceExpiryDate: parsed.data.insuranceExpiryDate ? new Date(parsed.data.insuranceExpiryDate) : undefined,
+    },
+  });
+
+  await prisma.auditLog.create({
+    data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "loan.collateral_registered", resource: "loan", resourceId: loan.id, metadata: { collateralId: collateral.id } },
+  });
+
+  res.status(201).json({ collateral });
+});
+
+// §66.3 Revaluation
+loanRouter.post("/collateral/:collateralId/revalue", requirePermission("loans.approve"), async (req: AuthedRequest, res) => {
+  const { estimatedValue } = req.body as { estimatedValue?: number };
+  if (!estimatedValue || estimatedValue <= 0) return res.status(400).json({ error: "estimatedValue must be positive" });
+
+  const collateral = await prisma.collateral.findFirst({ where: { id: req.params.collateralId, institutionId: req.auth!.institutionId } });
+  if (!collateral) return res.status(404).json({ error: "Collateral not found" });
+
+  const updated = await prisma.collateral.update({
+    where: { id: collateral.id },
+    data: { estimatedValue, valuationDate: new Date(), valuedById: req.auth!.userId },
+  });
+
+  await prisma.auditLog.create({
+    data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "loan.collateral_revalued", resource: "loan", resourceId: collateral.loanId, metadata: { collateralId: collateral.id, newValue: estimatedValue } },
+  });
+
+  res.json({ collateral: updated });
+});
+
+loanRouter.post("/collateral/:collateralId/release", requirePermission("loans.approve"), async (req: AuthedRequest, res) => {
+  const { reason } = req.body as { reason?: string };
+  const collateral = await prisma.collateral.findFirst({ where: { id: req.params.collateralId, institutionId: req.auth!.institutionId } });
+  if (!collateral) return res.status(404).json({ error: "Collateral not found" });
+  if (collateral.status !== "PLEDGED") return res.status(400).json({ error: `Only PLEDGED collateral can be released (currently ${collateral.status})` });
+
+  const updated = await prisma.collateral.update({
+    where: { id: collateral.id },
+    data: { status: "RELEASED", releasedById: req.auth!.userId, releasedAt: new Date(), releaseReason: reason },
+  });
+
+  await prisma.auditLog.create({
+    data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "loan.collateral_released", resource: "loan", resourceId: collateral.loanId, metadata: { collateralId: collateral.id, reason } },
+  });
+
+  res.json({ collateral: updated });
+});
+
+// §66.3 Collateral Realisation — the institution takes and disposes of
+// the asset to recover an unpaid loan.
+loanRouter.post("/collateral/:collateralId/realise", requirePermission("loans.approve"), async (req: AuthedRequest, res) => {
+  const { realisedAmount } = req.body as { realisedAmount?: number };
+  if (!realisedAmount || realisedAmount < 0) return res.status(400).json({ error: "realisedAmount must be provided" });
+
+  const collateral = await prisma.collateral.findFirst({ where: { id: req.params.collateralId, institutionId: req.auth!.institutionId } });
+  if (!collateral) return res.status(404).json({ error: "Collateral not found" });
+  if (collateral.status !== "PLEDGED") return res.status(400).json({ error: `Only PLEDGED collateral can be realised (currently ${collateral.status})` });
+
+  const updated = await prisma.collateral.update({
+    where: { id: collateral.id },
+    data: { status: "REALISED", realisedAt: new Date(), realisedAmount },
+  });
+
+  await prisma.auditLog.create({
+    data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "loan.collateral_realised", resource: "loan", resourceId: collateral.loanId, metadata: { collateralId: collateral.id, realisedAmount } },
+  });
+
+  res.json({ collateral: updated });
+});

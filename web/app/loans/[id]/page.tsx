@@ -52,6 +52,8 @@ export default function LoanDetailPage() {
   const [assessmentForm, setAssessmentForm] = useState({ monthlyIncome: "", monthlyExpenses: "", creditBureauChecked: false, creditBureauNotes: "" });
   const [guarantors, setGuarantors] = useState<any[]>([]);
   const [guarantorForm, setGuarantorForm] = useState({ fullName: "", phone: "", relationship: "", guaranteeLimit: "" });
+  const [collateralList, setCollateralList] = useState<any[]>([]);
+  const [collateralForm, setCollateralForm] = useState({ type: "LAND", description: "", ownerName: "", estimatedValue: "", valuationDate: "" });
 
   function load() {
     api.getLoan(id).then((res) => setLoan(res.loan)).catch((err) => setError(err.message));
@@ -59,6 +61,7 @@ export default function LoanDetailPage() {
     api.listLoanPenalties(id).then((res) => setPenalties(res.penalties)).catch(() => {});
     api.getCreditAssessment(id).then((res) => setAssessment(res.assessment)).catch(() => {});
     api.listGuarantors(id).then((res) => setGuarantors(res.guarantors)).catch(() => {});
+    api.listCollateral(id).then((res) => setCollateralList(res.collateral)).catch(() => {});
   }
 
   useEffect(() => {
@@ -156,6 +159,27 @@ export default function LoanDetailPage() {
     setBusy(true); setError(null);
     try { await api.releaseGuarantor(gid, reason); load(); }
     catch (err: any) { setError(err.message || "Could not release guarantor"); }
+    finally { setBusy(false); }
+  }
+
+  async function handleAddCollateral(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy(true); setError(null);
+    try {
+      await api.addCollateral(id, { ...collateralForm, estimatedValue: Number(collateralForm.estimatedValue) });
+      setCollateralForm({ type: "LAND", description: "", ownerName: "", estimatedValue: "", valuationDate: "" });
+      toast.success("Collateral registered.");
+      load();
+    } catch (err: any) { setError(err.message || "Could not add collateral"); }
+    finally { setBusy(false); }
+  }
+
+  async function handleReleaseCollateral(cid: string) {
+    const reason = window.prompt("Reason for releasing this collateral:");
+    if (reason === null) return;
+    setBusy(true); setError(null);
+    try { await api.releaseCollateral(cid, reason); load(); }
+    catch (err: any) { setError(err.message || "Could not release collateral"); }
     finally { setBusy(false); }
   }
 
@@ -454,6 +478,54 @@ export default function LoanDetailPage() {
                     </tr>
                   ))}
                   {guarantors.length === 0 && <tr><td colSpan={6} className="text-center text-text-muted text-sm py-8">No guarantors registered.</td></tr>}
+                </tbody>
+              </table>
+            </div>
+
+            {/* doc §66 Collateral Management */}
+            <h2 className="font-display font-semibold text-lg text-ink-900 mb-3 mt-10">Collateral</h2>
+            {["APPROVED", "DISBURSED", "ACTIVE"].includes(loan.status) && (
+              <form onSubmit={handleAddCollateral} className="card p-5 mb-4 flex flex-wrap items-end gap-3">
+                <label className="block">
+                  <span className="block text-[13px] text-text-500 mb-1.5">Type</span>
+                  <select className="input" value={collateralForm.type} onChange={(e) => setCollateralForm((f) => ({ ...f, type: e.target.value }))}>
+                    {["LAND", "BUILDING", "VEHICLE", "EQUIPMENT", "INVENTORY", "OTHER"].map((t) => (<option key={t} value={t}>{t}</option>))}
+                  </select>
+                </label>
+                <label className="block flex-1 min-w-[160px]">
+                  <span className="block text-[13px] text-text-500 mb-1.5">Description</span>
+                  <input required className="input" value={collateralForm.description} onChange={(e) => setCollateralForm((f) => ({ ...f, description: e.target.value }))} />
+                </label>
+                <label className="block">
+                  <span className="block text-[13px] text-text-500 mb-1.5">Owner name</span>
+                  <input required className="input" value={collateralForm.ownerName} onChange={(e) => setCollateralForm((f) => ({ ...f, ownerName: e.target.value }))} />
+                </label>
+                <label className="block">
+                  <span className="block text-[13px] text-text-500 mb-1.5">Value (GHS)</span>
+                  <input required type="number" step="0.01" min="0.01" className="input !w-32" value={collateralForm.estimatedValue} onChange={(e) => setCollateralForm((f) => ({ ...f, estimatedValue: e.target.value }))} />
+                </label>
+                <label className="block">
+                  <span className="block text-[13px] text-text-500 mb-1.5">Valuation date</span>
+                  <input required type="date" className="input" value={collateralForm.valuationDate} onChange={(e) => setCollateralForm((f) => ({ ...f, valuationDate: e.target.value }))} />
+                </label>
+                <button type="submit" disabled={busy} className="btn-primary">Add</button>
+              </form>
+            )}
+            <div className="card overflow-x-auto mb-10">
+              <table className="w-full min-w-[640px] text-sm table-modern">
+                <thead><tr><th>Type</th><th>Description</th><th>Owner</th><th>Value</th><th>Status</th><th></th></tr></thead>
+                <tbody>
+                  {collateralList.map((c: any) => (
+                    <tr key={c.id}>
+                      <td className="text-text-700">{c.type}</td>
+                      <td className="text-text-900">{c.description}</td>
+                      <td className="text-text-700">{c.ownerName}</td>
+                      <td className="text-text-900 font-medium">GHS {Number(c.estimatedValue).toLocaleString()}</td>
+                      <td><span className={`badge ${c.status === "PLEDGED" ? "bg-gold-500/15 text-gold-600" : c.status === "RELEASED" ? "bg-paper-100 text-text-muted" : "bg-rose-100 text-rose-600"}`}>{c.status}</span></td>
+                      <td>{c.status === "PLEDGED" && <button onClick={() => handleReleaseCollateral(c.id)} className="btn-text text-rose-600">Release</button>}</td>
+                    </tr>
+                  ))}
+                  {collateralList.length === 0 && <tr><td colSpan={6} className="text-center text-text-muted text-sm py-8">No collateral registered.</td></tr>}
                 </tbody>
               </table>
             </div>
