@@ -449,3 +449,80 @@ collectionsRouter.post("/commission-records/:id/request-payment", requirePermiss
 
   res.json({ record: updated });
 });
+
+// -------------------------------------------------------------------------
+// §85 Collection Reporting — the real, achievable parts (Daily Collection,
+// Collector Performance, Route Performance, Outstanding, Commission, Cash
+// Settlement, Exception Reports). §85.2-3's "AI-Based Insights" and
+// "Predictive Forecasts" deliberately not built here — no AI/ML
+// infrastructure exists in this project yet; a dedicated AI spec is in
+// progress and this report will extend to use it once that lands.
+// -------------------------------------------------------------------------
+
+collectionsRouter.get("/reports/summary", requirePermission("reports.view"), async (req: AuthedRequest, res) => {
+  const institutionId = req.auth!.institutionId;
+  const { from, to } = req.query as { from?: string; to?: string };
+  const rangeStart = from ? new Date(from) : new Date(new Date().setHours(0, 0, 0, 0));
+  const rangeEnd = to ? new Date(to) : new Date();
+
+  const [collectors, routes, transactions, settlements, records] = await Promise.all([
+    prisma.collector.findMany({ where: { institutionId } }),
+    prisma.collectionRoute.findMany({ where: { institutionId }, include: { customers: { where: { active: true } } } }),
+    prisma.collectionTransaction.findMany({ where: { institutionId, collectedAt: { gte: rangeStart, lte: rangeEnd } } }),
+    prisma.collectionSettlement.findMany({ where: { institutionId, settlementDate: { gte: rangeStart, lte: rangeEnd } } }),
+    prisma.commissionRecord.findMany({ where: { institutionId } }),
+  ]);
+
+  const employeeIds = collectors.map((c) => c.employeeId);
+  const employees = await prisma.employee.findMany({ where: { id: { in: employeeIds } }, select: { id: true, fullName: true } });
+  const empName: Record<string, string> = Object.fromEntries(employees.map((e) => [e.id, e.fullName]));
+
+  // §85.2 Daily Collection Report
+  const completedTxns = transactions.filter((t) => t.status === "COMPLETED");
+  const dailyCollection = {
+    totalAmount: completedTxns.reduce((s, t) => s + Number(t.amount), 0),
+    count: completedTxns.length,
+    byType: {
+      SAVINGS_DEPOSIT: completedTxns.filter((t) => t.type === "SAVINGS_DEPOSIT").reduce((s, t) => s + Number(t.amount), 0),
+      LOAN_REPAYMENT: completedTxns.filter((t) => t.type === "LOAN_REPAYMENT").reduce((s, t) => s + Number(t.amount), 0),
+    },
+  };
+
+  // §85.2 Collector Performance Report
+  const collectorPerformance = collectors.map((c) => {
+    const own = completedTxns.filter((t) => t.collectorId === c.id);
+    return {
+      collectorId: c.id, name: empName[c.employeeId] || "—", availability: c.availability,
+      totalCollected: own.reduce((s, t) => s + Number(t.amount), 0), collectionCount: own.length,
+    };
+  }).sort((a, b) => b.totalCollected - a.totalCollected);
+
+  // §85.2 Route Performance Report
+  const routePerformance = routes.map((r) => ({
+    routeId: r.id, name: r.name, customerCount: r.customers.length,
+    collected: completedTxns.filter((t) => r.customers.some((rc) => rc.customerId === t.customerId)).reduce((s, t) => s + Number(t.amount), 0),
+  }));
+
+  // §85.2 Cash Settlement Report
+  const cashSettlement = {
+    totalExpected: settlements.reduce((s, x) => s + Number(x.expectedAmount), 0),
+    totalActual: settlements.reduce((s, x) => s + Number(x.actualAmount), 0),
+    reconciled: settlements.filter((x) => x.status === "RECONCILED").length,
+    pendingVariance: settlements.filter((x) => x.status === "VARIANCE_PENDING_APPROVAL").length,
+  };
+
+  // §85.2 Exception Report — collectors suspended, and unresolved variances
+  const exceptions = {
+    suspendedCollectors: collectors.filter((c) => c.availability === "SUSPENDED").map((c) => empName[c.employeeId] || c.id),
+    unresolvedVariances: settlements.filter((x) => x.status === "VARIANCE_PENDING_APPROVAL").length,
+  };
+
+  // §85.2 Commission Report (all-time, not range-bound, since commission periods can span multiple days)
+  const commissionSummary = {
+    pending: records.filter((r) => r.status === "PENDING").reduce((s, r) => s + Number(r.commissionAmount), 0),
+    pendingApproval: records.filter((r) => r.status === "PENDING_APPROVAL").reduce((s, r) => s + Number(r.commissionAmount), 0),
+    paid: records.filter((r) => r.status === "PAID").reduce((s, r) => s + Number(r.commissionAmount), 0),
+  };
+
+  res.json({ dailyCollection, collectorPerformance, routePerformance, cashSettlement, exceptions, commissionSummary });
+});

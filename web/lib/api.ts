@@ -287,6 +287,7 @@ export const api = {
   listCommissionRecords: () => request("/collections/commission-records"),
   calculateCommission: (data: { collectorId: string; structureId: string; periodStart: string; periodEnd: string }) => request("/collections/commission-records/calculate", { method: "POST", body: JSON.stringify(data) }),
   requestCommissionPayment: (id: string) => request(`/collections/commission-records/${id}/request-payment`, { method: "POST" }),
+  getCollectionsReport: (from?: string, to?: string) => request(`/collections/reports/summary${from ? `?from=${from}&to=${to}` : ""}`),
 
   listSavingsAccounts: () => request("/savings"),
   getSavingsAccount: (id: string) => request(`/savings/${id}`),

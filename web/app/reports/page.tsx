@@ -6,6 +6,7 @@ import { AppShell } from "@/components/AppShell";
 const REPORTS = [
   { href: "/reports/loans", title: "Loan Portfolio Report", desc: "By branch, by status, aging analysis, full ledger export." },
   { href: "/reports/savings", title: "Savings Report", desc: "Balances by branch, net deposit/withdrawal flow, top accounts." },
+  { href: "/reports/collections", title: "Collections Report", desc: "Collector and route performance, cash settlement, exceptions, commission." },
   { href: "/reports/customers", title: "Customer Report", desc: "Segmentation, lifecycle funnel, KYC compliance rate, branch mix." },
 ];
 
