@@ -95,8 +95,6 @@ model Institution {
   cashBalancings          CashBalancing[]
   glAccounts              GLAccount[]
   journals                Journal[]
-  fiscalYears             FiscalYear[]
-  financialPeriods        FinancialPeriod[]
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -832,7 +830,6 @@ enum ApprovalRequestType {
   CASH_TRANSFER  // doc §114
   CASH_BALANCING_VARIANCE  // doc §115
   JOURNAL_POSTING  // doc §118
-  FINANCIAL_PERIOD_REOPEN  // doc §120
 
   @@schema("nexus")
 }
@@ -2767,11 +2764,6 @@ model Journal {
   type          JournalType   @default(MANUAL)
   description   String
   status        JournalStatus @default(DRAFT)
-  // doc §120.3 "Closed periods prevent unauthorised postings" — the date
-  // that determines which FinancialPeriod this journal belongs to,
-  // checked both at creation and again at posting time (see
-  // generalLedger.routes.ts and approvals.routes.ts).
-  postingDate   DateTime      @default(now()) @map("posting_date")
 
   // §118.3 "Reversals preserve original journal references"
   reversalOf   Journal?  @relation("JournalReversal", fields: [reversalOfId], references: [id], onDelete: SetNull, map: "fk_journal_reversal_of")
@@ -2780,12 +2772,6 @@ model Journal {
 
   postedById String?   @map("posted_by_id")
   postedAt   DateTime? @map("posted_at")
-  // Populated whenever a journal is auto-rejected at posting time
-  // (imbalance re-check failed, an account went inactive, or its period
-  // closed in the gap between drafting and approval) — a silent REJECTED
-  // status with no explanation would leave the approver with no idea
-  // what actually happened.
-  rejectionReason String? @map("rejection_reason")
 
   createdById String   @map("created_by_id")
   createdAt   DateTime @default(now()) @map("created_at")
@@ -2808,69 +2794,5 @@ model JournalLine {
   description String?
 
   @@map("journal_line")
-  @@schema("nexus")
-}
-
-// doc §120 Financial Period Management. §120.3 "Closed periods prevent
-// unauthorised postings" — genuinely wired into Journal posting (both at
-// creation, so a journal can't even be drafted against a closed period,
-// and re-checked at approval time, since a period could close in the gap
-// between a journal being drafted and its posting being approved).
-enum FiscalYearStatus {
-  OPEN
-  CLOSED
-
-  @@schema("nexus")
-}
-
-model FiscalYear {
-  id            String           @id(map: "pk_fiscal_year") @default(uuid())
-  institution   Institution      @relation(fields: [institutionId], references: [id], onDelete: Cascade, map: "fk_fiscal_year_institution")
-  institutionId String           @map("institution_id")
-
-  name      String
-  startDate DateTime         @map("start_date")
-  endDate   DateTime         @map("end_date")
-  status    FiscalYearStatus @default(OPEN)
-
-  createdAt DateTime @default(now()) @map("created_at")
-
-  periods FinancialPeriod[]
-
-  @@unique([institutionId, name], map: "uq_fiscal_year_institution_name")
-  @@map("fiscal_year")
-  @@schema("nexus")
-}
-
-enum FinancialPeriodStatus {
-  OPEN
-  CLOSED
-  LOCKED
-
-  @@schema("nexus")
-}
-
-model FinancialPeriod {
-  id            String                @id(map: "pk_financial_period") @default(uuid())
-  institution   Institution           @relation(fields: [institutionId], references: [id], onDelete: Cascade, map: "fk_financial_period_institution")
-  institutionId String                @map("institution_id")
-  fiscalYear    FiscalYear            @relation(fields: [fiscalYearId], references: [id], onDelete: Cascade, map: "fk_financial_period_fiscal_year")
-  fiscalYearId  String                @map("fiscal_year_id")
-
-  name      String
-  startDate DateTime               @map("start_date")
-  endDate   DateTime               @map("end_date")
-  status    FinancialPeriodStatus  @default(OPEN)
-
-  closedById  String?   @map("closed_by_id")
-  closedAt    DateTime? @map("closed_at")
-  reopenedById String?  @map("reopened_by_id")
-  reopenedAt   DateTime? @map("reopened_at")
-  lockedById   String?  @map("locked_by_id")
-  lockedAt     DateTime? @map("locked_at")
-
-  createdAt DateTime @default(now()) @map("created_at")
-
-  @@map("financial_period")
   @@schema("nexus")
 }

@@ -359,13 +359,6 @@ export const api = {
   createJournal: (data: any) => request("/general-ledger/journals", { method: "POST", body: JSON.stringify(data) }),
   requestJournalPosting: (id: string) => request(`/general-ledger/journals/${id}/request-posting`, { method: "POST" }),
 
-  listFiscalYears: () => request("/general-ledger/fiscal-years"),
-  createFiscalYear: (data: any) => request("/general-ledger/fiscal-years", { method: "POST", body: JSON.stringify(data) }),
-  createFinancialPeriod: (data: any) => request("/general-ledger/financial-periods", { method: "POST", body: JSON.stringify(data) }),
-  closeFinancialPeriod: (id: string) => request(`/general-ledger/financial-periods/${id}/close`, { method: "POST" }),
-  requestPeriodReopen: (id: string, reason: string) => request(`/general-ledger/financial-periods/${id}/request-reopen`, { method: "POST", body: JSON.stringify({ reason }) }),
-  lockFinancialPeriod: (id: string) => request(`/general-ledger/financial-periods/${id}/lock`, { method: "POST" }),
-
   listSavingsAccounts: () => request("/savings"),
   getSavingsAccount: (id: string) => request(`/savings/${id}`),
   addSavingsHolder: (id: string, data: { customerId: string; role: string }) => request(`/savings/${id}/holders`, { method: "POST", body: JSON.stringify(data) }),

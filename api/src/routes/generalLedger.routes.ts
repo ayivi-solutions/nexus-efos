@@ -3,7 +3,7 @@ import { z } from "zod";
 import { prisma } from "../lib/prisma";
 import { requireAuth, AuthedRequest } from "../middleware/auth";
 import { requirePermission } from "../middleware/rbac";
-import { isBalanced, generateJournalNumber, findPostablePeriod } from "../lib/generalLedger";
+import { isBalanced, generateJournalNumber } from "../lib/generalLedger";
 
 // doc §117 Chart of Accounts, §118 Journal Management, §119 Ledger
 // Posting — the foundational double-entry engine. Deliberately NOT yet
@@ -66,16 +66,12 @@ generalLedgerRouter.get("/journals", requirePermission("reports.view"), async (r
 });
 
 const journalLineSchema = z.object({ accountId: z.string(), debit: z.number().nonnegative(), credit: z.number().nonnegative(), description: z.string().optional() });
-const createJournalSchema = z.object({ description: z.string().min(2), postingDate: z.string().optional(), lines: z.array(journalLineSchema).min(2) });
+const createJournalSchema = z.object({ description: z.string().min(2), lines: z.array(journalLineSchema).min(2) });
 
 // §118.2 "Manual Journals" — created as DRAFT; §118.3 "Debits equal
 // credits" checked here before it's even saved, using the same tested
 // function that gates posting, so a journal that could never post isn't
 // allowed to exist as anything more than immediately-rejected input.
-// §120.3 "Closed periods prevent unauthorised postings" — also checked
-// here, at creation, not just at the point of posting — no reason to let
-// someone draft a journal against a period that's already known to be
-// unusable.
 generalLedgerRouter.post("/journals", requirePermission("institution.configure"), async (req: AuthedRequest, res) => {
   const parsed = createJournalSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
@@ -86,14 +82,9 @@ generalLedgerRouter.post("/journals", requirePermission("institution.configure")
   }
   if (!isBalanced(parsed.data.lines)) return res.status(400).json({ error: "Total debits must equal total credits" });
 
-  const postingDate = parsed.data.postingDate ? new Date(parsed.data.postingDate) : new Date();
-  const period = await findPostablePeriod(prisma, req.auth!.institutionId, postingDate);
-  if (!period) return res.status(400).json({ error: "No financial period covers this posting date — create one first" });
-  if (period.status !== "OPEN") return res.status(400).json({ error: `The financial period covering this date is ${period.status} — cannot create a journal against it` });
-
   const journal = await prisma.journal.create({
     data: {
-      institutionId: req.auth!.institutionId, journalNumber: generateJournalNumber(), type: "MANUAL", description: parsed.data.description, postingDate,
+      institutionId: req.auth!.institutionId, journalNumber: generateJournalNumber(), type: "MANUAL", description: parsed.data.description,
       createdById: req.auth!.userId,
       lines: { create: parsed.data.lines.map((l) => ({ accountId: l.accountId, debit: l.debit, credit: l.credit, description: l.description })) },
     },
@@ -118,84 +109,4 @@ generalLedgerRouter.post("/journals/:id/request-posting", requirePermission("ins
   await prisma.journal.update({ where: { id: journal.id }, data: { status: "PENDING_APPROVAL" } });
 
   res.status(202).json({ pendingApproval: true });
-});
-
-// -------------------------------------------------------------------------
-// §120 Financial Period Management
-// -------------------------------------------------------------------------
-
-generalLedgerRouter.get("/fiscal-years", requirePermission("reports.view"), async (req: AuthedRequest, res) => {
-  const fiscalYears = await prisma.fiscalYear.findMany({ where: { institutionId: req.auth!.institutionId }, include: { periods: true }, orderBy: { startDate: "desc" } });
-  res.json({ fiscalYears });
-});
-
-const fiscalYearSchema = z.object({ name: z.string().min(1), startDate: z.string(), endDate: z.string() });
-
-generalLedgerRouter.post("/fiscal-years", requirePermission("institution.configure"), async (req: AuthedRequest, res) => {
-  const parsed = fiscalYearSchema.safeParse(req.body);
-  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
-  const fiscalYear = await prisma.fiscalYear.create({ data: { institutionId: req.auth!.institutionId, name: parsed.data.name, startDate: new Date(parsed.data.startDate), endDate: new Date(parsed.data.endDate) } });
-  await prisma.auditLog.create({ data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "fiscal_year.create", resource: "fiscal_year", resourceId: fiscalYear.id } });
-  res.status(201).json({ fiscalYear });
-});
-
-const periodSchema = z.object({ fiscalYearId: z.string(), name: z.string().min(1), startDate: z.string(), endDate: z.string() });
-
-// §120.2 "Accounting Period Creation" — periods must not overlap within
-// the same institution, checked here rather than left to the person
-// creating them to notice.
-generalLedgerRouter.post("/financial-periods", requirePermission("institution.configure"), async (req: AuthedRequest, res) => {
-  const parsed = periodSchema.safeParse(req.body);
-  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
-  const startDate = new Date(parsed.data.startDate);
-  const endDate = new Date(parsed.data.endDate);
-
-  const overlap = await prisma.financialPeriod.findFirst({
-    where: { institutionId: req.auth!.institutionId, OR: [{ startDate: { lte: endDate }, endDate: { gte: startDate } }] },
-  });
-  if (overlap) return res.status(400).json({ error: `This date range overlaps an existing period (${overlap.name})` });
-
-  const period = await prisma.financialPeriod.create({ data: { institutionId: req.auth!.institutionId, fiscalYearId: parsed.data.fiscalYearId, name: parsed.data.name, startDate, endDate } });
-  await prisma.auditLog.create({ data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "financial_period.create", resource: "financial_period", resourceId: period.id } });
-  res.status(201).json({ period });
-});
-
-// §120.2 Period Closing
-generalLedgerRouter.post("/financial-periods/:id/close", requirePermission("institution.configure"), async (req: AuthedRequest, res) => {
-  const period = await prisma.financialPeriod.findFirst({ where: { id: req.params.id, institutionId: req.auth!.institutionId } });
-  if (!period) return res.status(404).json({ error: "Period not found" });
-  if (period.status !== "OPEN") return res.status(400).json({ error: `Only an OPEN period can be closed (currently ${period.status})` });
-
-  const updated = await prisma.financialPeriod.update({ where: { id: period.id }, data: { status: "CLOSED", closedById: req.auth!.userId, closedAt: new Date() } });
-  await prisma.auditLog.create({ data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "financial_period.close", resource: "financial_period", resourceId: period.id } });
-  res.json({ period: updated });
-});
-
-// §120.3 "Reopening requires approval" — routes through the Approval
-// Workflow, same pattern as everything else.
-generalLedgerRouter.post("/financial-periods/:id/request-reopen", requirePermission("institution.configure"), async (req: AuthedRequest, res) => {
-  const { reason } = req.body as { reason?: string };
-  if (!reason) return res.status(400).json({ error: "A reason is required to reopen a closed period" });
-  const period = await prisma.financialPeriod.findFirst({ where: { id: req.params.id, institutionId: req.auth!.institutionId } });
-  if (!period) return res.status(404).json({ error: "Period not found" });
-  if (period.status === "OPEN") return res.status(400).json({ error: "This period is already open" });
-  if (period.status === "LOCKED") return res.status(400).json({ error: "A LOCKED period cannot be reopened" });
-
-  await prisma.approvalRequest.create({
-    data: { institutionId: req.auth!.institutionId, type: "FINANCIAL_PERIOD_REOPEN", targetType: "FinancialPeriod", targetId: period.id, payload: {}, reason, requestedById: req.auth!.userId },
-  });
-  res.status(202).json({ pendingApproval: true });
-});
-
-// §120.2 Period Locking — a stronger, later-stage closure than a normal
-// close; deliberately no unlock endpoint at all, matching "cannot be
-// reopened" above.
-generalLedgerRouter.post("/financial-periods/:id/lock", requirePermission("institution.configure"), async (req: AuthedRequest, res) => {
-  const period = await prisma.financialPeriod.findFirst({ where: { id: req.params.id, institutionId: req.auth!.institutionId } });
-  if (!period) return res.status(404).json({ error: "Period not found" });
-  if (period.status !== "CLOSED") return res.status(400).json({ error: "Only a CLOSED period can be locked" });
-
-  const updated = await prisma.financialPeriod.update({ where: { id: period.id }, data: { status: "LOCKED", lockedById: req.auth!.userId, lockedAt: new Date() } });
-  await prisma.auditLog.create({ data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "financial_period.lock", resource: "financial_period", resourceId: period.id } });
-  res.json({ period: updated });
 });
