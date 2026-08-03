@@ -88,6 +88,9 @@ model Institution {
   savingsRestrictions     SavingsRestriction[]
   standingInstructions    StandingInstruction[]
   savingsStatements       SavingsStatement[]
+  vaults                  Vault[]
+  tellers                 Teller[]
+  cashLedgerEntries       CashLedgerEntry[]
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -2487,5 +2490,114 @@ model SavingsStatement {
   generatedAt   DateTime @default(now()) @map("generated_at")
 
   @@map("savings_statement")
+  @@schema("nexus")
+}
+
+// doc §111 Cash and Vault Management, §112 Vault Management, §113 Teller
+// Management. Cash Transfers (§114) and Balancing/Reconciliation (§115)
+// are their own sub-phase, since both depend on Vault and Teller already
+// existing.
+enum VaultStatus {
+  OPEN
+  CLOSED
+
+  @@schema("nexus")
+}
+
+model Vault {
+  id            String      @id(map: "pk_vault") @default(uuid())
+  institution   Institution @relation(fields: [institutionId], references: [id], onDelete: Cascade, map: "fk_vault_institution")
+  institutionId String      @map("institution_id")
+  branchId      String      @map("branch_id")
+
+  name    String
+  balance Decimal     @default(0) @db.Decimal(14, 2)
+  status  VaultStatus @default(CLOSED)
+
+  openedById String?   @map("opened_by_id")
+  openedAt   DateTime? @map("opened_at")
+  closedById String?   @map("closed_by_id")
+  closedAt   DateTime? @map("closed_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  tellers Teller[]
+
+  @@unique([institutionId, branchId, name], map: "uq_vault_institution_branch_name")
+  @@map("vault")
+  @@schema("nexus")
+}
+
+enum TellerStatus {
+  ACTIVE
+  SUSPENDED
+
+  @@schema("nexus")
+}
+
+// A Teller is a role on an existing Employee, matching the same pattern
+// as Collector — no duplicate person record.
+model Teller {
+  id            String       @id(map: "pk_teller") @default(uuid())
+  institution   Institution  @relation(fields: [institutionId], references: [id], onDelete: Cascade, map: "fk_teller_institution")
+  institutionId String       @map("institution_id")
+  employeeId    String       @unique @map("employee_id")
+  vault         Vault?       @relation(fields: [vaultId], references: [id], onDelete: SetNull, map: "fk_teller_vault")
+  vaultId       String?      @map("vault_id")
+
+  cashLimit      Decimal      @map("cash_limit") @db.Decimal(14, 2) // §113.3 "Teller cash limits are enforced"
+  currentHolding Decimal      @default(0) @map("current_holding") @db.Decimal(14, 2)
+  status         TellerStatus @default(ACTIVE)
+
+  suspendedById   String?   @map("suspended_by_id")
+  suspendedAt     DateTime? @map("suspended_at")
+  suspendedReason String?   @map("suspended_reason")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("teller")
+  @@schema("nexus")
+}
+
+enum CashHolderType {
+  VAULT
+  TELLER
+
+  @@schema("nexus")
+}
+
+enum CashLedgerEntryType {
+  RECEIPT
+  WITHDRAWAL
+  ALLOCATION // vault -> teller at day start
+  RETURN     // teller -> vault at day end
+  TRANSFER_IN
+  TRANSFER_OUT
+
+  @@schema("nexus")
+}
+
+// doc §112.2 Cash Receipts/Withdrawals — direct cash movements into or out
+// of a vault (e.g. a cash-in-transit delivery, a bank withdrawal run),
+// distinct from customer transactions (SavingsTransaction/LoanRepayment)
+// and distinct from internal transfers between cash points (§114, its own
+// sub-phase, which will also write entries here as TRANSFER_IN/OUT so
+// every cash point's full history lives in one place).
+model CashLedgerEntry {
+  id            String               @id(map: "pk_cash_ledger_entry") @default(uuid())
+  institution   Institution          @relation(fields: [institutionId], references: [id], onDelete: Cascade, map: "fk_cash_ledger_entry_institution")
+  institutionId String               @map("institution_id")
+
+  holderType   CashHolderType
+  holderId     String               @map("holder_id") // a Vault.id or Teller.id, depending on holderType
+  type         CashLedgerEntryType
+  amount       Decimal              @db.Decimal(14, 2)
+  balanceAfter Decimal              @map("balance_after") @db.Decimal(14, 2)
+  notes        String?
+
+  recordedById String   @map("recorded_by_id")
+  recordedAt   DateTime @default(now()) @map("recorded_at")
+
+  @@map("cash_ledger_entry")
   @@schema("nexus")
 }

@@ -332,6 +332,19 @@ export const api = {
     window.URL.revokeObjectURL(url);
   },
 
+  listVaults: () => request("/cash-vault/vaults"),
+  createVault: (data: { branchId: string; name: string }) => request("/cash-vault/vaults", { method: "POST", body: JSON.stringify(data) }),
+  openVault: (id: string) => request(`/cash-vault/vaults/${id}/open`, { method: "POST" }),
+  closeVault: (id: string) => request(`/cash-vault/vaults/${id}/close`, { method: "POST" }),
+  listVaultLedger: (id: string) => request(`/cash-vault/vaults/${id}/ledger`),
+  recordVaultCash: (id: string, data: { type: "RECEIPT" | "WITHDRAWAL"; amount: number; notes?: string }) => request(`/cash-vault/vaults/${id}/ledger`, { method: "POST", body: JSON.stringify(data) }),
+
+  listTellers: () => request("/cash-vault/tellers"),
+  registerTeller: (data: { employeeId: string; vaultId?: string; cashLimit: number }) => request("/cash-vault/tellers", { method: "POST", body: JSON.stringify(data) }),
+  updateTellerLimit: (id: string, cashLimit: number) => request(`/cash-vault/tellers/${id}/limit`, { method: "PATCH", body: JSON.stringify({ cashLimit }) }),
+  suspendTeller: (id: string, reason?: string) => request(`/cash-vault/tellers/${id}/suspend`, { method: "POST", body: JSON.stringify({ reason }) }),
+  reinstateTeller: (id: string) => request(`/cash-vault/tellers/${id}/reinstate`, { method: "POST" }),
+
   listSavingsAccounts: () => request("/savings"),
   getSavingsAccount: (id: string) => request(`/savings/${id}`),
   addSavingsHolder: (id: string, data: { customerId: string; role: string }) => request(`/savings/${id}/holders`, { method: "POST", body: JSON.stringify(data) }),

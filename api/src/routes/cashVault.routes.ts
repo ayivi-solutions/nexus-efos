@@ -1,0 +1,131 @@
+import { Router } from "express";
+import { z } from "zod";
+import { prisma } from "../lib/prisma";
+import { requireAuth, AuthedRequest } from "../middleware/auth";
+import { requirePermission } from "../middleware/rbac";
+
+// doc §111 Cash and Vault Management. §112 Vault Management + §113 Teller
+// Management shipped first — everything else in this module (Cash
+// Transfers §114, Balancing/Reconciliation §115) depends on both existing.
+export const cashVaultRouter = Router();
+cashVaultRouter.use(requireAuth);
+
+// -------------------------------------------------------------------------
+// §112 Vault Management
+// -------------------------------------------------------------------------
+
+cashVaultRouter.get("/vaults", requirePermission("reports.view"), async (req: AuthedRequest, res) => {
+  const vaults = await prisma.vault.findMany({ where: { institutionId: req.auth!.institutionId }, orderBy: { createdAt: "desc" } });
+  res.json({ vaults });
+});
+
+const createVaultSchema = z.object({ branchId: z.string(), name: z.string().min(1) });
+
+cashVaultRouter.post("/vaults", requirePermission("institution.configure"), async (req: AuthedRequest, res) => {
+  const parsed = createVaultSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+  const vault = await prisma.vault.create({ data: { institutionId: req.auth!.institutionId, ...parsed.data } });
+  await prisma.auditLog.create({ data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "vault.create", resource: "vault", resourceId: vault.id } });
+  res.status(201).json({ vault });
+});
+
+// §112.2 Vault Opening — a real operational action (start of business day),
+// not just a status flag flipped silently.
+cashVaultRouter.post("/vaults/:id/open", requirePermission("institution.configure"), async (req: AuthedRequest, res) => {
+  const vault = await prisma.vault.findFirst({ where: { id: req.params.id, institutionId: req.auth!.institutionId } });
+  if (!vault) return res.status(404).json({ error: "Vault not found" });
+  if (vault.status === "OPEN") return res.status(400).json({ error: "Vault is already open" });
+
+  const updated = await prisma.vault.update({ where: { id: vault.id }, data: { status: "OPEN", openedById: req.auth!.userId, openedAt: new Date() } });
+  await prisma.auditLog.create({ data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "vault.open", resource: "vault", resourceId: vault.id } });
+  res.json({ vault: updated });
+});
+
+cashVaultRouter.post("/vaults/:id/close", requirePermission("institution.configure"), async (req: AuthedRequest, res) => {
+  const vault = await prisma.vault.findFirst({ where: { id: req.params.id, institutionId: req.auth!.institutionId } });
+  if (!vault) return res.status(404).json({ error: "Vault not found" });
+  if (vault.status === "CLOSED") return res.status(400).json({ error: "Vault is already closed" });
+
+  const updated = await prisma.vault.update({ where: { id: vault.id }, data: { status: "CLOSED", closedById: req.auth!.userId, closedAt: new Date() } });
+  await prisma.auditLog.create({ data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "vault.close", resource: "vault", resourceId: vault.id } });
+  res.json({ vault: updated });
+});
+
+// §112.2 Cash Receipts / Cash Withdrawals — direct cash movement, not
+// a customer transaction. A vault must be OPEN to record either.
+const cashEntrySchema = z.object({ type: z.enum(["RECEIPT", "WITHDRAWAL"]), amount: z.number().positive(), notes: z.string().optional() });
+
+cashVaultRouter.get("/vaults/:id/ledger", requirePermission("reports.view"), async (req: AuthedRequest, res) => {
+  const entries = await prisma.cashLedgerEntry.findMany({ where: { holderType: "VAULT", holderId: req.params.id }, orderBy: { recordedAt: "desc" } });
+  res.json({ entries });
+});
+
+cashVaultRouter.post("/vaults/:id/ledger", requirePermission("institution.configure"), async (req: AuthedRequest, res) => {
+  const parsed = cashEntrySchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+  const vault = await prisma.vault.findFirst({ where: { id: req.params.id, institutionId: req.auth!.institutionId } });
+  if (!vault) return res.status(404).json({ error: "Vault not found" });
+  if (vault.status !== "OPEN") return res.status(400).json({ error: "Vault must be OPEN to record cash movements" });
+  if (parsed.data.type === "WITHDRAWAL" && Number(vault.balance) < parsed.data.amount) return res.status(400).json({ error: "Insufficient vault balance" });
+
+  const newBalance = parsed.data.type === "RECEIPT" ? Number(vault.balance) + parsed.data.amount : Number(vault.balance) - parsed.data.amount;
+
+  const [, entry] = await prisma.$transaction([
+    prisma.vault.update({ where: { id: vault.id }, data: { balance: newBalance } }),
+    prisma.cashLedgerEntry.create({ data: { institutionId: req.auth!.institutionId, holderType: "VAULT", holderId: vault.id, type: parsed.data.type as any, amount: parsed.data.amount, balanceAfter: newBalance, notes: parsed.data.notes, recordedById: req.auth!.userId } }),
+  ]);
+
+  await prisma.auditLog.create({ data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "vault.cash_entry", resource: "vault", resourceId: vault.id, metadata: { type: parsed.data.type, amount: parsed.data.amount } } });
+  res.status(201).json({ entry });
+});
+
+// -------------------------------------------------------------------------
+// §113 Teller Management
+// -------------------------------------------------------------------------
+
+cashVaultRouter.get("/tellers", requirePermission("users.administer"), async (req: AuthedRequest, res) => {
+  const tellers = await prisma.teller.findMany({ where: { institutionId: req.auth!.institutionId }, include: { vault: { select: { name: true } } }, orderBy: { createdAt: "desc" } });
+  const employeeIds = tellers.map((t) => t.employeeId);
+  const employees = await prisma.employee.findMany({ where: { id: { in: employeeIds } }, select: { id: true, fullName: true } });
+  const empName: Record<string, string> = Object.fromEntries(employees.map((e) => [e.id, e.fullName]));
+  res.json({ tellers: tellers.map((t) => ({ ...t, employeeName: empName[t.employeeId] || null })) });
+});
+
+const registerTellerSchema = z.object({ employeeId: z.string(), vaultId: z.string().optional(), cashLimit: z.number().positive() });
+
+cashVaultRouter.post("/tellers", requirePermission("users.administer"), async (req: AuthedRequest, res) => {
+  const parsed = registerTellerSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+  const employee = await prisma.employee.findFirst({ where: { id: parsed.data.employeeId, institutionId: req.auth!.institutionId } });
+  if (!employee) return res.status(404).json({ error: "Employee not found" });
+  const existing = await prisma.teller.findUnique({ where: { employeeId: employee.id } });
+  if (existing) return res.status(400).json({ error: "This employee is already registered as a teller" });
+
+  const teller = await prisma.teller.create({ data: { institutionId: req.auth!.institutionId, ...parsed.data } });
+  await prisma.auditLog.create({ data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "teller.register", resource: "teller", resourceId: teller.id } });
+  res.status(201).json({ teller });
+});
+
+cashVaultRouter.patch("/tellers/:id/limit", requirePermission("users.administer"), async (req: AuthedRequest, res) => {
+  const { cashLimit } = req.body as { cashLimit?: number };
+  if (!cashLimit || cashLimit <= 0) return res.status(400).json({ error: "cashLimit must be positive" });
+  const updated = await prisma.teller.updateMany({ where: { id: req.params.id, institutionId: req.auth!.institutionId }, data: { cashLimit } });
+  if (updated.count === 0) return res.status(404).json({ error: "Teller not found" });
+  res.json({ ok: true });
+});
+
+cashVaultRouter.post("/tellers/:id/suspend", requirePermission("users.administer"), async (req: AuthedRequest, res) => {
+  const { reason } = req.body as { reason?: string };
+  const teller = await prisma.teller.findFirst({ where: { id: req.params.id, institutionId: req.auth!.institutionId } });
+  if (!teller) return res.status(404).json({ error: "Teller not found" });
+  const updated = await prisma.teller.update({ where: { id: teller.id }, data: { status: "SUSPENDED", suspendedById: req.auth!.userId, suspendedAt: new Date(), suspendedReason: reason } });
+  await prisma.auditLog.create({ data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "teller.suspend", resource: "teller", resourceId: teller.id, metadata: { reason } } });
+  res.json({ teller: updated });
+});
+
+cashVaultRouter.post("/tellers/:id/reinstate", requirePermission("users.administer"), async (req: AuthedRequest, res) => {
+  const teller = await prisma.teller.findFirst({ where: { id: req.params.id, institutionId: req.auth!.institutionId } });
+  if (!teller) return res.status(404).json({ error: "Teller not found" });
+  const updated = await prisma.teller.update({ where: { id: teller.id }, data: { status: "ACTIVE", suspendedById: null, suspendedAt: null, suspendedReason: null } });
+  res.json({ teller: updated });
+});
