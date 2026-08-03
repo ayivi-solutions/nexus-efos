@@ -79,6 +79,22 @@ real customer data.
   Promotional), real Accrual/Posting/Suspension/Recalculation/Reversal
   workflow, not a live-only number.
 - Deposit/withdraw with a full transaction ledger.
+- Fees & Charges: configurable fee types, amounts always computed from the
+  fee type's own configuration (never trusted from the request), waivers
+  requiring authorisation.
+- Account Restrictions: genuinely enforced at the real deposit/withdraw
+  endpoints — a FULL_FREEZE, DEBIT_RESTRICTION, or CREDIT_RESTRICTION
+  actually blocks the matching transaction, not just displayed in the UI.
+  Both creation and removal route through the Approval Workflow.
+- Standing Instructions: Internal Transfer, Loan Repayment, and Scheduled
+  Withdrawal genuinely executed daily by the scheduler, with a tested
+  retry-and-auto-suspend policy for insufficient balance. External
+  Transfers and unsourced Scheduled Deposits deliberately not built — no
+  real payment rails or funding source exist.
+- Statements: real generated PDFs, opening balance reconstructed from
+  actual transaction history, a permanent snapshot so a historical
+  statement always shows the same figures even if the account changes
+  later.
 
 **Products**
 - Versioned Product/ProductVersion with a real approval-gated activation
@@ -226,9 +242,11 @@ named clearly rather than silently dropped:
   EUXS — in progress). These will be Claude API-backed features, not
   custom ML infrastructure.
 
+**Phase 3 (Savings completeness, EFS §53/54/58/59) is complete** — Fees &
+Charges, Account Restrictions, Standing Instructions, Statements, all real
+and described above.
+
 **Remaining phases:**
-- **Phase 3 — Savings completeness**: fees/charges, account restrictions,
-  standing instructions, statements.
 - **Phase 4 — Cash & Vault Management** (EFS §111-115) — cashbook,
   withdrawal book, petty cash, vault book, treasury book, cheque tracking.
 - **Phase 5 — General Ledger** (EFS §116-125).
