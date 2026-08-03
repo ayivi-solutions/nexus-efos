@@ -129,3 +129,53 @@ cashVaultRouter.post("/tellers/:id/reinstate", requirePermission("users.administ
   const updated = await prisma.teller.update({ where: { id: teller.id }, data: { status: "ACTIVE", suspendedById: null, suspendedAt: null, suspendedReason: null } });
   res.json({ teller: updated });
 });
+
+// -------------------------------------------------------------------------
+// §114 Cash Transfer Management
+// -------------------------------------------------------------------------
+
+async function getHolderBalance(type: "VAULT" | "TELLER", id: string): Promise<number | null> {
+  if (type === "VAULT") {
+    const v = await prisma.vault.findUnique({ where: { id } });
+    return v ? Number(v.balance) : null;
+  }
+  const t = await prisma.teller.findUnique({ where: { id } });
+  return t ? Number(t.currentHolding) : null;
+}
+
+cashVaultRouter.get("/transfers", requirePermission("reports.view"), async (req: AuthedRequest, res) => {
+  const transfers = await prisma.cashTransfer.findMany({ where: { institutionId: req.auth!.institutionId }, orderBy: { createdAt: "desc" } });
+  res.json({ transfers });
+});
+
+const transferSchema = z.object({
+  fromType: z.enum(["VAULT", "TELLER"]), fromId: z.string(),
+  toType: z.enum(["VAULT", "TELLER"]), toId: z.string(),
+  amount: z.number().positive(), isEmergency: z.boolean().optional(), reason: z.string().min(2),
+});
+
+// §114.3 "Transfers require authorisation" — the source's real current
+// balance is checked before the request is even created, so an
+// obviously-impossible transfer never enters the approval queue at all.
+cashVaultRouter.post("/transfers", requirePermission("institution.configure"), async (req: AuthedRequest, res) => {
+  const parsed = transferSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+  if (parsed.data.fromType === parsed.data.toType && parsed.data.fromId === parsed.data.toId) return res.status(400).json({ error: "Source and destination cannot be the same" });
+
+  const sourceBalance = await getHolderBalance(parsed.data.fromType, parsed.data.fromId);
+  if (sourceBalance === null) return res.status(404).json({ error: "Source not found" });
+  if (sourceBalance < parsed.data.amount) return res.status(400).json({ error: "Insufficient balance at source" });
+
+  const destExists = await getHolderBalance(parsed.data.toType, parsed.data.toId);
+  if (destExists === null) return res.status(404).json({ error: "Destination not found" });
+
+  const transfer = await prisma.cashTransfer.create({ data: { institutionId: req.auth!.institutionId, ...parsed.data, requestedById: req.auth!.userId } as any });
+
+  await prisma.approvalRequest.create({
+    data: { institutionId: req.auth!.institutionId, type: "CASH_TRANSFER", targetType: "CashTransfer", targetId: transfer.id, payload: {}, reason: parsed.data.reason, requestedById: req.auth!.userId },
+  });
+
+  await prisma.auditLog.create({ data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "cash_transfer.requested", resource: "cash_transfer", resourceId: transfer.id, metadata: { amount: parsed.data.amount, isEmergency: parsed.data.isEmergency } } });
+
+  res.status(202).json({ pendingApproval: true, transfer });
+});

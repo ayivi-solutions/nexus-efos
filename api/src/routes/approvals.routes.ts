@@ -113,6 +113,45 @@ async function applyApproval(request: { id: string; type: string; targetId: stri
       break;
     }
 
+    // doc §114.3 "Transfers maintain balanced accounting entries" — the
+    // source is debited and destination credited for the exact same
+    // amount, in one database transaction, with a real ledger entry on
+    // both sides. Re-checks the source balance at approval time, not just
+    // at request time, since time may have passed and other activity may
+    // have moved cash in the meantime.
+    case "CASH_TRANSFER": {
+      const transfer = await prisma.cashTransfer.findUniqueOrThrow({ where: { id: request.targetId } });
+      const amount = Number(transfer.amount);
+
+      async function currentBalance(type: string, id: string) {
+        if (type === "VAULT") return Number((await prisma.vault.findUniqueOrThrow({ where: { id } })).balance);
+        return Number((await prisma.teller.findUniqueOrThrow({ where: { id } })).currentHolding);
+      }
+      async function applyDelta(type: string, id: string, delta: number) {
+        if (type === "VAULT") {
+          const v = await prisma.vault.update({ where: { id }, data: { balance: { increment: delta } } });
+          return Number(v.balance);
+        }
+        const t = await prisma.teller.update({ where: { id }, data: { currentHolding: { increment: delta } } });
+        return Number(t.currentHolding);
+      }
+
+      const sourceBalance = await currentBalance(transfer.fromType, transfer.fromId);
+      if (sourceBalance < amount) {
+        await prisma.cashTransfer.update({ where: { id: transfer.id }, data: { status: "REJECTED" } });
+        break;
+      }
+
+      const newSourceBalance = await applyDelta(transfer.fromType, transfer.fromId, -amount);
+      const newDestBalance = await applyDelta(transfer.toType, transfer.toId, amount);
+
+      await prisma.cashLedgerEntry.create({ data: { institutionId: transfer.institutionId, holderType: transfer.fromType, holderId: transfer.fromId, type: "TRANSFER_OUT", amount, balanceAfter: newSourceBalance, notes: transfer.reason, recordedById: approvedById } });
+      await prisma.cashLedgerEntry.create({ data: { institutionId: transfer.institutionId, holderType: transfer.toType, holderId: transfer.toId, type: "TRANSFER_IN", amount, balanceAfter: newDestBalance, notes: transfer.reason, recordedById: approvedById } });
+
+      await prisma.cashTransfer.update({ where: { id: transfer.id }, data: { status: "COMPLETED", approvedById, completedAt: new Date() } });
+      break;
+    }
+
     case "SAVINGS_RESTRICTION_CREATE": {
       await prisma.savingsRestriction.update({ where: { id: request.targetId }, data: { status: "ACTIVE", approvedById, activatedAt: new Date() } });
       break;
@@ -191,6 +230,9 @@ approvalsRouter.post("/:id/reject", requirePermission("institution.configure"), 
     // A rejected removal means the restriction stays exactly as it was —
     // still ACTIVE.
     await prisma.savingsRestriction.update({ where: { id: request.targetId }, data: { removalRequestedById: null } });
+  }
+  if (request.type === "CASH_TRANSFER") {
+    await prisma.cashTransfer.update({ where: { id: request.targetId }, data: { status: "REJECTED" } });
   }
 
   await prisma.approvalRequest.update({

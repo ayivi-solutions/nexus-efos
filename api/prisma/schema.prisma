@@ -91,6 +91,7 @@ model Institution {
   vaults                  Vault[]
   tellers                 Teller[]
   cashLedgerEntries       CashLedgerEntry[]
+  cashTransfers           CashTransfer[]
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -823,6 +824,7 @@ enum ApprovalRequestType {
   COMMISSION_PAYMENT // doc §83
   SAVINGS_RESTRICTION_CREATE  // doc §54
   SAVINGS_RESTRICTION_REMOVE  // doc §54
+  CASH_TRANSFER  // doc §114
 
   @@schema("nexus")
 }
@@ -2599,5 +2601,41 @@ model CashLedgerEntry {
   recordedAt   DateTime @default(now()) @map("recorded_at")
 
   @@map("cash_ledger_entry")
+  @@schema("nexus")
+}
+
+// doc §114 Cash Transfer Management. §114.3 "Transfers require
+// authorisation" — routes through the existing Approval Workflow.
+// "Completed transfers cannot be altered" — no update endpoint exists for
+// a COMPLETED transfer, by design, not just by convention.
+enum CashTransferStatus {
+  PENDING_APPROVAL
+  COMPLETED
+  REJECTED
+
+  @@schema("nexus")
+}
+
+model CashTransfer {
+  id            String             @id(map: "pk_cash_transfer") @default(uuid())
+  institution   Institution        @relation(fields: [institutionId], references: [id], onDelete: Cascade, map: "fk_cash_transfer_institution")
+  institutionId String             @map("institution_id")
+
+  fromType CashHolderType @map("from_type")
+  fromId   String         @map("from_id")
+  toType   CashHolderType @map("to_type")
+  toId     String         @map("to_id")
+
+  amount      Decimal            @db.Decimal(14, 2)
+  isEmergency Boolean            @default(false) @map("is_emergency")
+  reason      String
+  status      CashTransferStatus @default(PENDING_APPROVAL)
+
+  requestedById String    @map("requested_by_id")
+  approvedById  String?   @map("approved_by_id")
+  completedAt   DateTime? @map("completed_at")
+  createdAt     DateTime  @default(now()) @map("created_at")
+
+  @@map("cash_transfer")
   @@schema("nexus")
 }

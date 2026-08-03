@@ -9,7 +9,7 @@ export default function CashVaultPage() {
   const toast = useToast();
   const [error, setError] = useState<string | null>(null);
   useErrorToast(error);
-  const [tab, setTab] = useState<"vaults" | "tellers">("vaults");
+  const [tab, setTab] = useState<"vaults" | "tellers" | "transfers">("vaults");
 
   const [vaults, setVaults] = useState<any[]>([]);
   const [tellers, setTellers] = useState<any[]>([]);
@@ -20,6 +20,8 @@ export default function CashVaultPage() {
   const [vaultForm, setVaultForm] = useState({ branchId: "", name: "" });
   const [cashForm, setCashForm] = useState<Record<string, { type: string; amount: string; notes: string }>>({});
   const [tellerForm, setTellerForm] = useState({ employeeId: "", vaultId: "", cashLimit: "" });
+  const [transfers, setTransfers] = useState<any[]>([]);
+  const [transferForm, setTransferForm] = useState({ fromType: "VAULT", fromId: "", toType: "TELLER", toId: "", amount: "", isEmergency: false, reason: "" });
   const [busy, setBusy] = useState(false);
 
   function load() {
@@ -27,6 +29,18 @@ export default function CashVaultPage() {
     api.listTellers().then((r) => setTellers(r.tellers)).catch(() => {});
     api.listBranches().then((r) => setBranches(r.branches)).catch(() => {});
     api.listEmployees().then((r) => setEmployees(r.employees)).catch(() => {});
+    api.listCashTransfers().then((r) => setTransfers(r.transfers)).catch(() => {});
+  }
+
+  async function handleRequestTransfer(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy(true); setError(null);
+    try {
+      await api.requestCashTransfer({ ...transferForm, amount: Number(transferForm.amount) });
+      toast.info("Transfer submitted for approval.");
+      setTransferForm({ fromType: "VAULT", fromId: "", toType: "TELLER", toId: "", amount: "", isEmergency: false, reason: "" });
+      load();
+    } catch (err: any) { setError(err.message || "Could not request transfer"); } finally { setBusy(false); }
   }
   useEffect(() => { load(); }, []);
 
@@ -89,6 +103,7 @@ export default function CashVaultPage() {
         <div className="flex gap-2 mb-6">
           <button onClick={() => setTab("vaults")} className={`btn-text ${tab === "vaults" ? "text-gold-600 font-semibold" : "text-text-muted"}`}>Vaults</button>
           <button onClick={() => setTab("tellers")} className={`btn-text ${tab === "tellers" ? "text-gold-600 font-semibold" : "text-text-muted"}`}>Tellers</button>
+          <button onClick={() => setTab("transfers")} className={`btn-text ${tab === "transfers" ? "text-gold-600 font-semibold" : "text-text-muted"}`}>Transfers</button>
         </div>
 
         {tab === "vaults" && (
@@ -167,6 +182,49 @@ export default function CashVaultPage() {
                     </tr>
                   ))}
                   {tellers.length === 0 && <tr><td colSpan={6} className="text-center text-text-muted text-sm py-8">No tellers registered.</td></tr>}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
+        {tab === "transfers" && (
+          <>
+            <form onSubmit={handleRequestTransfer} className="card p-5 mb-6 flex flex-wrap items-end gap-3">
+              <select className="input !w-28" value={transferForm.fromType} onChange={(e) => setTransferForm((f) => ({ ...f, fromType: e.target.value, fromId: "" }))}>
+                <option value="VAULT">Vault</option><option value="TELLER">Teller</option>
+              </select>
+              <select required className="input" value={transferForm.fromId} onChange={(e) => setTransferForm((f) => ({ ...f, fromId: e.target.value }))}>
+                <option value="">From…</option>
+                {(transferForm.fromType === "VAULT" ? vaults : tellers).map((x: any) => (<option key={x.id} value={x.id}>{x.name || x.employeeName}</option>))}
+              </select>
+              <select className="input !w-28" value={transferForm.toType} onChange={(e) => setTransferForm((f) => ({ ...f, toType: e.target.value, toId: "" }))}>
+                <option value="VAULT">Vault</option><option value="TELLER">Teller</option>
+              </select>
+              <select required className="input" value={transferForm.toId} onChange={(e) => setTransferForm((f) => ({ ...f, toId: e.target.value }))}>
+                <option value="">To…</option>
+                {(transferForm.toType === "VAULT" ? vaults : tellers).map((x: any) => (<option key={x.id} value={x.id}>{x.name || x.employeeName}</option>))}
+              </select>
+              <input required type="number" step="0.01" placeholder="Amount" className="input !w-28" value={transferForm.amount} onChange={(e) => setTransferForm((f) => ({ ...f, amount: e.target.value }))} />
+              <input required placeholder="Reason" className="input flex-1 min-w-[140px]" value={transferForm.reason} onChange={(e) => setTransferForm((f) => ({ ...f, reason: e.target.value }))} />
+              <label className="flex items-center gap-1 text-[12px] text-text-700">
+                <input type="checkbox" checked={transferForm.isEmergency} onChange={(e) => setTransferForm((f) => ({ ...f, isEmergency: e.target.checked }))} /> Emergency
+              </label>
+              <button type="submit" disabled={busy} className="btn-primary">Request</button>
+            </form>
+            <div className="card overflow-x-auto">
+              <table className="w-full min-w-[640px] text-sm table-modern">
+                <thead><tr><th>From</th><th>To</th><th>Amount</th><th>Reason</th><th>Status</th></tr></thead>
+                <tbody>
+                  {transfers.map((t: any) => (
+                    <tr key={t.id}>
+                      <td className="text-text-700">{t.fromType}</td>
+                      <td className="text-text-700">{t.toType}</td>
+                      <td className="text-text-900 font-medium">GHS {Number(t.amount).toLocaleString()}{t.isEmergency && <span className="ml-1 text-rose-600 text-[10px]">EMERGENCY</span>}</td>
+                      <td className="text-text-700 text-[12.5px]">{t.reason}</td>
+                      <td><span className={`badge ${t.status === "COMPLETED" ? "bg-green-100 text-green-600" : t.status === "REJECTED" ? "bg-rose-100 text-rose-600" : "bg-gold-500/15 text-gold-600"}`}>{t.status.replaceAll("_", " ")}</span></td>
+                    </tr>
+                  ))}
+                  {transfers.length === 0 && <tr><td colSpan={5} className="text-center text-text-muted text-sm py-8">No transfers requested.</td></tr>}
                 </tbody>
               </table>
             </div>
