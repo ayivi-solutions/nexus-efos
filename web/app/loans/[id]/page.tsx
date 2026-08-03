@@ -50,12 +50,15 @@ export default function LoanDetailPage() {
   const [penaltyForm, setPenaltyForm] = useState({ calculationMethod: "PERCENTAGE", rateOrAmount: "" });
   const [assessment, setAssessment] = useState<any>(null);
   const [assessmentForm, setAssessmentForm] = useState({ monthlyIncome: "", monthlyExpenses: "", creditBureauChecked: false, creditBureauNotes: "" });
+  const [guarantors, setGuarantors] = useState<any[]>([]);
+  const [guarantorForm, setGuarantorForm] = useState({ fullName: "", phone: "", relationship: "", guaranteeLimit: "" });
 
   function load() {
     api.getLoan(id).then((res) => setLoan(res.loan)).catch((err) => setError(err.message));
     api.listPromisesToPay(id).then((res) => setPromises(res.promises)).catch(() => {});
     api.listLoanPenalties(id).then((res) => setPenalties(res.penalties)).catch(() => {});
     api.getCreditAssessment(id).then((res) => setAssessment(res.assessment)).catch(() => {});
+    api.listGuarantors(id).then((res) => setGuarantors(res.guarantors)).catch(() => {});
   }
 
   useEffect(() => {
@@ -125,6 +128,34 @@ export default function LoanDetailPage() {
     setBusy(true); setError(null);
     try { await api.overrideCreditAssessment(id, reason); load(); }
     catch (err: any) { setError(err.message || "Could not override assessment"); }
+    finally { setBusy(false); }
+  }
+
+  async function handleAddGuarantor(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy(true); setError(null);
+    try {
+      await api.addGuarantor(id, { ...guarantorForm, guaranteeLimit: Number(guarantorForm.guaranteeLimit) });
+      setGuarantorForm({ fullName: "", phone: "", relationship: "", guaranteeLimit: "" });
+      toast.success("Guarantor registered.");
+      load();
+    } catch (err: any) { setError(err.message || "Could not add guarantor"); }
+    finally { setBusy(false); }
+  }
+
+  async function handleApproveGuarantor(gid: string) {
+    setBusy(true); setError(null);
+    try { await api.approveGuarantor(gid); load(); }
+    catch (err: any) { setError(err.message || "Could not approve guarantor"); }
+    finally { setBusy(false); }
+  }
+
+  async function handleReleaseGuarantor(gid: string) {
+    const reason = window.prompt("Reason for releasing this guarantor:");
+    if (reason === null) return;
+    setBusy(true); setError(null);
+    try { await api.releaseGuarantor(gid, reason); load(); }
+    catch (err: any) { setError(err.message || "Could not release guarantor"); }
     finally { setBusy(false); }
   }
 
@@ -382,6 +413,51 @@ export default function LoanDetailPage() {
             </div>
 
             {/* doc §71 Loan Penalty Management */}
+            {/* doc §65 Guarantor Management */}
+            <h2 className="font-display font-semibold text-lg text-ink-900 mb-3 mt-10">Guarantors</h2>
+            {["PENDING", "APPROVED", "DISBURSED", "ACTIVE"].includes(loan.status) && (
+              <form onSubmit={handleAddGuarantor} className="card p-5 mb-4 flex flex-wrap items-end gap-3">
+                <label className="block">
+                  <span className="block text-[13px] text-text-500 mb-1.5">Full name</span>
+                  <input required className="input" value={guarantorForm.fullName} onChange={(e) => setGuarantorForm((f) => ({ ...f, fullName: e.target.value }))} />
+                </label>
+                <label className="block">
+                  <span className="block text-[13px] text-text-500 mb-1.5">Phone</span>
+                  <input required className="input" value={guarantorForm.phone} onChange={(e) => setGuarantorForm((f) => ({ ...f, phone: e.target.value }))} />
+                </label>
+                <label className="block">
+                  <span className="block text-[13px] text-text-500 mb-1.5">Relationship</span>
+                  <input required className="input !w-32" value={guarantorForm.relationship} onChange={(e) => setGuarantorForm((f) => ({ ...f, relationship: e.target.value }))} />
+                </label>
+                <label className="block">
+                  <span className="block text-[13px] text-text-500 mb-1.5">Guarantee limit (GHS)</span>
+                  <input required type="number" step="0.01" min="0.01" className="input !w-32" value={guarantorForm.guaranteeLimit} onChange={(e) => setGuarantorForm((f) => ({ ...f, guaranteeLimit: e.target.value }))} />
+                </label>
+                <button type="submit" disabled={busy} className="btn-primary">Add</button>
+              </form>
+            )}
+            <div className="card overflow-x-auto mb-10">
+              <table className="w-full min-w-[600px] text-sm table-modern">
+                <thead><tr><th>Name</th><th>Phone</th><th>Relationship</th><th>Limit</th><th>Status</th><th></th></tr></thead>
+                <tbody>
+                  {guarantors.map((g: any) => (
+                    <tr key={g.id}>
+                      <td className="text-text-900 font-medium">{g.fullName}</td>
+                      <td className="text-text-700">{g.phone}</td>
+                      <td className="text-text-700">{g.relationship}</td>
+                      <td className="text-text-900 font-medium">GHS {Number(g.guaranteeLimit).toLocaleString()}</td>
+                      <td><span className={`badge ${g.status === "APPROVED" ? "bg-green-100 text-green-600" : g.status === "RELEASED" ? "bg-paper-100 text-text-muted" : "bg-gold-500/15 text-gold-600"}`}>{g.status}</span></td>
+                      <td className="whitespace-nowrap space-x-2">
+                        {g.status === "PENDING" && <button onClick={() => handleApproveGuarantor(g.id)} className="btn-text text-green-600">Approve</button>}
+                        {g.status !== "RELEASED" && <button onClick={() => handleReleaseGuarantor(g.id)} className="btn-text text-rose-600">Release</button>}
+                      </td>
+                    </tr>
+                  ))}
+                  {guarantors.length === 0 && <tr><td colSpan={6} className="text-center text-text-muted text-sm py-8">No guarantors registered.</td></tr>}
+                </tbody>
+              </table>
+            </div>
+
             <h2 className="font-display font-semibold text-lg text-ink-900 mb-3 mt-10">Penalties</h2>
             {["DISBURSED", "ACTIVE"].includes(loan.status) && (
               <form onSubmit={handleApplyPenalty} className="card p-5 mb-4 flex flex-wrap items-end gap-3">

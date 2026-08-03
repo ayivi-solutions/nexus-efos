@@ -243,6 +243,11 @@ export const api = {
     request(`/loans/${loanId}/credit-assessment`, { method: "POST", body: JSON.stringify(data) }),
   overrideCreditAssessment: (loanId: string, reason: string) => request(`/loans/${loanId}/credit-assessment/override`, { method: "POST", body: JSON.stringify({ reason }) }),
 
+  listGuarantors: (loanId: string) => request(`/loans/${loanId}/guarantors`),
+  addGuarantor: (loanId: string, data: any) => request(`/loans/${loanId}/guarantors`, { method: "POST", body: JSON.stringify(data) }),
+  approveGuarantor: (guarantorId: string) => request(`/loans/guarantors/${guarantorId}/approve`, { method: "POST" }),
+  releaseGuarantor: (guarantorId: string, reason?: string) => request(`/loans/guarantors/${guarantorId}/release`, { method: "POST", body: JSON.stringify({ reason }) }),
+
   listSavingsAccounts: () => request("/savings"),
   getSavingsAccount: (id: string) => request(`/savings/${id}`),
   addSavingsHolder: (id: string, data: { customerId: string; role: string }) => request(`/savings/${id}/holders`, { method: "POST", body: JSON.stringify(data) }),

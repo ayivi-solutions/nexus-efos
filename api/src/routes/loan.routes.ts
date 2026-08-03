@@ -621,3 +621,85 @@ loanRouter.post("/:id/credit-assessment/override", requirePermission("loans.appr
 
   res.json({ assessment: updated });
 });
+
+// =========================================================================
+// doc §65 Guarantor Management
+// =========================================================================
+
+const guarantorSchema = z.object({
+  fullName: z.string().min(2),
+  phone: z.string().min(6),
+  idType: z.string().optional(),
+  idNumber: z.string().optional(),
+  relationship: z.string().min(1),
+  monthlyIncome: z.number().nonnegative().optional(),
+  guaranteeLimit: z.number().positive(),
+});
+
+loanRouter.get("/:id/guarantors", requirePermission("reports.view"), async (req: AuthedRequest, res) => {
+  const loan = await prisma.loan.findFirst({ where: { id: req.params.id, institutionId: req.auth!.institutionId } });
+  if (!loan) return res.status(404).json({ error: "Loan not found" });
+  const guarantors = await prisma.guarantor.findMany({ where: { loanId: loan.id }, orderBy: { createdAt: "asc" } });
+  res.json({ guarantors });
+});
+
+// §65.4 "Guarantee limits are enforced" — the sum of all non-released
+// guarantee limits on a loan is never allowed to exceed its principal,
+// checked here rather than trusted to whoever's filling in the form.
+loanRouter.post("/:id/guarantors", requirePermission("loans.initiate"), async (req: AuthedRequest, res) => {
+  const parsed = guarantorSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+  const loan = await prisma.loan.findFirst({ where: { id: req.params.id, institutionId: req.auth!.institutionId } });
+  if (!loan) return res.status(404).json({ error: "Loan not found" });
+
+  const existing = await prisma.guarantor.findMany({ where: { loanId: loan.id, status: { not: "RELEASED" } } });
+  const totalPledged = existing.reduce((sum, g) => sum + Number(g.guaranteeLimit), 0);
+  if (totalPledged + parsed.data.guaranteeLimit > Number(loan.principal)) {
+    return res.status(400).json({ error: `Total guarantee limits (GHS ${(totalPledged + parsed.data.guaranteeLimit).toLocaleString()}) would exceed the loan principal (GHS ${Number(loan.principal).toLocaleString()})` });
+  }
+
+  const guarantor = await prisma.guarantor.create({
+    data: { institutionId: req.auth!.institutionId, loanId: loan.id, ...parsed.data },
+  });
+
+  await prisma.auditLog.create({
+    data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "loan.guarantor_registered", resource: "loan", resourceId: loan.id, metadata: { guarantorId: guarantor.id } },
+  });
+
+  res.status(201).json({ guarantor });
+});
+
+loanRouter.post("/guarantors/:guarantorId/approve", requirePermission("loans.approve"), async (req: AuthedRequest, res) => {
+  const guarantor = await prisma.guarantor.findFirst({ where: { id: req.params.guarantorId, institutionId: req.auth!.institutionId } });
+  if (!guarantor) return res.status(404).json({ error: "Guarantor not found" });
+  if (guarantor.status !== "PENDING") return res.status(400).json({ error: `Only a PENDING guarantor can be approved (currently ${guarantor.status})` });
+
+  const updated = await prisma.guarantor.update({ where: { id: guarantor.id }, data: { status: "APPROVED", approvedById: req.auth!.userId, approvedAt: new Date() } });
+
+  await prisma.auditLog.create({
+    data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "loan.guarantor_approved", resource: "loan", resourceId: guarantor.loanId, metadata: { guarantorId: guarantor.id } },
+  });
+
+  res.json({ guarantor: updated });
+});
+
+// §65.4 "Released guarantees remain historically available" — a status
+// change (RELEASED), never a delete, so the record and its history stay
+// intact.
+loanRouter.post("/guarantors/:guarantorId/release", requirePermission("loans.approve"), async (req: AuthedRequest, res) => {
+  const { reason } = req.body as { reason?: string };
+  const guarantor = await prisma.guarantor.findFirst({ where: { id: req.params.guarantorId, institutionId: req.auth!.institutionId } });
+  if (!guarantor) return res.status(404).json({ error: "Guarantor not found" });
+  if (guarantor.status === "RELEASED") return res.status(400).json({ error: "This guarantor is already released" });
+
+  const updated = await prisma.guarantor.update({
+    where: { id: guarantor.id },
+    data: { status: "RELEASED", releasedById: req.auth!.userId, releasedAt: new Date(), releaseReason: reason },
+  });
+
+  await prisma.auditLog.create({
+    data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "loan.guarantor_released", resource: "loan", resourceId: guarantor.loanId, metadata: { guarantorId: guarantor.id, reason } },
+  });
+
+  res.json({ guarantor: updated });
+});

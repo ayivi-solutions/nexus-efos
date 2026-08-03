@@ -75,6 +75,7 @@ model Institution {
   promisesToPay           PromiseToPay[]
   loanPenalties           LoanPenalty[]
   creditAssessments       CreditAssessment[]
+  guarantors              Guarantor[]
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -1031,6 +1032,7 @@ model Loan {
   promisesToPay  PromiseToPay[]
   penalties      LoanPenalty[]
   creditAssessment CreditAssessment?
+  guarantors     Guarantor[]
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -1845,5 +1847,42 @@ model CreditAssessment {
   assessedAt   DateTime @default(now()) @map("assessed_at")
 
   @@map("credit_assessment")
+  @@schema("nexus")
+}
+
+// doc §65 Guarantor Management.
+enum GuarantorStatus {
+  PENDING
+  APPROVED
+  RELEASED
+
+  @@schema("nexus")
+}
+
+model Guarantor {
+  id            String          @id(map: "pk_guarantor") @default(uuid())
+  institution   Institution     @relation(fields: [institutionId], references: [id], onDelete: Cascade, map: "fk_guarantor_institution")
+  institutionId String          @map("institution_id")
+  loan          Loan            @relation(fields: [loanId], references: [id], onDelete: Cascade, map: "fk_guarantor_loan")
+  loanId        String          @map("loan_id")
+
+  fullName     String       @map("full_name")
+  phone        String
+  idType       String?      @map("id_type")
+  idNumber     String?      @map("id_number")
+  relationship String
+  monthlyIncome Decimal?    @map("monthly_income") @db.Decimal(14, 2) // §65.3 Financial Capacity Assessment
+  guaranteeLimit Decimal    @map("guarantee_limit") @db.Decimal(14, 2) // §65.3 Guarantee Limits — enforced not to exceed the loan principal
+  status       GuarantorStatus @default(PENDING)
+
+  approvedById String?   @map("approved_by_id")
+  approvedAt   DateTime? @map("approved_at")
+  releasedById String?   @map("released_by_id")
+  releasedAt   DateTime? @map("released_at")
+  releaseReason String?  @map("release_reason")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("guarantor")
   @@schema("nexus")
 }
