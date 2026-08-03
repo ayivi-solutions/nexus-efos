@@ -9,7 +9,7 @@ export default function CollectionsPage() {
   const toast = useToast();
   const [error, setError] = useState<string | null>(null);
   useErrorToast(error);
-  const [tab, setTab] = useState<"collectors" | "routes">("collectors");
+  const [tab, setTab] = useState<"collectors" | "routes" | "transactions">("collectors");
 
   const [collectors, setCollectors] = useState<any[]>([]);
   const [employees, setEmployees] = useState<any[]>([]);
@@ -20,6 +20,8 @@ export default function CollectionsPage() {
   const [collectorForm, setCollectorForm] = useState({ employeeId: "" });
   const [routeForm, setRouteForm] = useState({ name: "", branchId: "", collectorId: "" });
   const [assignForm, setAssignForm] = useState<Record<string, string>>({});
+  const [transactions, setTransactions] = useState<any[]>([]);
+  const [collectForm, setCollectForm] = useState({ type: "SAVINGS_DEPOSIT", collectorId: "", customerId: "", targetId: "", amount: "" });
   const [busy, setBusy] = useState(false);
 
   function load() {
@@ -28,6 +30,25 @@ export default function CollectionsPage() {
     api.listEmployees().then((r) => setEmployees(r.employees)).catch(() => {});
     api.listBranches().then((r) => setBranches(r.branches)).catch(() => {});
     api.listCustomers().then((r) => setCustomers(r.customers)).catch(() => {});
+    api.listCollectionTransactions().then((r) => setTransactions(r.transactions)).catch(() => {});
+  }
+
+  async function handleRecordCollection(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy(true); setError(null);
+    try {
+      const res = await api.recordCollection({ ...collectForm, amount: Number(collectForm.amount) });
+      toast.success(`Recorded — ${res.transactionNumber}`);
+      setCollectForm({ type: "SAVINGS_DEPOSIT", collectorId: "", customerId: "", targetId: "", amount: "" });
+      load();
+    } catch (err: any) { setError(err.message || "Could not record collection"); } finally { setBusy(false); }
+  }
+
+  async function handleReverse(id: string) {
+    const reason = window.prompt("Reason for reversing this collection:");
+    if (!reason) return;
+    setBusy(true); setError(null);
+    try { await api.reverseCollection(id, reason); load(); } catch (err: any) { setError(err.message); } finally { setBusy(false); }
   }
   useEffect(() => { load(); }, []);
 
@@ -91,6 +112,7 @@ export default function CollectionsPage() {
         <div className="flex gap-2 mb-6">
           <button onClick={() => setTab("collectors")} className={`btn-text ${tab === "collectors" ? "text-gold-600 font-semibold" : "text-text-muted"}`}>Collectors</button>
           <button onClick={() => setTab("routes")} className={`btn-text ${tab === "routes" ? "text-gold-600 font-semibold" : "text-text-muted"}`}>Routes</button>
+          <button onClick={() => setTab("transactions")} className={`btn-text ${tab === "transactions" ? "text-gold-600 font-semibold" : "text-text-muted"}`}>Daily Collections</button>
         </div>
 
         {tab === "collectors" && (
@@ -176,6 +198,45 @@ export default function CollectionsPage() {
               </div>
             ))}
             {routes.length === 0 && <p className="text-text-muted text-sm text-center py-8">No routes created.</p>}
+          </>
+        )}
+        {tab === "transactions" && (
+          <>
+            <form onSubmit={handleRecordCollection} className="card p-5 mb-6 flex flex-wrap items-end gap-3">
+              <select className="input !w-36" value={collectForm.type} onChange={(e) => setCollectForm((f) => ({ ...f, type: e.target.value }))}>
+                <option value="SAVINGS_DEPOSIT">Savings Deposit</option>
+                <option value="LOAN_REPAYMENT">Loan Repayment</option>
+              </select>
+              <select required className="input" value={collectForm.collectorId} onChange={(e) => setCollectForm((f) => ({ ...f, collectorId: e.target.value }))}>
+                <option value="">Collector…</option>
+                {collectors.filter((c: any) => c.availability === "AVAILABLE").map((c: any) => (<option key={c.id} value={c.id}>{c.employee?.fullName}</option>))}
+              </select>
+              <select required className="input" value={collectForm.customerId} onChange={(e) => setCollectForm((f) => ({ ...f, customerId: e.target.value }))}>
+                <option value="">Customer…</option>
+                {customers.map((c: any) => (<option key={c.id} value={c.id}>{c.fullName}</option>))}
+              </select>
+              <input required placeholder={collectForm.type === "SAVINGS_DEPOSIT" ? "Savings Account ID" : "Loan ID"} className="input !w-40" value={collectForm.targetId} onChange={(e) => setCollectForm((f) => ({ ...f, targetId: e.target.value }))} />
+              <input required type="number" step="0.01" min="0.01" placeholder="Amount" className="input !w-28" value={collectForm.amount} onChange={(e) => setCollectForm((f) => ({ ...f, amount: e.target.value }))} />
+              <button type="submit" disabled={busy} className="btn-primary">Record</button>
+            </form>
+            <div className="card overflow-x-auto">
+              <table className="w-full min-w-[720px] text-sm table-modern">
+                <thead><tr><th>Txn #</th><th>Type</th><th>Amount</th><th>Collector</th><th>Status</th><th></th></tr></thead>
+                <tbody>
+                  {transactions.map((t: any) => (
+                    <tr key={t.id}>
+                      <td className="font-mono text-[12px] text-text-700">{t.transactionNumber}</td>
+                      <td className="text-text-700">{t.type.replaceAll("_", " ")}</td>
+                      <td className="text-text-900 font-medium">GHS {Number(t.amount).toLocaleString()}</td>
+                      <td className="text-text-700">{collectors.find((c: any) => c.id === t.collectorId)?.employee?.fullName || "—"}</td>
+                      <td><span className={`badge ${t.status === "COMPLETED" ? "bg-green-100 text-green-600" : "bg-rose-100 text-rose-600"}`}>{t.status}</span></td>
+                      <td>{t.status === "COMPLETED" && <button onClick={() => handleReverse(t.id)} className="btn-text text-rose-600">Reverse</button>}</td>
+                    </tr>
+                  ))}
+                  {transactions.length === 0 && <tr><td colSpan={6} className="text-center text-text-muted text-sm py-8">No collections recorded.</td></tr>}
+                </tbody>
+              </table>
+            </div>
           </>
         )}
       </div>

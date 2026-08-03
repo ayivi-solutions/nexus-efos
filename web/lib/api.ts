@@ -275,6 +275,10 @@ export const api = {
   assignCustomerToRoute: (routeId: string, customerId: string, sequence?: number) => request(`/collections/routes/${routeId}/customers`, { method: "POST", body: JSON.stringify({ customerId, sequence }) }),
   removeCustomerFromRoute: (routeId: string, assignmentId: string) => request(`/collections/routes/${routeId}/customers/${assignmentId}`, { method: "DELETE" }),
 
+  listCollectionTransactions: () => request("/collections/transactions"),
+  recordCollection: (data: any) => request("/collections/transactions", { method: "POST", body: JSON.stringify(data) }),
+  reverseCollection: (id: string, reason: string) => request(`/collections/transactions/${id}/reverse`, { method: "POST", body: JSON.stringify({ reason }) }),
+
   listSavingsAccounts: () => request("/savings"),
   getSavingsAccount: (id: string) => request(`/savings/${id}`),
   addSavingsHolder: (id: string, data: { customerId: string; role: string }) => request(`/savings/${id}/holders`, { method: "POST", body: JSON.stringify(data) }),

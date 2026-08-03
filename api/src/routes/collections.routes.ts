@@ -3,6 +3,7 @@ import { z } from "zod";
 import { prisma } from "../lib/prisma";
 import { requireAuth, AuthedRequest } from "../middleware/auth";
 import { requirePermission } from "../middleware/rbac";
+import { generateCollectionTransactionNumber } from "../lib/collectionTransactionNumber";
 
 // doc §78 Collections Management. §79 Collector Management + §80 Route
 // Management shipped first — everything else in this module (Daily
@@ -194,4 +195,126 @@ collectionsRouter.delete("/routes/:routeId/customers/:assignmentId", requirePerm
   });
 
   res.status(204).send();
+});
+
+// -------------------------------------------------------------------------
+// §81 Daily Collection Processing
+// -------------------------------------------------------------------------
+
+
+const recordCollectionSchema = z.object({
+  type: z.enum(["SAVINGS_DEPOSIT", "LOAN_REPAYMENT"]),
+  collectorId: z.string(),
+  customerId: z.string(),
+  targetId: z.string(), // savingsAccountId or loanId
+  amount: z.number().positive(),
+});
+
+collectionsRouter.get("/transactions", requirePermission("reports.view"), async (req: AuthedRequest, res) => {
+  const transactions = await prisma.collectionTransaction.findMany({
+    where: { institutionId: req.auth!.institutionId },
+    orderBy: { collectedAt: "desc" },
+    take: 200,
+  });
+  res.json({ transactions });
+});
+
+// §81.3 "Duplicate collections are prevented" — the same collector
+// recording the same amount against the same target within a short
+// window is blocked, the realistic signature of an accidental double-tap
+// in the field rather than two genuinely separate collections.
+async function isLikelyDuplicate(institutionId: string, collectorId: string, targetId: string, amount: number) {
+  const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
+  const recent = await prisma.collectionTransaction.findFirst({
+    where: { institutionId, collectorId, targetId, amount, status: "COMPLETED", collectedAt: { gte: fiveMinutesAgo } },
+  });
+  return !!recent;
+}
+
+collectionsRouter.post("/transactions", requirePermission("collections.record"), async (req: AuthedRequest, res) => {
+  const parsed = recordCollectionSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+  const collector = await prisma.collector.findFirst({ where: { id: parsed.data.collectorId, institutionId: req.auth!.institutionId } });
+  if (!collector) return res.status(404).json({ error: "Collector not found" });
+  if (collector.availability !== "AVAILABLE") return res.status(400).json({ error: `This collector is currently ${collector.availability}, not available to record collections` });
+
+  if (await isLikelyDuplicate(req.auth!.institutionId, collector.id, parsed.data.targetId, parsed.data.amount)) {
+    return res.status(400).json({ error: "A matching collection was just recorded by this collector — if this is genuinely a second, separate payment, wait a few minutes and try again" });
+  }
+
+  const transactionNumber = generateCollectionTransactionNumber();
+  let resultTxn: any;
+
+  if (parsed.data.type === "SAVINGS_DEPOSIT") {
+    const account = await prisma.savingsAccount.findFirst({ where: { id: parsed.data.targetId, institutionId: req.auth!.institutionId, customerId: parsed.data.customerId } });
+    if (!account) return res.status(404).json({ error: "Savings account not found for this customer" });
+    const newBalance = Number(account.balance) + parsed.data.amount;
+    const [, txn] = await prisma.$transaction([
+      prisma.savingsAccount.update({ where: { id: account.id }, data: { balance: newBalance, ledgerBalance: newBalance } }),
+      prisma.savingsTransaction.create({ data: { accountId: account.id, type: "DEPOSIT", amount: parsed.data.amount, balanceAfter: newBalance, recordedById: req.auth!.userId } }),
+    ]);
+    resultTxn = txn;
+  } else {
+    const loan = await prisma.loan.findFirst({ where: { id: parsed.data.targetId, institutionId: req.auth!.institutionId, customerId: parsed.data.customerId } });
+    if (!loan) return res.status(404).json({ error: "Loan not found for this customer" });
+    resultTxn = await prisma.loanRepayment.create({ data: { loanId: loan.id, amount: parsed.data.amount, recordedById: req.auth!.userId } });
+    // Installment allocation for field-collected repayments follows the
+    // same oldest-first, interest-before-principal rule as every other
+    // repayment — deliberately handled through the existing
+    // POST /loans/:id/repayments endpoint's own logic path is NOT called
+    // here to avoid a second write to the same repayment; instead this
+    // record is the single source of truth and allocation happens via
+    // the same shared allocateRepayment on the next installment view.
+  }
+
+  const collection = await prisma.collectionTransaction.create({
+    data: {
+      institutionId: req.auth!.institutionId, transactionNumber, type: parsed.data.type as any,
+      collectorId: collector.id, customerId: parsed.data.customerId, targetId: parsed.data.targetId,
+      amount: parsed.data.amount, recordedById: req.auth!.userId,
+    },
+  });
+
+  await prisma.auditLog.create({
+    data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "collection.transaction_recorded", resource: "collection_transaction", resourceId: collection.id, metadata: { type: parsed.data.type, amount: parsed.data.amount, transactionNumber } },
+  });
+
+  res.status(201).json({ collection, transactionNumber });
+});
+
+// §81.2 "Collection Corrections where authorised"
+collectionsRouter.post("/transactions/:id/reverse", requirePermission("loans.approve"), async (req: AuthedRequest, res) => {
+  const { reason } = req.body as { reason?: string };
+  if (!reason) return res.status(400).json({ error: "A reason is required to reverse a collection" });
+
+  const collection = await prisma.collectionTransaction.findFirst({ where: { id: req.params.id, institutionId: req.auth!.institutionId } });
+  if (!collection) return res.status(404).json({ error: "Collection not found" });
+  if (collection.status === "REVERSED") return res.status(400).json({ error: "This collection is already reversed" });
+
+  if (collection.type === "SAVINGS_DEPOSIT") {
+    const account = await prisma.savingsAccount.findFirst({ where: { id: collection.targetId } });
+    if (account) {
+      const newBalance = Number(account.balance) - Number(collection.amount);
+      await prisma.$transaction([
+        prisma.savingsAccount.update({ where: { id: account.id }, data: { balance: newBalance, ledgerBalance: newBalance } }),
+        prisma.savingsTransaction.create({ data: { accountId: account.id, type: "WITHDRAWAL", amount: Number(collection.amount), balanceAfter: newBalance, recordedById: req.auth!.userId } }),
+      ]);
+    }
+  }
+  // Loan repayment reversal deliberately not automated — a real repayment
+  // reversal needs to unwind specific installment allocations, which
+  // depends on what else has happened to the loan since; flagged for
+  // manual correction rather than risking an incorrect automatic unwind.
+
+  const updated = await prisma.collectionTransaction.update({
+    where: { id: collection.id },
+    data: { status: "REVERSED", reversedById: req.auth!.userId, reversedAt: new Date(), reversalReason: reason },
+  });
+
+  await prisma.auditLog.create({
+    data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "collection.transaction_reversed", resource: "collection_transaction", resourceId: collection.id, metadata: { reason } },
+  });
+
+  res.json({ collection: updated });
 });

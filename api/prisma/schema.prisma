@@ -79,6 +79,7 @@ model Institution {
   collateral              Collateral[]
   collectors              Collector[]
   collectionRoutes        CollectionRoute[]
+  collectionTransactions  CollectionTransaction[]
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -2081,5 +2082,53 @@ model CollectionRouteCustomer {
   removedAt  DateTime?       @map("removed_at")
 
   @@map("collection_route_customer")
+  @@schema("nexus")
+}
+
+// doc §81 Daily Collection Processing. A dedicated transaction record,
+// deliberately not reusing the existing savings.initiate-gated deposit
+// endpoint or the loan repayment endpoint's internals directly — field
+// collectors have their own narrower collections.record permission, and
+// duplicating the small, well-understood balance-update logic here is
+// safer than refactoring the live, already-working payment endpoints
+// under time pressure. Every collection still lands in the exact same
+// SavingsTransaction/LoanRepayment tables real payments use, so reporting
+// and history are unified regardless of collection channel.
+enum CollectionTransactionType {
+  SAVINGS_DEPOSIT
+  LOAN_REPAYMENT
+
+  @@schema("nexus")
+}
+
+enum CollectionTransactionStatus {
+  COMPLETED
+  REVERSED
+
+  @@schema("nexus")
+}
+
+model CollectionTransaction {
+  id            String                     @id(map: "pk_collection_transaction") @default(uuid())
+  institution   Institution                @relation(fields: [institutionId], references: [id], onDelete: Cascade, map: "fk_collection_transaction_institution")
+  institutionId String                     @map("institution_id")
+
+  transactionNumber String                     @unique @map("transaction_number")
+  type              CollectionTransactionType  @map("type")
+  collectorId       String                     @map("collector_id")
+  routeId           String?                    @map("route_id")
+  customerId        String                     @map("customer_id")
+  targetId          String                     @map("target_id") // savingsAccountId or loanId depending on type
+  amount            Decimal                    @db.Decimal(14, 2)
+  status            CollectionTransactionStatus @default(COMPLETED)
+
+  reversedById     String?   @map("reversed_by_id")
+  reversedAt       DateTime? @map("reversed_at")
+  reversalReason   String?   @map("reversal_reason")
+
+  collectedAt  DateTime @default(now()) @map("collected_at")
+  recordedById String   @map("recorded_by_id")
+
+  @@map("collection_transaction")
   @@schema("nexus")
 }
