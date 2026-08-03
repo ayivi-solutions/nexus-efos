@@ -92,6 +92,7 @@ model Institution {
   tellers                 Teller[]
   cashLedgerEntries       CashLedgerEntry[]
   cashTransfers           CashTransfer[]
+  cashBalancings          CashBalancing[]
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -825,6 +826,7 @@ enum ApprovalRequestType {
   SAVINGS_RESTRICTION_CREATE  // doc §54
   SAVINGS_RESTRICTION_REMOVE  // doc §54
   CASH_TRANSFER  // doc §114
+  CASH_BALANCING_VARIANCE  // doc §115
 
   @@schema("nexus")
 }
@@ -2637,5 +2639,40 @@ model CashTransfer {
   createdAt     DateTime  @default(now()) @map("created_at")
 
   @@map("cash_transfer")
+  @@schema("nexus")
+}
+
+// doc §115 Cash Balancing and Reconciliation. §115.3 "Adjustments require
+// approval" — a variance routes through the existing Approval Workflow,
+// same pattern as Collection Settlement (§82).
+enum CashBalancingStatus {
+  RECONCILED
+  VARIANCE_PENDING_APPROVAL
+
+  @@schema("nexus")
+}
+
+model CashBalancing {
+  id            String               @id(map: "pk_cash_balancing") @default(uuid())
+  institution   Institution          @relation(fields: [institutionId], references: [id], onDelete: Cascade, map: "fk_cash_balancing_institution")
+  institutionId String               @map("institution_id")
+
+  holderType     CashHolderType
+  holderId       String               @map("holder_id")
+  balancingDate  DateTime             @map("balancing_date")
+  expectedAmount Decimal              @map("expected_amount") @db.Decimal(14, 2)
+  countedAmount  Decimal              @map("counted_amount") @db.Decimal(14, 2)
+  variance       Decimal              @db.Decimal(14, 2)
+  status         CashBalancingStatus  @default(RECONCILED)
+  // §115.3 "Variances are investigated and documented" — required whenever
+  // a variance is non-zero, enforced in the route, not just a free field.
+  investigationNotes String?          @map("investigation_notes")
+
+  reconciledById String?   @map("reconciled_by_id")
+  reconciledAt   DateTime? @map("reconciled_at")
+  createdAt      DateTime  @default(now()) @map("created_at")
+
+  @@unique([holderType, holderId, balancingDate], map: "uq_cash_balancing_holder_date")
+  @@map("cash_balancing")
   @@schema("nexus")
 }

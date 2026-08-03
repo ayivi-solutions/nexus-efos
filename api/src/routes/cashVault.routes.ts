@@ -41,10 +41,22 @@ cashVaultRouter.post("/vaults/:id/open", requirePermission("institution.configur
   res.json({ vault: updated });
 });
 
+// §115.3 "Balancing is completed before operational close" — checked
+// here, not just documented as a policy. A vault cannot close without a
+// same-day RECONCILED (or approved, ex-variance) balancing record.
 cashVaultRouter.post("/vaults/:id/close", requirePermission("institution.configure"), async (req: AuthedRequest, res) => {
   const vault = await prisma.vault.findFirst({ where: { id: req.params.id, institutionId: req.auth!.institutionId } });
   if (!vault) return res.status(404).json({ error: "Vault not found" });
   if (vault.status === "CLOSED") return res.status(400).json({ error: "Vault is already closed" });
+
+  const todayStart = new Date();
+  todayStart.setHours(0, 0, 0, 0);
+  const todaysBalancing = await prisma.cashBalancing.findFirst({
+    where: { holderType: "VAULT", holderId: vault.id, balancingDate: todayStart, status: "RECONCILED" },
+  });
+  if (!todaysBalancing) {
+    return res.status(400).json({ error: "This vault must be balanced (and any variance approved) for today before it can be closed" });
+  }
 
   const updated = await prisma.vault.update({ where: { id: vault.id }, data: { status: "CLOSED", closedById: req.auth!.userId, closedAt: new Date() } });
   await prisma.auditLog.create({ data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "vault.close", resource: "vault", resourceId: vault.id } });
@@ -178,4 +190,63 @@ cashVaultRouter.post("/transfers", requirePermission("institution.configure"), a
   await prisma.auditLog.create({ data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "cash_transfer.requested", resource: "cash_transfer", resourceId: transfer.id, metadata: { amount: parsed.data.amount, isEmergency: parsed.data.isEmergency } } });
 
   res.status(202).json({ pendingApproval: true, transfer });
+});
+
+// -------------------------------------------------------------------------
+// §115 Cash Balancing and Reconciliation
+// -------------------------------------------------------------------------
+
+cashVaultRouter.get("/balancings", requirePermission("reports.view"), async (req: AuthedRequest, res) => {
+  const balancings = await prisma.cashBalancing.findMany({ where: { institutionId: req.auth!.institutionId }, orderBy: { balancingDate: "desc" } });
+  res.json({ balancings });
+});
+
+const balancingSchema = z.object({
+  holderType: z.enum(["VAULT", "TELLER"]), holderId: z.string(),
+  balancingDate: z.string(), countedAmount: z.number().nonnegative(), investigationNotes: z.string().optional(),
+});
+
+// §115.2 "Daily Cash Balancing" / "Variance Detection" — expectedAmount is
+// always the real current balance/holding at the moment of balancing,
+// never trusted from the request; only countedAmount (the physical count)
+// is self-reported, since that's the one figure that genuinely needs it.
+cashVaultRouter.post("/balancings", requirePermission("institution.configure"), async (req: AuthedRequest, res) => {
+  const parsed = balancingSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+  const expectedAmount = await getHolderBalance(parsed.data.holderType, parsed.data.holderId);
+  if (expectedAmount === null) return res.status(404).json({ error: "Holder not found" });
+
+  const balancingDate = new Date(parsed.data.balancingDate);
+  balancingDate.setHours(0, 0, 0, 0);
+
+  const existing = await prisma.cashBalancing.findUnique({ where: { holderType_holderId_balancingDate: { holderType: parsed.data.holderType as any, holderId: parsed.data.holderId, balancingDate } } });
+  if (existing) return res.status(400).json({ error: "A balancing record already exists for this holder and date" });
+
+  const variance = Math.round((parsed.data.countedAmount - expectedAmount) * 100) / 100;
+  if (Math.abs(variance) >= 0.01 && !parsed.data.investigationNotes) {
+    return res.status(400).json({ error: "A variance was detected — investigation notes are required" });
+  }
+
+  const balancing = await prisma.cashBalancing.create({
+    data: {
+      institutionId: req.auth!.institutionId, holderType: parsed.data.holderType as any, holderId: parsed.data.holderId,
+      balancingDate, expectedAmount, countedAmount: parsed.data.countedAmount, variance, investigationNotes: parsed.data.investigationNotes,
+      status: Math.abs(variance) < 0.01 ? "RECONCILED" : "VARIANCE_PENDING_APPROVAL",
+      reconciledById: Math.abs(variance) < 0.01 ? req.auth!.userId : undefined,
+      reconciledAt: Math.abs(variance) < 0.01 ? new Date() : undefined,
+    },
+  });
+
+  if (Math.abs(variance) >= 0.01) {
+    await prisma.approvalRequest.create({
+      data: { institutionId: req.auth!.institutionId, type: "CASH_BALANCING_VARIANCE", targetType: "CashBalancing", targetId: balancing.id, payload: {}, reason: `Cash balancing variance of GHS ${variance} on ${parsed.data.balancingDate}: ${parsed.data.investigationNotes}`, requestedById: req.auth!.userId },
+    });
+  }
+
+  await prisma.auditLog.create({
+    data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "cash_balancing.recorded", resource: "cash_balancing", resourceId: balancing.id, metadata: { expectedAmount, countedAmount: parsed.data.countedAmount, variance } },
+  });
+
+  res.status(201).json({ balancing });
 });

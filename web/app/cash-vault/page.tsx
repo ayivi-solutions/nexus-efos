@@ -9,7 +9,7 @@ export default function CashVaultPage() {
   const toast = useToast();
   const [error, setError] = useState<string | null>(null);
   useErrorToast(error);
-  const [tab, setTab] = useState<"vaults" | "tellers" | "transfers">("vaults");
+  const [tab, setTab] = useState<"vaults" | "tellers" | "transfers" | "balancing">("vaults");
 
   const [vaults, setVaults] = useState<any[]>([]);
   const [tellers, setTellers] = useState<any[]>([]);
@@ -22,6 +22,8 @@ export default function CashVaultPage() {
   const [tellerForm, setTellerForm] = useState({ employeeId: "", vaultId: "", cashLimit: "" });
   const [transfers, setTransfers] = useState<any[]>([]);
   const [transferForm, setTransferForm] = useState({ fromType: "VAULT", fromId: "", toType: "TELLER", toId: "", amount: "", isEmergency: false, reason: "" });
+  const [balancings, setBalancings] = useState<any[]>([]);
+  const [balanceForm, setBalanceForm] = useState({ holderType: "VAULT", holderId: "", balancingDate: "", countedAmount: "", investigationNotes: "" });
   const [busy, setBusy] = useState(false);
 
   function load() {
@@ -30,6 +32,18 @@ export default function CashVaultPage() {
     api.listBranches().then((r) => setBranches(r.branches)).catch(() => {});
     api.listEmployees().then((r) => setEmployees(r.employees)).catch(() => {});
     api.listCashTransfers().then((r) => setTransfers(r.transfers)).catch(() => {});
+    api.listCashBalancings().then((r) => setBalancings(r.balancings)).catch(() => {});
+  }
+
+  async function handleRecordBalancing(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy(true); setError(null);
+    try {
+      await api.recordCashBalancing({ ...balanceForm, countedAmount: Number(balanceForm.countedAmount), investigationNotes: balanceForm.investigationNotes || undefined });
+      toast.success("Balancing recorded.");
+      setBalanceForm({ holderType: "VAULT", holderId: "", balancingDate: "", countedAmount: "", investigationNotes: "" });
+      load();
+    } catch (err: any) { setError(err.message || "Could not record balancing"); } finally { setBusy(false); }
   }
 
   async function handleRequestTransfer(e: React.FormEvent) {
@@ -104,6 +118,7 @@ export default function CashVaultPage() {
           <button onClick={() => setTab("vaults")} className={`btn-text ${tab === "vaults" ? "text-gold-600 font-semibold" : "text-text-muted"}`}>Vaults</button>
           <button onClick={() => setTab("tellers")} className={`btn-text ${tab === "tellers" ? "text-gold-600 font-semibold" : "text-text-muted"}`}>Tellers</button>
           <button onClick={() => setTab("transfers")} className={`btn-text ${tab === "transfers" ? "text-gold-600 font-semibold" : "text-text-muted"}`}>Transfers</button>
+          <button onClick={() => setTab("balancing")} className={`btn-text ${tab === "balancing" ? "text-gold-600 font-semibold" : "text-text-muted"}`}>Balancing</button>
         </div>
 
         {tab === "vaults" && (
@@ -225,6 +240,41 @@ export default function CashVaultPage() {
                     </tr>
                   ))}
                   {transfers.length === 0 && <tr><td colSpan={5} className="text-center text-text-muted text-sm py-8">No transfers requested.</td></tr>}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
+        {tab === "balancing" && (
+          <>
+            <form onSubmit={handleRecordBalancing} className="card p-5 mb-6 flex flex-wrap items-end gap-3">
+              <select className="input !w-28" value={balanceForm.holderType} onChange={(e) => setBalanceForm((f) => ({ ...f, holderType: e.target.value, holderId: "" }))}>
+                <option value="VAULT">Vault</option><option value="TELLER">Teller</option>
+              </select>
+              <select required className="input" value={balanceForm.holderId} onChange={(e) => setBalanceForm((f) => ({ ...f, holderId: e.target.value }))}>
+                <option value="">Select…</option>
+                {(balanceForm.holderType === "VAULT" ? vaults : tellers).map((x: any) => (<option key={x.id} value={x.id}>{x.name || x.employeeName}</option>))}
+              </select>
+              <input required type="date" className="input" value={balanceForm.balancingDate} onChange={(e) => setBalanceForm((f) => ({ ...f, balancingDate: e.target.value }))} />
+              <input required type="number" step="0.01" placeholder="Counted amount" className="input !w-36" value={balanceForm.countedAmount} onChange={(e) => setBalanceForm((f) => ({ ...f, countedAmount: e.target.value }))} />
+              <input placeholder="Investigation notes (if variance)" className="input flex-1 min-w-[180px]" value={balanceForm.investigationNotes} onChange={(e) => setBalanceForm((f) => ({ ...f, investigationNotes: e.target.value }))} />
+              <button type="submit" disabled={busy} className="btn-primary">Record</button>
+            </form>
+            <div className="card overflow-x-auto">
+              <table className="w-full min-w-[720px] text-sm table-modern">
+                <thead><tr><th>Date</th><th>Type</th><th>Expected</th><th>Counted</th><th>Variance</th><th>Status</th></tr></thead>
+                <tbody>
+                  {balancings.map((b: any) => (
+                    <tr key={b.id}>
+                      <td className="text-text-700">{new Date(b.balancingDate).toLocaleDateString()}</td>
+                      <td className="text-text-700">{b.holderType}</td>
+                      <td className="text-text-700">GHS {Number(b.expectedAmount).toLocaleString()}</td>
+                      <td className="text-text-700">GHS {Number(b.countedAmount).toLocaleString()}</td>
+                      <td className={Number(b.variance) === 0 ? "text-text-700" : "text-rose-600 font-medium"}>GHS {Number(b.variance).toLocaleString()}</td>
+                      <td><span className={`badge ${b.status === "RECONCILED" ? "bg-green-100 text-green-600" : "bg-gold-500/15 text-gold-600"}`}>{b.status.replaceAll("_", " ")}</span></td>
+                    </tr>
+                  ))}
+                  {balancings.length === 0 && <tr><td colSpan={6} className="text-center text-text-muted text-sm py-8">No balancing records yet.</td></tr>}
                 </tbody>
               </table>
             </div>

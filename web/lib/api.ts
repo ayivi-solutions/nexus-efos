@@ -348,6 +348,9 @@ export const api = {
   listCashTransfers: () => request("/cash-vault/transfers"),
   requestCashTransfer: (data: any) => request("/cash-vault/transfers", { method: "POST", body: JSON.stringify(data) }),
 
+  listCashBalancings: () => request("/cash-vault/balancings"),
+  recordCashBalancing: (data: any) => request("/cash-vault/balancings", { method: "POST", body: JSON.stringify(data) }),
+
   listSavingsAccounts: () => request("/savings"),
   getSavingsAccount: (id: string) => request(`/savings/${id}`),
   addSavingsHolder: (id: string, data: { customerId: string; role: string }) => request(`/savings/${id}/holders`, { method: "POST", body: JSON.stringify(data) }),

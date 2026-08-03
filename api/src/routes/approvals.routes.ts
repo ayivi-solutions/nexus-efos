@@ -152,6 +152,11 @@ async function applyApproval(request: { id: string; type: string; targetId: stri
       break;
     }
 
+    case "CASH_BALANCING_VARIANCE": {
+      await prisma.cashBalancing.update({ where: { id: request.targetId }, data: { status: "RECONCILED", reconciledById: approvedById, reconciledAt: new Date() } });
+      break;
+    }
+
     case "SAVINGS_RESTRICTION_CREATE": {
       await prisma.savingsRestriction.update({ where: { id: request.targetId }, data: { status: "ACTIVE", approvedById, activatedAt: new Date() } });
       break;
@@ -234,6 +239,11 @@ approvalsRouter.post("/:id/reject", requirePermission("institution.configure"), 
   if (request.type === "CASH_TRANSFER") {
     await prisma.cashTransfer.update({ where: { id: request.targetId }, data: { status: "REJECTED" } });
   }
+  // CASH_BALANCING_VARIANCE deliberately has no reject-side handler — a
+  // rejected variance stays exactly as VARIANCE_PENDING_APPROVAL, which
+  // correctly keeps the vault blocked from closing (see §115.3's gate on
+  // the close endpoint) until the variance is genuinely investigated and
+  // re-resolved, rather than a dangling state needing cleanup.
 
   await prisma.approvalRequest.update({
     where: { id: request.id },
