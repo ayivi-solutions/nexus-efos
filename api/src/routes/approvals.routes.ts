@@ -3,7 +3,7 @@ import { prisma } from "../lib/prisma";
 import { requireAuth, AuthedRequest } from "../middleware/auth";
 import { requirePermission } from "../middleware/rbac";
 import { generateSchedule, round2 } from "../lib/loanSchedule";
-import { isBalanced, balanceEffect } from "../lib/generalLedger";
+import { isBalanced, balanceEffect, findPostablePeriod } from "../lib/generalLedger";
 
 export const approvalsRouter = Router();
 approvalsRouter.use(requireAuth);
@@ -169,9 +169,19 @@ async function applyApproval(request: { id: string; type: string; targetId: stri
 
       const stillBalanced = isBalanced(journal.lines.map((l) => ({ debit: Number(l.debit), credit: Number(l.credit) })));
       const allActive = journal.lines.every((l) => l.account.status === "ACTIVE");
+      // §120.3 "Closed periods prevent unauthorised postings" — re-checked
+      // here too, not just at creation, since the period could have
+      // closed in the time between drafting the journal and its posting
+      // being approved.
+      const period = await findPostablePeriod(prisma, journal.institutionId, journal.postingDate);
+      const periodStillOpen = !!period && period.status === "OPEN";
 
-      if (!stillBalanced || !allActive) {
-        await prisma.journal.update({ where: { id: journal.id }, data: { status: "REJECTED" } });
+      if (!stillBalanced || !allActive || !periodStillOpen) {
+        const reasons: string[] = [];
+        if (!stillBalanced) reasons.push("debits no longer equal credits");
+        if (!allActive) reasons.push("one or more accounts became inactive");
+        if (!periodStillOpen) reasons.push(period ? `the financial period is now ${period.status}` : "no financial period covers this posting date");
+        await prisma.journal.update({ where: { id: journal.id }, data: { status: "REJECTED", rejectionReason: reasons.join("; ") } });
         break;
       }
 
@@ -181,6 +191,11 @@ async function applyApproval(request: { id: string; type: string; targetId: stri
       }
 
       await prisma.journal.update({ where: { id: journal.id }, data: { status: "POSTED", postedById: approvedById, postedAt: new Date() } });
+      break;
+    }
+
+    case "FINANCIAL_PERIOD_REOPEN": {
+      await prisma.financialPeriod.update({ where: { id: request.targetId }, data: { status: "OPEN", reopenedById: approvedById, reopenedAt: new Date() } });
       break;
     }
 
