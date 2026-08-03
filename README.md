@@ -113,9 +113,26 @@ real customer data.
 - Dry-run validation with zero writes before an explicit, separate commit.
   Every imported record traceable to a batch, with a genuine undo action.
 
+**Collections**
+- Collector Management: registration (a role on existing Employees, not a
+  duplicate record), branch transfers, suspension/reinstatement.
+- Route Management: customer assignment with real conflict prevention — a
+  customer already on an active route can't be silently double-booked.
+- Daily Collection Processing: field-recorded savings deposits and loan
+  repayments, unique transaction numbers, duplicate-collection prevention,
+  authorised reversal.
+- Reconciliation: expected cash always computed from real recorded
+  transactions, not self-reported; any variance routes through the
+  Approval Workflow, zero-variance settlements auto-reconcile.
+- Commission Management: configurable structures (percentage or fixed),
+  commission calculated from real completed collections for the actual
+  period, payment requiring approval.
+- Reporting: Daily Collection, Collector/Route Performance, Cash
+  Settlement, Exceptions, Commission — all from genuinely recorded data.
+
 **Reporting**
-- Loan, Savings, and Customer reports with branch breakdowns, date
-  filtering, CSV export, and a KPI dashboard.
+- Loan, Savings, Customer, and Collections reports with branch
+  breakdowns, date filtering, CSV export, and a KPI dashboard.
 
 **Accessibility**
 - WCAG AA color contrast (verified programmatically, not eyeballed),
@@ -194,11 +211,22 @@ to day, not a generic feature list.
 Guarantor, Collateral, Arrears, Penalty, Restructuring, Rescheduling,
 Write-Off, all real and tested, described above.
 
+**Phase 2 (Collections, EFS §79-83 + real §85) is complete for everything
+currently achievable** — Collector Management, Route Management,
+Daily Collection Processing, Reconciliation, Commission Management, and
+Reporting, all described above. Two pieces deliberately deferred, both
+named clearly rather than silently dropped:
+- **§84 Offline Collection Management** — genuine offline capability
+  (local encrypted storage, background sync, conflict resolution) is its
+  own dedicated PWA effort. Next.js supports PWA directly; this needs
+  focused work on that foundation, not a bolt-on to the current
+  server-dependent pages.
+- **§85.2-3 AI-Based Insights / Predictive Forecasts** — waiting on a
+  dedicated AI spec document (in progress, alongside ESS — done — and
+  EUXS — in progress). These will be Claude API-backed features, not
+  custom ML infrastructure.
+
 **Remaining phases:**
-- **Phase 2 — Collections in full** (EFS §78-85). The hardest remaining
-  piece in the whole roadmap: offline-capable field collection with local
-  storage, sync, and conflict resolution is genuine, substantial
-  engineering, not a quick add.
 - **Phase 3 — Savings completeness**: fees/charges, account restrictions,
   standing instructions, statements.
 - **Phase 4 — Cash & Vault Management** (EFS §111-115) — cashbook,
