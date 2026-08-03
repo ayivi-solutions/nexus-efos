@@ -279,6 +279,9 @@ export const api = {
   recordCollection: (data: any) => request("/collections/transactions", { method: "POST", body: JSON.stringify(data) }),
   reverseCollection: (id: string, reason: string) => request(`/collections/transactions/${id}/reverse`, { method: "POST", body: JSON.stringify({ reason }) }),
 
+  listSettlements: () => request("/collections/settlements"),
+  recordSettlement: (data: { collectorId: string; settlementDate: string; actualAmount: number; notes?: string }) => request("/collections/settlements", { method: "POST", body: JSON.stringify(data) }),
+
   listSavingsAccounts: () => request("/savings"),
   getSavingsAccount: (id: string) => request(`/savings/${id}`),
   addSavingsHolder: (id: string, data: { customerId: string; role: string }) => request(`/savings/${id}/holders`, { method: "POST", body: JSON.stringify(data) }),

@@ -80,6 +80,7 @@ model Institution {
   collectors              Collector[]
   collectionRoutes        CollectionRoute[]
   collectionTransactions  CollectionTransaction[]
+  collectionSettlements   CollectionSettlement[]
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -808,6 +809,7 @@ enum ApprovalRequestType {
   LOAN_RESTRUCTURE // doc §72
   LOAN_RESCHEDULE  // doc §73
   LOAN_WRITE_OFF   // doc §74
+  COLLECTION_VARIANCE_ADJUSTMENT // doc §82
 
   @@schema("nexus")
 }
@@ -2130,5 +2132,38 @@ model CollectionTransaction {
   recordedById String   @map("recorded_by_id")
 
   @@map("collection_transaction")
+  @@schema("nexus")
+}
+
+// doc §82 Collection Reconciliation. §82.3 "Adjustments require approval"
+// — a variance routes through the existing Approval Workflow rather than
+// a bespoke mechanism.
+enum SettlementStatus {
+  PENDING
+  RECONCILED
+  VARIANCE_PENDING_APPROVAL
+
+  @@schema("nexus")
+}
+
+model CollectionSettlement {
+  id            String           @id(map: "pk_collection_settlement") @default(uuid())
+  institution   Institution      @relation(fields: [institutionId], references: [id], onDelete: Cascade, map: "fk_collection_settlement_institution")
+  institutionId String           @map("institution_id")
+  collectorId   String           @map("collector_id")
+
+  settlementDate DateTime         @map("settlement_date")
+  expectedAmount Decimal          @map("expected_amount") @db.Decimal(14, 2)
+  actualAmount   Decimal          @map("actual_amount") @db.Decimal(14, 2)
+  variance       Decimal          @db.Decimal(14, 2)
+  status         SettlementStatus @default(PENDING)
+  notes          String?
+
+  reconciledById String?   @map("reconciled_by_id")
+  reconciledAt   DateTime? @map("reconciled_at")
+  createdAt      DateTime  @default(now()) @map("created_at")
+
+  @@unique([collectorId, settlementDate], map: "uq_settlement_collector_date")
+  @@map("collection_settlement")
   @@schema("nexus")
 }

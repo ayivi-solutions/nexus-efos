@@ -318,3 +318,60 @@ collectionsRouter.post("/transactions/:id/reverse", requirePermission("loans.app
 
   res.json({ collection: updated });
 });
+
+// -------------------------------------------------------------------------
+// §82 Collection Reconciliation
+// -------------------------------------------------------------------------
+
+collectionsRouter.get("/settlements", requirePermission("reports.view"), async (req: AuthedRequest, res) => {
+  const settlements = await prisma.collectionSettlement.findMany({ where: { institutionId: req.auth!.institutionId }, orderBy: { settlementDate: "desc" } });
+  res.json({ settlements });
+});
+
+const settleSchema = z.object({ collectorId: z.string(), settlementDate: z.string(), actualAmount: z.number().nonnegative(), notes: z.string().optional() });
+
+// §82.2 "Variance Analysis" — expectedAmount is always computed here from
+// the real, recorded collection transactions for that collector and date,
+// never trusted from the request; only actualAmount (the physically
+// counted cash) is self-reported, which is the one figure that genuinely
+// requires it.
+collectionsRouter.post("/settlements", requirePermission("collections.record"), async (req: AuthedRequest, res) => {
+  const parsed = settleSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+  const dayStart = new Date(parsed.data.settlementDate);
+  dayStart.setHours(0, 0, 0, 0);
+  const dayEnd = new Date(dayStart);
+  dayEnd.setDate(dayEnd.getDate() + 1);
+
+  const existing = await prisma.collectionSettlement.findUnique({ where: { collectorId_settlementDate: { collectorId: parsed.data.collectorId, settlementDate: dayStart } } });
+  if (existing) return res.status(400).json({ error: "This collector already has a settlement for this date" });
+
+  const txns = await prisma.collectionTransaction.findMany({
+    where: { collectorId: parsed.data.collectorId, status: "COMPLETED", collectedAt: { gte: dayStart, lt: dayEnd } },
+  });
+  const expectedAmount = txns.reduce((sum, t) => sum + Number(t.amount), 0);
+  const variance = Math.round((parsed.data.actualAmount - expectedAmount) * 100) / 100;
+
+  const settlement = await prisma.collectionSettlement.create({
+    data: {
+      institutionId: req.auth!.institutionId, collectorId: parsed.data.collectorId, settlementDate: dayStart,
+      expectedAmount, actualAmount: parsed.data.actualAmount, variance, notes: parsed.data.notes,
+      status: Math.abs(variance) < 0.01 ? "RECONCILED" : "VARIANCE_PENDING_APPROVAL",
+      reconciledById: Math.abs(variance) < 0.01 ? req.auth!.userId : undefined,
+      reconciledAt: Math.abs(variance) < 0.01 ? new Date() : undefined,
+    },
+  });
+
+  if (Math.abs(variance) >= 0.01) {
+    await prisma.approvalRequest.create({
+      data: { institutionId: req.auth!.institutionId, type: "COLLECTION_VARIANCE_ADJUSTMENT", targetType: "CollectionSettlement", targetId: settlement.id, payload: {}, reason: `Variance of GHS ${variance} on ${parsed.data.settlementDate} settlement`, requestedById: req.auth!.userId },
+    });
+  }
+
+  await prisma.auditLog.create({
+    data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "collection.settlement_recorded", resource: "collection_settlement", resourceId: settlement.id, metadata: { expectedAmount, actualAmount: parsed.data.actualAmount, variance } },
+  });
+
+  res.status(201).json({ settlement });
+});

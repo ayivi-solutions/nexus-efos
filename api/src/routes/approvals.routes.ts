@@ -21,7 +21,7 @@ approvalsRouter.get("/", requirePermission("institution.configure"), async (req:
 // Applies the payload of an approved request against its target. Each case
 // mirrors exactly what the direct-apply code path would have done had
 // approval not been required.
-async function applyApproval(request: { id: string; type: string; targetId: string; institutionId: string; requestedById: string; payload: any }) {
+async function applyApproval(request: { id: string; type: string; targetId: string; institutionId: string; requestedById: string; payload: any }, approvedById: string) {
   const payload = request.payload as any;
 
   switch (request.type) {
@@ -96,6 +96,17 @@ async function applyApproval(request: { id: string; type: string; targetId: stri
       await prisma.loanWriteOff.update({ where: { id: writeOff.id }, data: { appliedAt: new Date() } });
       break;
     }
+
+    // doc §82.3 "Adjustments require approval" — approving simply marks
+    // the variance as reconciled; the actual cash figures were already
+    // recorded honestly at settlement time, this just closes the loop.
+    case "COLLECTION_VARIANCE_ADJUSTMENT": {
+      await prisma.collectionSettlement.update({
+        where: { id: request.targetId },
+        data: { status: "RECONCILED", reconciledById: approvedById, reconciledAt: new Date() },
+      });
+      break;
+    }
     // BUSINESS_RULE_TRIGGERED needs no apply-side effect — it's a pure
     // blocking gate checked at loan disbursement time (see loan.routes.ts);
     // approving it just resolves the record so disbursement is unblocked.
@@ -118,7 +129,7 @@ approvalsRouter.post("/:id/approve", requirePermission("institution.configure"),
     return res.status(403).json({ error: "Segregation of duties: cannot approve a request you submitted yourself" });
   }
 
-  await applyApproval(request);
+  await applyApproval(request, req.auth!.userId);
 
   await prisma.approvalRequest.update({
     where: { id: request.id },

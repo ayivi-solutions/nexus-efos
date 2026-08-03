@@ -9,7 +9,7 @@ export default function CollectionsPage() {
   const toast = useToast();
   const [error, setError] = useState<string | null>(null);
   useErrorToast(error);
-  const [tab, setTab] = useState<"collectors" | "routes" | "transactions">("collectors");
+  const [tab, setTab] = useState<"collectors" | "routes" | "transactions" | "settlements">("collectors");
 
   const [collectors, setCollectors] = useState<any[]>([]);
   const [employees, setEmployees] = useState<any[]>([]);
@@ -22,6 +22,8 @@ export default function CollectionsPage() {
   const [assignForm, setAssignForm] = useState<Record<string, string>>({});
   const [transactions, setTransactions] = useState<any[]>([]);
   const [collectForm, setCollectForm] = useState({ type: "SAVINGS_DEPOSIT", collectorId: "", customerId: "", targetId: "", amount: "" });
+  const [settlements, setSettlements] = useState<any[]>([]);
+  const [settleForm, setSettleForm] = useState({ collectorId: "", settlementDate: "", actualAmount: "", notes: "" });
   const [busy, setBusy] = useState(false);
 
   function load() {
@@ -31,6 +33,18 @@ export default function CollectionsPage() {
     api.listBranches().then((r) => setBranches(r.branches)).catch(() => {});
     api.listCustomers().then((r) => setCustomers(r.customers)).catch(() => {});
     api.listCollectionTransactions().then((r) => setTransactions(r.transactions)).catch(() => {});
+    api.listSettlements().then((r) => setSettlements(r.settlements)).catch(() => {});
+  }
+
+  async function handleRecordSettlement(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy(true); setError(null);
+    try {
+      await api.recordSettlement({ ...settleForm, actualAmount: Number(settleForm.actualAmount) });
+      toast.success("Settlement recorded.");
+      setSettleForm({ collectorId: "", settlementDate: "", actualAmount: "", notes: "" });
+      load();
+    } catch (err: any) { setError(err.message || "Could not record settlement"); } finally { setBusy(false); }
   }
 
   async function handleRecordCollection(e: React.FormEvent) {
@@ -113,6 +127,7 @@ export default function CollectionsPage() {
           <button onClick={() => setTab("collectors")} className={`btn-text ${tab === "collectors" ? "text-gold-600 font-semibold" : "text-text-muted"}`}>Collectors</button>
           <button onClick={() => setTab("routes")} className={`btn-text ${tab === "routes" ? "text-gold-600 font-semibold" : "text-text-muted"}`}>Routes</button>
           <button onClick={() => setTab("transactions")} className={`btn-text ${tab === "transactions" ? "text-gold-600 font-semibold" : "text-text-muted"}`}>Daily Collections</button>
+          <button onClick={() => setTab("settlements")} className={`btn-text ${tab === "settlements" ? "text-gold-600 font-semibold" : "text-text-muted"}`}>Settlements</button>
         </div>
 
         {tab === "collectors" && (
@@ -234,6 +249,37 @@ export default function CollectionsPage() {
                     </tr>
                   ))}
                   {transactions.length === 0 && <tr><td colSpan={6} className="text-center text-text-muted text-sm py-8">No collections recorded.</td></tr>}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
+        {tab === "settlements" && (
+          <>
+            <form onSubmit={handleRecordSettlement} className="card p-5 mb-6 flex flex-wrap items-end gap-3">
+              <select required className="input" value={settleForm.collectorId} onChange={(e) => setSettleForm((f) => ({ ...f, collectorId: e.target.value }))}>
+                <option value="">Collector…</option>
+                {collectors.map((c: any) => (<option key={c.id} value={c.id}>{c.employee?.fullName}</option>))}
+              </select>
+              <input required type="date" className="input" value={settleForm.settlementDate} onChange={(e) => setSettleForm((f) => ({ ...f, settlementDate: e.target.value }))} />
+              <input required type="number" step="0.01" placeholder="Cash counted (GHS)" className="input !w-40" value={settleForm.actualAmount} onChange={(e) => setSettleForm((f) => ({ ...f, actualAmount: e.target.value }))} />
+              <button type="submit" disabled={busy} className="btn-primary">Settle</button>
+            </form>
+            <div className="card overflow-x-auto">
+              <table className="w-full min-w-[640px] text-sm table-modern">
+                <thead><tr><th>Date</th><th>Collector</th><th>Expected</th><th>Actual</th><th>Variance</th><th>Status</th></tr></thead>
+                <tbody>
+                  {settlements.map((s: any) => (
+                    <tr key={s.id}>
+                      <td className="text-text-700">{new Date(s.settlementDate).toLocaleDateString()}</td>
+                      <td className="text-text-700">{collectors.find((c: any) => c.id === s.collectorId)?.employee?.fullName || "—"}</td>
+                      <td className="text-text-700">GHS {Number(s.expectedAmount).toLocaleString()}</td>
+                      <td className="text-text-700">GHS {Number(s.actualAmount).toLocaleString()}</td>
+                      <td className={Number(s.variance) === 0 ? "text-text-700" : "text-rose-600 font-medium"}>GHS {Number(s.variance).toLocaleString()}</td>
+                      <td><span className={`badge ${s.status === "RECONCILED" ? "bg-green-100 text-green-600" : "bg-gold-500/15 text-gold-600"}`}>{s.status.replaceAll("_", " ")}</span></td>
+                    </tr>
+                  ))}
+                  {settlements.length === 0 && <tr><td colSpan={6} className="text-center text-text-muted text-sm py-8">No settlements recorded.</td></tr>}
                 </tbody>
               </table>
             </div>
