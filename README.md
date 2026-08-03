@@ -146,9 +146,25 @@ real customer data.
 - Reporting: Daily Collection, Collector/Route Performance, Cash
   Settlement, Exceptions, Commission — all from genuinely recorded data.
 
+**Cash & Vault**
+- Vault Management: open/close, direct cash receipts/withdrawals gated to
+  OPEN vaults with real balance checks.
+- Teller Management: a role on existing Employees, cash limits, suspend/
+  reinstate.
+- Cash Transfer Management: every transfer routes through the Approval
+  Workflow, source balance re-checked at approval time (not just request
+  time), balanced entries on both sides in one database transaction,
+  completed transfers structurally unalterable.
+- Cash Balancing and Reconciliation: expected amount always the real live
+  balance, a variance without investigation notes rejected server-side,
+  and vault close structurally gated on a same-day reconciled balancing
+  record.
+
 **Reporting**
 - Loan, Savings, Customer, and Collections reports with branch
-  breakdowns, date filtering, CSV export, and a KPI dashboard.
+  breakdowns, date filtering, CSV export, and a KPI dashboard. Cash &
+  Vault data is fully captured (ledger entries, transfers, balancings)
+  but doesn't have its own dedicated report page yet.
 
 **Accessibility**
 - WCAG AA color contrast (verified programmatically, not eyeballed),
@@ -246,9 +262,14 @@ named clearly rather than silently dropped:
 Charges, Account Restrictions, Standing Instructions, Statements, all real
 and described above.
 
+**Phase 4 (Cash & Vault Management, EFS §111-115) is complete** — Vault
+Management, Teller Management, Cash Transfer Management, Cash Balancing
+and Reconciliation, all real and described above. Petty cash and treasury
+book as named EFS sub-concepts are covered by the same Vault ledger
+mechanism rather than separate models — a petty cash fund is a vault with
+a smaller balance, not a structurally different thing.
+
 **Remaining phases:**
-- **Phase 4 — Cash & Vault Management** (EFS §111-115) — cashbook,
-  withdrawal book, petty cash, vault book, treasury book, cheque tracking.
 - **Phase 5 — General Ledger** (EFS §116-125).
 - **Phase 6 — Payroll** (EFS §206-215) — salaries, GRA, SSNIT, Tier 2.
 - **Phase 7 — Asset Management** (EFS §186-195) — fixed asset register.
