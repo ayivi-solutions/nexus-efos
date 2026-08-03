@@ -24,10 +24,50 @@ export default function SavingsDetailPage() {
   const [postings, setPostings] = useState<any[]>([]);
   const [suspendReason, setSuspendReason] = useState("");
   const [showSuspendForm, setShowSuspendForm] = useState(false);
+  const [feeTypes, setFeeTypes] = useState<any[]>([]);
+  const [feeCharges, setFeeCharges] = useState<any[]>([]);
+  const [selectedFeeType, setSelectedFeeType] = useState("");
+  const [restrictions, setRestrictions] = useState<any[]>([]);
+  const [restrictionForm, setRestrictionForm] = useState({ type: "DEBIT_RESTRICTION", reason: "" });
 
   function load() {
     api.getSavingsAccount(id).then((res) => setAccount(res.account)).catch((err) => setError(err.message));
     loadInterest();
+    api.listSavingsFeeTypes().then((r) => setFeeTypes(r.feeTypes)).catch(() => {});
+    api.listSavingsFeeCharges(id).then((r) => setFeeCharges(r.charges)).catch(() => {});
+    api.listSavingsRestrictions(id).then((r) => setRestrictions(r.restrictions)).catch(() => {});
+  }
+
+  async function handleApplyFee() {
+    if (!selectedFeeType) return;
+    setBusy(true); setError(null);
+    try { await api.applySavingsFee(id, selectedFeeType); setSelectedFeeType(""); load(); }
+    catch (err: any) { setError(err.message || "Could not apply fee"); } finally { setBusy(false); }
+  }
+
+  async function handleWaiveFee(chargeId: string) {
+    const reason = window.prompt("Reason for waiving this fee:");
+    if (reason === null) return;
+    setBusy(true); setError(null);
+    try { await api.waiveSavingsFee(chargeId, reason); load(); }
+    catch (err: any) { setError(err.message || "Could not waive fee"); } finally { setBusy(false); }
+  }
+
+  async function handleCreateRestriction(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy(true); setError(null);
+    try {
+      await api.createSavingsRestriction(id, restrictionForm);
+      setRestrictionForm({ type: "DEBIT_RESTRICTION", reason: "" });
+      load();
+    } catch (err: any) { setError(err.message || "Could not create restriction"); } finally { setBusy(false); }
+  }
+
+  async function handleRequestRemoval(restrictionId: string) {
+    const reason = window.prompt("Reason for requesting removal:");
+    setBusy(true); setError(null);
+    try { await api.requestRestrictionRemoval(restrictionId, reason || undefined); load(); }
+    catch (err: any) { setError(err.message || "Could not request removal"); } finally { setBusy(false); }
   }
 
   function loadInterest() {
@@ -324,6 +364,58 @@ export default function SavingsDetailPage() {
                   {account.transactions.length === 0 && (
                     <tr><td colSpan={4} className="text-center text-text-muted text-sm py-8">No transactions yet.</td></tr>
                   )}
+                </tbody>
+              </table>
+            </div>
+
+            {/* doc §53 Fees & Charges */}
+            <h2 className="font-display font-semibold text-lg text-ink-900 mb-3 mt-10">Fees & Charges</h2>
+            <div className="card p-4 mb-4 flex flex-wrap items-end gap-3">
+              <select className="input" value={selectedFeeType} onChange={(e) => setSelectedFeeType(e.target.value)}>
+                <option value="">Select fee type…</option>
+                {feeTypes.map((f: any) => (<option key={f.id} value={f.id}>{f.name} ({f.calculationMethod === "FIXED" ? `GHS ${f.amount}` : `${f.amount}%`})</option>))}
+              </select>
+              <button onClick={handleApplyFee} disabled={busy || !selectedFeeType} className="btn-text text-gold-600">Apply fee</button>
+            </div>
+            <div className="card overflow-x-auto mb-10">
+              <table className="w-full min-w-[560px] text-sm table-modern">
+                <thead><tr><th>Fee</th><th>Amount</th><th>Status</th><th></th></tr></thead>
+                <tbody>
+                  {feeCharges.map((c: any) => (
+                    <tr key={c.id}>
+                      <td className="text-text-900">{c.feeType?.name}</td>
+                      <td className="text-text-700">GHS {Number(c.amount).toLocaleString()}</td>
+                      <td><span className={`badge ${c.status === "APPLIED" ? "bg-gold-500/15 text-gold-600" : "bg-paper-100 text-text-muted"}`}>{c.status}</span></td>
+                      <td>{c.status === "APPLIED" && <button onClick={() => handleWaiveFee(c.id)} className="btn-text text-rose-600">Waive</button>}</td>
+                    </tr>
+                  ))}
+                  {feeCharges.length === 0 && <tr><td colSpan={4} className="text-center text-text-muted text-sm py-8">No fees charged.</td></tr>}
+                </tbody>
+              </table>
+            </div>
+
+            {/* doc §54 Account Restrictions */}
+            <h2 className="font-display font-semibold text-lg text-ink-900 mb-3">Restrictions</h2>
+            <form onSubmit={handleCreateRestriction} className="card p-4 mb-4 flex flex-wrap items-end gap-3">
+              <select className="input" value={restrictionForm.type} onChange={(e) => setRestrictionForm((f) => ({ ...f, type: e.target.value }))}>
+                {["DEBIT_RESTRICTION", "CREDIT_RESTRICTION", "FULL_FREEZE", "COURT_ORDER", "COMPLIANCE", "FRAUD_INVESTIGATION", "DORMANCY", "CUSTOMER_REQUESTED", "PRODUCT_RESTRICTION", "INSTITUTION_DEFINED"].map((t) => (<option key={t} value={t}>{t.replaceAll("_", " ")}</option>))}
+              </select>
+              <input required placeholder="Reason" className="input flex-1 min-w-[160px]" value={restrictionForm.reason} onChange={(e) => setRestrictionForm((f) => ({ ...f, reason: e.target.value }))} />
+              <button type="submit" disabled={busy} className="btn-text text-rose-600">Request</button>
+            </form>
+            <div className="card overflow-x-auto">
+              <table className="w-full min-w-[560px] text-sm table-modern">
+                <thead><tr><th>Type</th><th>Reason</th><th>Status</th><th></th></tr></thead>
+                <tbody>
+                  {restrictions.map((r: any) => (
+                    <tr key={r.id}>
+                      <td className="text-text-700">{r.type.replaceAll("_", " ")}</td>
+                      <td className="text-text-700">{r.reason}</td>
+                      <td><span className={`badge ${r.status === "ACTIVE" ? "bg-rose-100 text-rose-600" : r.status === "PENDING_APPROVAL" ? "bg-gold-500/15 text-gold-600" : "bg-paper-100 text-text-muted"}`}>{r.status.replaceAll("_", " ")}</span></td>
+                      <td>{r.status === "ACTIVE" && !r.removalRequestedById && <button onClick={() => handleRequestRemoval(r.id)} className="btn-text text-gold-600">Request removal</button>}</td>
+                    </tr>
+                  ))}
+                  {restrictions.length === 0 && <tr><td colSpan={4} className="text-center text-text-muted text-sm py-8">No restrictions on this account.</td></tr>}
                 </tbody>
               </table>
             </div>

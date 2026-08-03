@@ -289,6 +289,16 @@ export const api = {
   requestCommissionPayment: (id: string) => request(`/collections/commission-records/${id}/request-payment`, { method: "POST" }),
   getCollectionsReport: (from?: string, to?: string) => request(`/collections/reports/summary${from ? `?from=${from}&to=${to}` : ""}`),
 
+  listSavingsFeeTypes: () => request("/savings/fee-types"),
+  createSavingsFeeType: (data: any) => request("/savings/fee-types", { method: "POST", body: JSON.stringify(data) }),
+  listSavingsFeeCharges: (accountId: string) => request(`/savings/${accountId}/fee-charges`),
+  applySavingsFee: (accountId: string, feeTypeId: string) => request(`/savings/${accountId}/fee-charges`, { method: "POST", body: JSON.stringify({ feeTypeId }) }),
+  waiveSavingsFee: (chargeId: string, reason?: string) => request(`/savings/fee-charges/${chargeId}/waive`, { method: "POST", body: JSON.stringify({ reason }) }),
+
+  listSavingsRestrictions: (accountId: string) => request(`/savings/${accountId}/restrictions`),
+  createSavingsRestriction: (accountId: string, data: { type: string; reason: string; expiresAt?: string }) => request(`/savings/${accountId}/restrictions`, { method: "POST", body: JSON.stringify(data) }),
+  requestRestrictionRemoval: (restrictionId: string, reason?: string) => request(`/savings/restrictions/${restrictionId}/request-removal`, { method: "POST", body: JSON.stringify({ reason }) }),
+
   listSavingsAccounts: () => request("/savings"),
   getSavingsAccount: (id: string) => request(`/savings/${id}`),
   addSavingsHolder: (id: string, data: { customerId: string; role: string }) => request(`/savings/${id}/holders`, { method: "POST", body: JSON.stringify(data) }),

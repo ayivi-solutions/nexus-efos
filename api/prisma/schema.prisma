@@ -83,6 +83,9 @@ model Institution {
   collectionSettlements   CollectionSettlement[]
   commissionStructures    CommissionStructure[]
   commissionRecords       CommissionRecord[]
+  savingsFeeTypes         SavingsFeeType[]
+  savingsFeeCharges       SavingsFeeCharge[]
+  savingsRestrictions     SavingsRestriction[]
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -813,6 +816,8 @@ enum ApprovalRequestType {
   LOAN_WRITE_OFF   // doc §74
   COLLECTION_VARIANCE_ADJUSTMENT // doc §82
   COMMISSION_PAYMENT // doc §83
+  SAVINGS_RESTRICTION_CREATE  // doc §54
+  SAVINGS_RESTRICTION_REMOVE  // doc §54
 
   @@schema("nexus")
 }
@@ -1157,6 +1162,8 @@ enum SavingsTxnType {
   MIGRATION_OPENING_BALANCE // Data Migration — distinct from a real DEPOSIT so
   // transaction history and reporting can always tell an imported starting
   // point apart from actual account activity.
+  FEE           // doc §53
+  FEE_REVERSAL  // doc §53 — a waived fee, distinct from a real deposit
 
   @@schema("nexus")
 }
@@ -1187,6 +1194,9 @@ model SavingsAccount {
   // opening time from the product's promo configuration, decoupled from the
   // shared product definition so each account's promo window is its own.
   promoInterestRate Decimal?  @map("promo_interest_rate") @db.Decimal(6, 3)
+
+  feeCharges   SavingsFeeCharge[]
+  restrictions SavingsRestriction[]
   promoExpiresAt    DateTime? @map("promo_expires_at")
 
   lastAccrualDate DateTime? @map("last_accrual_date")
@@ -2222,5 +2232,138 @@ model CommissionRecord {
   createdAt DateTime  @default(now()) @map("created_at")
 
   @@map("commission_record")
+  @@schema("nexus")
+}
+
+// doc §53 Savings Fees and Charges.
+enum SavingsFeeCategory {
+  ACCOUNT_OPENING
+  MONTHLY_MAINTENANCE
+  WITHDRAWAL
+  DEPOSIT
+  DORMANCY
+  STATEMENT
+  SMS
+  ACCOUNT_CLOSURE
+  PENALTY
+  CUSTOM
+
+  @@schema("nexus")
+}
+
+enum FeeCalculationMethod {
+  FIXED
+  PERCENTAGE
+
+  @@schema("nexus")
+}
+
+model SavingsFeeType {
+  id            String              @id(map: "pk_savings_fee_type") @default(uuid())
+  institution   Institution         @relation(fields: [institutionId], references: [id], onDelete: Cascade, map: "fk_savings_fee_type_institution")
+  institutionId String              @map("institution_id")
+
+  name              String
+  category          SavingsFeeCategory
+  calculationMethod FeeCalculationMethod @map("calculation_method")
+  amount            Decimal              @db.Decimal(14, 2) // a fixed GHS amount or a percentage, per calculationMethod
+  productVersionId  String?              @map("product_version_id") // null = applies institution-wide
+  active            Boolean              @default(true)
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  charges SavingsFeeCharge[]
+
+  @@map("savings_fee_type")
+  @@schema("nexus")
+}
+
+enum FeeChargeStatus {
+  APPLIED
+  WAIVED
+  REVERSED
+
+  @@schema("nexus")
+}
+
+// §53.4 "Every fee generates accounting entries" — no General Ledger
+// exists yet (Phase 5); this is a real, named gap, not silently ignored.
+// Every fee IS fully captured here with its own audit trail in the
+// meantime, ready to post once the GL exists.
+model SavingsFeeCharge {
+  id            String          @id(map: "pk_savings_fee_charge") @default(uuid())
+  institution   Institution     @relation(fields: [institutionId], references: [id], onDelete: Cascade, map: "fk_savings_fee_charge_institution")
+  institutionId String          @map("institution_id")
+  account       SavingsAccount  @relation(fields: [accountId], references: [id], onDelete: Cascade, map: "fk_savings_fee_charge_account")
+  accountId     String          @map("account_id")
+  feeType       SavingsFeeType  @relation(fields: [feeTypeId], references: [id], onDelete: Restrict, map: "fk_savings_fee_charge_type")
+  feeTypeId     String          @map("fee_type_id")
+
+  amount Decimal         @db.Decimal(14, 2)
+  status FeeChargeStatus @default(APPLIED)
+
+  appliedById  String?   @map("applied_by_id")
+  appliedAt    DateTime  @default(now()) @map("applied_at")
+  waivedById   String?   @map("waived_by_id")
+  waivedAt     DateTime? @map("waived_at")
+  waivedReason String?   @map("waived_reason")
+
+  @@map("savings_fee_charge")
+  @@schema("nexus")
+}
+
+// doc §54 Savings Account Restrictions.
+enum RestrictionType {
+  DEBIT_RESTRICTION
+  CREDIT_RESTRICTION
+  FULL_FREEZE
+  COURT_ORDER
+  COMPLIANCE
+  FRAUD_INVESTIGATION
+  DORMANCY
+  CUSTOMER_REQUESTED
+  PRODUCT_RESTRICTION
+  INSTITUTION_DEFINED
+
+  @@schema("nexus")
+}
+
+enum RestrictionStatus {
+  PENDING_APPROVAL
+  ACTIVE
+  REMOVED
+  EXPIRED
+
+  @@schema("nexus")
+}
+
+// §54.4 "Only authorised users create restrictions" / "removals require
+// approval where applicable" — both creation and removal route through
+// the Approval Workflow, since freezing or unfreezing someone's account
+// is exactly the kind of action that shouldn't rest on one person's say.
+model SavingsRestriction {
+  id            String             @id(map: "pk_savings_restriction") @default(uuid())
+  institution   Institution        @relation(fields: [institutionId], references: [id], onDelete: Cascade, map: "fk_savings_restriction_institution")
+  institutionId String             @map("institution_id")
+  account       SavingsAccount     @relation(fields: [accountId], references: [id], onDelete: Cascade, map: "fk_savings_restriction_account")
+  accountId     String             @map("account_id")
+
+  type   RestrictionType
+  reason String
+  status RestrictionStatus @default(PENDING_APPROVAL)
+
+  requestedById String    @map("requested_by_id")
+  approvedById  String?   @map("approved_by_id")
+  activatedAt   DateTime? @map("activated_at")
+  expiresAt     DateTime? @map("expires_at")
+
+  removalRequestedById String?   @map("removal_requested_by_id")
+  removedById          String?   @map("removed_by_id")
+  removedAt            DateTime? @map("removed_at")
+  removalReason        String?   @map("removal_reason")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("savings_restriction")
   @@schema("nexus")
 }

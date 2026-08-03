@@ -112,6 +112,16 @@ async function applyApproval(request: { id: string; type: string; targetId: stri
       await prisma.commissionRecord.update({ where: { id: request.targetId }, data: { status: "PAID", paidAt: new Date() } });
       break;
     }
+
+    case "SAVINGS_RESTRICTION_CREATE": {
+      await prisma.savingsRestriction.update({ where: { id: request.targetId }, data: { status: "ACTIVE", approvedById, activatedAt: new Date() } });
+      break;
+    }
+
+    case "SAVINGS_RESTRICTION_REMOVE": {
+      await prisma.savingsRestriction.update({ where: { id: request.targetId }, data: { status: "REMOVED", removedById: approvedById, removedAt: new Date() } });
+      break;
+    }
     // BUSINESS_RULE_TRIGGERED needs no apply-side effect — it's a pure
     // blocking gate checked at loan disbursement time (see loan.routes.ts);
     // approving it just resolves the record so disbursement is unblocked.
@@ -171,6 +181,16 @@ approvalsRouter.post("/:id/reject", requirePermission("institution.configure"), 
   }
   if (request.type === "COMMISSION_PAYMENT") {
     await prisma.commissionRecord.update({ where: { id: request.targetId }, data: { status: "PENDING" } });
+  }
+  if (request.type === "SAVINGS_RESTRICTION_CREATE") {
+    // A rejected creation never took effect — REMOVED is the closest
+    // accurate terminal state rather than leaving it stuck mid-workflow.
+    await prisma.savingsRestriction.update({ where: { id: request.targetId }, data: { status: "REMOVED", removalReason: "Creation request rejected" } });
+  }
+  if (request.type === "SAVINGS_RESTRICTION_REMOVE") {
+    // A rejected removal means the restriction stays exactly as it was —
+    // still ACTIVE.
+    await prisma.savingsRestriction.update({ where: { id: request.targetId }, data: { removalRequestedById: null } });
   }
 
   await prisma.approvalRequest.update({
