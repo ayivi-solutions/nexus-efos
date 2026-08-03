@@ -5,6 +5,7 @@ import { requireAuth, AuthedRequest } from "../middleware/auth";
 import { requirePermission } from "../middleware/rbac";
 import { round2, generateSchedule, allocateRepayment } from "../lib/loanSchedule";
 import { matchRules, executeMatchedRules } from "../lib/businessRules";
+import { runArrearsCheck } from "../lib/scheduler";
 
 export const loanRouter = Router();
 loanRouter.use(requireAuth);
@@ -349,4 +350,158 @@ loanRouter.post("/:id/repayments", requirePermission("collections.record"), asyn
   });
 
   res.status(201).json({ repayment, loanClosed: allPaid });
+});
+
+// =========================================================================
+// doc §77.2 Promise-to-Pay Recording
+// =========================================================================
+
+const promiseToPaySchema = z.object({
+  promisedAmount: z.number().positive(),
+  promisedDate: z.string(),
+  notes: z.string().optional(),
+});
+
+loanRouter.get("/:id/promises-to-pay", requirePermission("reports.view"), async (req: AuthedRequest, res) => {
+  const loan = await prisma.loan.findFirst({ where: { id: req.params.id, institutionId: req.auth!.institutionId } });
+  if (!loan) return res.status(404).json({ error: "Loan not found" });
+  const promises = await prisma.promiseToPay.findMany({ where: { loanId: loan.id }, orderBy: { createdAt: "desc" } });
+  res.json({ promises });
+});
+
+loanRouter.post("/:id/promises-to-pay", requirePermission("loans.initiate"), async (req: AuthedRequest, res) => {
+  const parsed = promiseToPaySchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+  const loan = await prisma.loan.findFirst({ where: { id: req.params.id, institutionId: req.auth!.institutionId } });
+  if (!loan) return res.status(404).json({ error: "Loan not found" });
+
+  const promise = await prisma.promiseToPay.create({
+    data: {
+      institutionId: req.auth!.institutionId,
+      loanId: loan.id,
+      promisedAmount: parsed.data.promisedAmount,
+      promisedDate: new Date(parsed.data.promisedDate),
+      notes: parsed.data.notes,
+      recordedById: req.auth!.userId,
+    },
+  });
+
+  await prisma.auditLog.create({
+    data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "loan.promise_to_pay_recorded", resource: "loan", resourceId: loan.id, metadata: { promiseId: promise.id, promisedAmount: parsed.data.promisedAmount } },
+  });
+
+  res.status(201).json({ promise });
+});
+
+// Marking a promise kept/broken is a real, distinct staff judgment — not
+// automatic — since "kept" isn't strictly "a payment of at least this
+// amount arrived," it's "did this specific commitment get honoured,"
+// which a human closing the loop is better placed to confirm than a rule.
+loanRouter.patch("/promises-to-pay/:promiseId", requirePermission("loans.initiate"), async (req: AuthedRequest, res) => {
+  const { status } = req.body as { status?: "KEPT" | "BROKEN" };
+  if (!status || !["KEPT", "BROKEN"].includes(status)) return res.status(400).json({ error: "status must be KEPT or BROKEN" });
+
+  const promise = await prisma.promiseToPay.findFirst({ where: { id: req.params.promiseId, institutionId: req.auth!.institutionId } });
+  if (!promise) return res.status(404).json({ error: "Promise not found" });
+
+  const updated = await prisma.promiseToPay.update({ where: { id: promise.id }, data: { status } });
+  res.json({ promise: updated });
+});
+
+// =========================================================================
+// doc §71 Loan Penalty Management
+// =========================================================================
+
+const penaltySchema = z.object({
+  installmentId: z.string().optional(),
+  calculationMethod: z.enum(["FIXED", "PERCENTAGE"]),
+  rateOrAmount: z.number().positive(),
+});
+
+loanRouter.get("/:id/penalties", requirePermission("reports.view"), async (req: AuthedRequest, res) => {
+  const loan = await prisma.loan.findFirst({ where: { id: req.params.id, institutionId: req.auth!.institutionId } });
+  if (!loan) return res.status(404).json({ error: "Loan not found" });
+  const penalties = await prisma.loanPenalty.findMany({ where: { loanId: loan.id }, orderBy: { appliedAt: "desc" } });
+  res.json({ penalties });
+});
+
+// doc §71.3 "Penalty calculations follow product rules" — the actual
+// amount is computed here, not trusted from the request, so a
+// PERCENTAGE penalty is always genuinely a percentage of the loan's
+// current arrears amount, not whatever number a client happened to send.
+loanRouter.post("/:id/penalties", requirePermission("loans.approve"), async (req: AuthedRequest, res) => {
+  const parsed = penaltySchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+  const loan = await prisma.loan.findFirst({ where: { id: req.params.id, institutionId: req.auth!.institutionId } });
+  if (!loan) return res.status(404).json({ error: "Loan not found" });
+
+  const amount =
+    parsed.data.calculationMethod === "FIXED"
+      ? round2(parsed.data.rateOrAmount)
+      : round2(Number(loan.arrearsAmount) * (parsed.data.rateOrAmount / 100));
+
+  if (amount <= 0) {
+    return res.status(400).json({ error: "Computed penalty amount must be greater than 0 — this loan may not currently be in arrears" });
+  }
+
+  const penalty = await prisma.loanPenalty.create({
+    data: {
+      institutionId: req.auth!.institutionId, loanId: loan.id, installmentId: parsed.data.installmentId,
+      calculationMethod: parsed.data.calculationMethod as any, rateOrAmount: parsed.data.rateOrAmount, amount,
+    },
+  });
+
+  await prisma.auditLog.create({
+    data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "loan.penalty_applied", resource: "loan", resourceId: loan.id, metadata: { penaltyId: penalty.id, amount } },
+  });
+
+  res.status(201).json({ penalty });
+});
+
+// doc §71.3 "Waivers require authorisation" — same permission tier as
+// loan approval, deliberately not the lower "initiate" tier, since waiving
+// a penalty is closer in weight to approving one than recording one.
+loanRouter.post("/penalties/:penaltyId/waive", requirePermission("loans.approve"), async (req: AuthedRequest, res) => {
+  const { reason } = req.body as { reason?: string };
+  const penalty = await prisma.loanPenalty.findFirst({ where: { id: req.params.penaltyId, institutionId: req.auth!.institutionId } });
+  if (!penalty) return res.status(404).json({ error: "Penalty not found" });
+  if (penalty.status !== "APPLIED") return res.status(400).json({ error: `Only an APPLIED penalty can be waived (currently ${penalty.status})` });
+
+  const updated = await prisma.loanPenalty.update({
+    where: { id: penalty.id },
+    data: { status: "WAIVED", waivedById: req.auth!.userId, waivedAt: new Date(), waivedReason: reason },
+  });
+
+  await prisma.auditLog.create({
+    data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "loan.penalty_waived", resource: "loan", resourceId: penalty.loanId, metadata: { penaltyId: penalty.id, reason } },
+  });
+
+  res.json({ penalty: updated });
+});
+
+loanRouter.post("/penalties/:penaltyId/reverse", requirePermission("loans.approve"), async (req: AuthedRequest, res) => {
+  const { reason } = req.body as { reason?: string };
+  const penalty = await prisma.loanPenalty.findFirst({ where: { id: req.params.penaltyId, institutionId: req.auth!.institutionId } });
+  if (!penalty) return res.status(404).json({ error: "Penalty not found" });
+  if (penalty.status === "REVERSED") return res.status(400).json({ error: "This penalty is already reversed" });
+
+  const updated = await prisma.loanPenalty.update({
+    where: { id: penalty.id },
+    data: { status: "REVERSED", waivedById: req.auth!.userId, waivedAt: new Date(), waivedReason: reason },
+  });
+
+  await prisma.auditLog.create({
+    data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "loan.penalty_reversed", resource: "loan", resourceId: penalty.loanId, metadata: { penaltyId: penalty.id, reason } },
+  });
+
+  res.json({ penalty: updated });
+});
+
+// Manual trigger — the real check runs automatically every day at 01:00
+// (see lib/scheduler.ts); this exists for testing and pilot setup, so
+// arrears status doesn't have to wait until the next scheduled run to
+// verify the feature actually works.
+loanRouter.post("/arrears-check/run-now", requirePermission("institution.configure"), async (_req: AuthedRequest, res) => {
+  await runArrearsCheck();
+  res.json({ ok: true });
 });

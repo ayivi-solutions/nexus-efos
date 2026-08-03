@@ -17,6 +17,21 @@ const STATUS_COLOR: Record<string, string> = {
   DEFAULTED: "bg-rose-100 text-rose-600",
 };
 
+const ARREARS_COLOR: Record<string, string> = {
+  CURRENT: "bg-green-100 text-green-600",
+  ARREARS_1_30: "bg-gold-500/15 text-gold-600",
+  ARREARS_31_60: "bg-rose-100 text-rose-600",
+  ARREARS_61_90: "bg-rose-100 text-rose-600",
+  ARREARS_90_PLUS: "bg-rose-100 text-rose-600",
+};
+const ARREARS_LABEL: Record<string, string> = {
+  CURRENT: "Current",
+  ARREARS_1_30: "1-30 days overdue",
+  ARREARS_31_60: "31-60 days overdue",
+  ARREARS_61_90: "61-90 days overdue",
+  ARREARS_90_PLUS: "90+ days overdue",
+};
+
 export default function LoanDetailPage() {
   const params = useParams();
   const router = useRouter();
@@ -29,15 +44,61 @@ export default function LoanDetailPage() {
   const [repayAmount, setRepayAmount] = useState("");
   const [customers, setCustomers] = useState<any[]>([]);
   const [holderForm, setHolderForm] = useState({ customerId: "", role: "JOINT" });
+  const [promises, setPromises] = useState<any[]>([]);
+  const [promiseForm, setPromiseForm] = useState({ promisedAmount: "", promisedDate: "", notes: "" });
+  const [penalties, setPenalties] = useState<any[]>([]);
+  const [penaltyForm, setPenaltyForm] = useState({ calculationMethod: "PERCENTAGE", rateOrAmount: "" });
 
   function load() {
     api.getLoan(id).then((res) => setLoan(res.loan)).catch((err) => setError(err.message));
+    api.listPromisesToPay(id).then((res) => setPromises(res.promises)).catch(() => {});
+    api.listLoanPenalties(id).then((res) => setPenalties(res.penalties)).catch(() => {});
   }
 
   useEffect(() => {
     load();
     api.listCustomers().then((res) => setCustomers(res.customers)).catch(() => {});
   }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function handleRecordPromise(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy(true); setError(null);
+    try {
+      await api.recordPromiseToPay(id, { promisedAmount: Number(promiseForm.promisedAmount), promisedDate: promiseForm.promisedDate, notes: promiseForm.notes || undefined });
+      setPromiseForm({ promisedAmount: "", promisedDate: "", notes: "" });
+      toast.success("Promise to pay recorded.");
+      load();
+    } catch (err: any) { setError(err.message || "Could not record promise"); }
+    finally { setBusy(false); }
+  }
+
+  async function handlePromiseStatus(promiseId: string, status: "KEPT" | "BROKEN") {
+    setBusy(true); setError(null);
+    try { await api.updatePromiseToPayStatus(promiseId, status); load(); }
+    catch (err: any) { setError(err.message || "Could not update promise"); }
+    finally { setBusy(false); }
+  }
+
+  async function handleApplyPenalty(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy(true); setError(null);
+    try {
+      await api.applyLoanPenalty(id, { calculationMethod: penaltyForm.calculationMethod as "FIXED" | "PERCENTAGE", rateOrAmount: Number(penaltyForm.rateOrAmount) });
+      setPenaltyForm({ calculationMethod: "PERCENTAGE", rateOrAmount: "" });
+      toast.success("Penalty applied.");
+      load();
+    } catch (err: any) { setError(err.message || "Could not apply penalty"); }
+    finally { setBusy(false); }
+  }
+
+  async function handleWaivePenalty(penaltyId: string) {
+    const reason = window.prompt("Reason for waiving this penalty:");
+    if (reason === null) return;
+    setBusy(true); setError(null);
+    try { await api.waiveLoanPenalty(penaltyId, reason); load(); }
+    catch (err: any) { setError(err.message || "Could not waive penalty"); }
+    finally { setBusy(false); }
+  }
 
   async function handleAddHolder(e: React.FormEvent) {
     e.preventDefault();
@@ -105,7 +166,12 @@ export default function LoanDetailPage() {
                 </Link>
                 <div className="text-text-muted text-sm mt-1 selectable">{loan.customer.phone} · {loan.branch?.name || "Unassigned branch"}</div>
               </div>
-              <span className={`badge ${STATUS_COLOR[loan.status] || ""}`}>{loan.status}</span>
+              <div className="flex items-center gap-2">
+                <span className={`badge ${STATUS_COLOR[loan.status] || ""}`}>{loan.status}</span>
+                {["DISBURSED", "ACTIVE"].includes(loan.status) && (
+                  <span className={`badge ${ARREARS_COLOR[loan.arrearsClassification] || ""}`}>{ARREARS_LABEL[loan.arrearsClassification] || loan.arrearsClassification}</span>
+                )}
+              </div>
             </div>
 
             <div className="grid grid-cols-2 dt:grid-cols-4 gap-3 mb-8">
@@ -114,6 +180,13 @@ export default function LoanDetailPage() {
               <Stat label="Term" value={`${loan.termMonths} months`} />
               <Stat label="Initiated" value={new Date(loan.createdAt).toLocaleDateString()} />
             </div>
+
+            {["DISBURSED", "ACTIVE"].includes(loan.status) && loan.arrearsClassification !== "CURRENT" && (
+              <div className="card p-4 mb-8 bg-rose-100/40 border-rose-600/30">
+                <p className="text-rose-600 text-sm font-medium">{loan.daysInArrears} day(s) in arrears — GHS {Number(loan.arrearsAmount).toLocaleString()} overdue</p>
+                <p className="text-text-muted text-xs mt-1">Recalculated automatically every day. Last checked: {loan.lastArrearsCheckAt ? new Date(loan.lastArrearsCheckAt).toLocaleString() : "not yet checked"}</p>
+              </div>
+            )}
 
             <div className="card p-6 mb-8">
               <h2 className="font-display font-semibold text-base text-ink-900 mb-4">Actions</h2>
@@ -219,6 +292,87 @@ export default function LoanDetailPage() {
                   {loan.repayments.length === 0 && (
                     <tr><td colSpan={2} className="text-center text-text-muted text-sm py-8">No repayments recorded yet.</td></tr>
                   )}
+                </tbody>
+              </table>
+            </div>
+
+            {/* doc §71 Loan Penalty Management */}
+            <h2 className="font-display font-semibold text-lg text-ink-900 mb-3 mt-10">Penalties</h2>
+            {["DISBURSED", "ACTIVE"].includes(loan.status) && (
+              <form onSubmit={handleApplyPenalty} className="card p-5 mb-4 flex flex-wrap items-end gap-3">
+                <label className="block">
+                  <span className="block text-[13px] text-text-500 mb-1.5">Method</span>
+                  <select className="input" value={penaltyForm.calculationMethod} onChange={(e) => setPenaltyForm((f) => ({ ...f, calculationMethod: e.target.value }))}>
+                    <option value="PERCENTAGE">Percentage of arrears</option>
+                    <option value="FIXED">Fixed amount</option>
+                  </select>
+                </label>
+                <label className="block">
+                  <span className="block text-[13px] text-text-500 mb-1.5">{penaltyForm.calculationMethod === "PERCENTAGE" ? "Rate (%)" : "Amount (GHS)"}</span>
+                  <input required type="number" step="0.01" min="0.01" className="input !w-32" value={penaltyForm.rateOrAmount} onChange={(e) => setPenaltyForm((f) => ({ ...f, rateOrAmount: e.target.value }))} />
+                </label>
+                <button type="submit" disabled={busy} className="btn-primary">Apply penalty</button>
+              </form>
+            )}
+            <div className="card overflow-x-auto mb-10">
+              <table className="w-full min-w-[560px] text-sm table-modern">
+                <thead><tr><th>Applied</th><th>Method</th><th>Amount</th><th>Status</th><th></th></tr></thead>
+                <tbody>
+                  {penalties.map((p: any) => (
+                    <tr key={p.id}>
+                      <td className="text-text-700">{new Date(p.appliedAt).toLocaleDateString()}</td>
+                      <td className="text-text-700">{p.calculationMethod === "PERCENTAGE" ? `${p.rateOrAmount}%` : "Fixed"}</td>
+                      <td className="text-text-900 font-medium">GHS {Number(p.amount).toLocaleString()}</td>
+                      <td><span className={`badge ${p.status === "APPLIED" ? "bg-rose-100 text-rose-600" : "bg-paper-100 text-text-muted"}`}>{p.status}</span></td>
+                      <td>{p.status === "APPLIED" && <button onClick={() => handleWaivePenalty(p.id)} className="btn-text text-gold-600">Waive</button>}</td>
+                    </tr>
+                  ))}
+                  {penalties.length === 0 && <tr><td colSpan={5} className="text-center text-text-muted text-sm py-8">No penalties applied.</td></tr>}
+                </tbody>
+              </table>
+            </div>
+
+            {/* doc §77.2 Promise-to-Pay Recording */}
+            <h2 className="font-display font-semibold text-lg text-ink-900 mb-3">Promises to pay</h2>
+            {["DISBURSED", "ACTIVE"].includes(loan.status) && (
+              <form onSubmit={handleRecordPromise} className="card p-5 mb-4 flex flex-wrap items-end gap-3">
+                <label className="block">
+                  <span className="block text-[13px] text-text-500 mb-1.5">Amount (GHS)</span>
+                  <input required type="number" step="0.01" min="0.01" className="input !w-32" value={promiseForm.promisedAmount} onChange={(e) => setPromiseForm((f) => ({ ...f, promisedAmount: e.target.value }))} />
+                </label>
+                <label className="block">
+                  <span className="block text-[13px] text-text-500 mb-1.5">Promised date</span>
+                  <input required type="date" className="input" value={promiseForm.promisedDate} onChange={(e) => setPromiseForm((f) => ({ ...f, promisedDate: e.target.value }))} />
+                </label>
+                <label className="block flex-1 min-w-[180px]">
+                  <span className="block text-[13px] text-text-500 mb-1.5">Notes (optional)</span>
+                  <input className="input" value={promiseForm.notes} onChange={(e) => setPromiseForm((f) => ({ ...f, notes: e.target.value }))} placeholder="e.g. spoke by phone, cites late salary" />
+                </label>
+                <button type="submit" disabled={busy} className="btn-primary">Record</button>
+              </form>
+            )}
+            <div className="card overflow-x-auto">
+              <table className="w-full min-w-[600px] text-sm table-modern">
+                <thead><tr><th>Recorded</th><th>Promised Date</th><th>Amount</th><th>Notes</th><th>Status</th><th></th></tr></thead>
+                <tbody>
+                  {promises.map((p: any) => (
+                    <tr key={p.id}>
+                      <td className="text-text-700">{new Date(p.createdAt).toLocaleDateString()}</td>
+                      <td className="text-text-700">{new Date(p.promisedDate).toLocaleDateString()}</td>
+                      <td className="text-text-900 font-medium">GHS {Number(p.promisedAmount).toLocaleString()}</td>
+                      <td className="text-text-700 text-[12.5px]">{p.notes || "—"}</td>
+                      <td><span className={`badge ${p.status === "KEPT" ? "bg-green-100 text-green-600" : p.status === "BROKEN" ? "bg-rose-100 text-rose-600" : "bg-gold-500/15 text-gold-600"}`}>{p.status}</span></td>
+                      <td className="whitespace-nowrap space-x-2">
+                        {p.status === "PENDING" && (
+                          <>
+                            <button onClick={() => handlePromiseStatus(p.id, "KEPT")} className="btn-text text-green-600">Kept</button>
+                            <button onClick={() => handlePromiseStatus(p.id, "BROKEN")} className="btn-text text-rose-600">Broken</button>
+                          </>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                  {promises.length === 0 && <tr><td colSpan={6} className="text-center text-text-muted text-sm py-8">No promises to pay recorded.</td></tr>}
                 </tbody>
               </table>
             </div>

@@ -1,6 +1,7 @@
 import "dotenv/config";
 import { app } from "./app";
 import { syncPermissionsAndRoles } from "./lib/syncPermissionsAndRoles";
+import { startScheduler } from "./lib/scheduler";
 
 const port = Number(process.env.PORT || 4100);
 
@@ -21,5 +22,6 @@ syncPermissionsAndRoles()
   .finally(() => {
     app.listen(port, () => {
       console.log(`nexus-efos api listening on :${port}`);
+      startScheduler();
     });
   });

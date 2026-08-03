@@ -130,8 +130,14 @@ reportsRouter.get("/loans", async (req: AuthedRequest, res) => {
 
   const byBranch: Record<string, { count: number; principal: number }> = {};
   const byStatus: Record<string, number> = {};
-  const aging = { "0-30": 0, "31-60": 0, "61-90": 0, "90+": 0 };
-  const now = Date.now();
+  // doc §77 Loan Arrears Management / §76 Portfolio Management "PAR
+  // Benchmark" — genuinely built on real arrears data now (the scheduled
+  // daily check in lib/scheduler.ts), not an approximation based on days
+  // since disbursement, which is a materially different and less useful
+  // number for exactly the question this report exists to answer.
+  const arrearsAging = { CURRENT: 0, ARREARS_1_30: 0, ARREARS_31_60: 0, ARREARS_61_90: 0, ARREARS_90_PLUS: 0 };
+  let outstandingPortfolio = 0;
+  let atRiskPortfolio = 0; // PAR30 — outstanding balance of any loan with an installment 30+ days overdue
 
   for (const l of filtered) {
     const branchName = l.branch?.name || "Unassigned";
@@ -140,14 +146,16 @@ reportsRouter.get("/loans", async (req: AuthedRequest, res) => {
     byBranch[branchName].principal += Number(l.principal);
     byStatus[l.status] = (byStatus[l.status] || 0) + 1;
 
-    if (["DISBURSED", "ACTIVE"].includes(l.status) && l.disbursedAt) {
-      const days = Math.floor((now - new Date(l.disbursedAt).getTime()) / (1000 * 60 * 60 * 24));
-      if (days <= 30) aging["0-30"]++;
-      else if (days <= 60) aging["31-60"]++;
-      else if (days <= 90) aging["61-90"]++;
-      else aging["90+"]++;
+    if (["DISBURSED", "ACTIVE"].includes(l.status)) {
+      arrearsAging[l.arrearsClassification as keyof typeof arrearsAging]++;
+      outstandingPortfolio += Number(l.principal);
+      if (l.arrearsClassification !== "CURRENT" && l.arrearsClassification !== "ARREARS_1_30") {
+        atRiskPortfolio += Number(l.principal);
+      }
     }
   }
+
+  const parPercent = outstandingPortfolio > 0 ? Math.round((atRiskPortfolio / outstandingPortfolio) * 10000) / 100 : 0;
 
   res.json({
     loans: filtered.map((l) => ({
@@ -161,10 +169,14 @@ reportsRouter.get("/loans", async (req: AuthedRequest, res) => {
       status: l.status,
       createdAt: l.createdAt,
       disbursedAt: l.disbursedAt,
+      arrearsClassification: l.arrearsClassification,
+      daysInArrears: l.daysInArrears,
+      arrearsAmount: l.arrearsAmount,
     })),
     byBranch,
     byStatus,
-    aging,
+    arrearsAging,
+    portfolioAtRisk: { outstandingPortfolio, atRiskPortfolio, parPercent },
   });
 });
 

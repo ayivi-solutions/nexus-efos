@@ -224,6 +224,20 @@ export const api = {
   disburseLoan: (id: string) => request(`/loans/${id}/disburse`, { method: "POST" }),
   recordRepayment: (id: string, amount: number) => request(`/loans/${id}/repayments`, { method: "POST", body: JSON.stringify({ amount }) }),
 
+  listPromisesToPay: (loanId: string) => request(`/loans/${loanId}/promises-to-pay`),
+  recordPromiseToPay: (loanId: string, data: { promisedAmount: number; promisedDate: string; notes?: string }) =>
+    request(`/loans/${loanId}/promises-to-pay`, { method: "POST", body: JSON.stringify(data) }),
+  updatePromiseToPayStatus: (promiseId: string, status: "KEPT" | "BROKEN") =>
+    request(`/loans/promises-to-pay/${promiseId}`, { method: "PATCH", body: JSON.stringify({ status }) }),
+
+  listLoanPenalties: (loanId: string) => request(`/loans/${loanId}/penalties`),
+  applyLoanPenalty: (loanId: string, data: { calculationMethod: "FIXED" | "PERCENTAGE"; rateOrAmount: number }) =>
+    request(`/loans/${loanId}/penalties`, { method: "POST", body: JSON.stringify(data) }),
+  waiveLoanPenalty: (penaltyId: string, reason?: string) => request(`/loans/penalties/${penaltyId}/waive`, { method: "POST", body: JSON.stringify({ reason }) }),
+  reverseLoanPenalty: (penaltyId: string, reason?: string) => request(`/loans/penalties/${penaltyId}/reverse`, { method: "POST", body: JSON.stringify({ reason }) }),
+
+  runArrearsCheckNow: () => request("/loans/arrears-check/run-now", { method: "POST" }),
+
   listSavingsAccounts: () => request("/savings"),
   getSavingsAccount: (id: string) => request(`/savings/${id}`),
   addSavingsHolder: (id: string, data: { customerId: string; role: string }) => request(`/savings/${id}/holders`, { method: "POST", body: JSON.stringify(data) }),

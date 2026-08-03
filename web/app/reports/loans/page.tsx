@@ -48,11 +48,22 @@ export default function LoanReportPage() {
         
         {data && (
           <>
-            <div className="grid grid-cols-2 dt:grid-cols-4 gap-3 mb-6">
-              {Object.entries(data.aging).map(([bucket, count]) => (
+            {/* doc §77/§76 — PAR30 (Portfolio at Risk, 30+ days overdue), computed
+                from real arrears data recalculated daily (lib/scheduler.ts), not
+                an approximation based on time since disbursement. */}
+            <div className="card p-5 mb-6 bg-gold-500/10 border-gold-500/30">
+              <div className="flex items-baseline gap-3 flex-wrap">
+                <span className="font-display font-semibold text-3xl text-ink-900">{data.portfolioAtRisk.parPercent}%</span>
+                <span className="text-text-700 text-sm">Portfolio at Risk (PAR30)</span>
+              </div>
+              <div className="text-text-muted text-xs mt-1">GHS {Number(data.portfolioAtRisk.atRiskPortfolio).toLocaleString()} at risk of GHS {Number(data.portfolioAtRisk.outstandingPortfolio).toLocaleString()} outstanding</div>
+            </div>
+
+            <div className="grid grid-cols-2 dt:grid-cols-5 gap-3 mb-6">
+              {Object.entries(data.arrearsAging).map(([bucket, count]) => (
                 <div key={bucket} className="card p-3.5">
                   <div className="font-display font-semibold text-lg text-gold-600">{String(count)}</div>
-                  <div className="text-[10.5px] text-text-muted uppercase tracking-wide">{bucket} days</div>
+                  <div className="text-[10.5px] text-text-muted uppercase tracking-wide">{bucket.replaceAll("_", " ")}</div>
                 </div>
               ))}
             </div>
