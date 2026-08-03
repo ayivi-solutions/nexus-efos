@@ -87,6 +87,7 @@ model Institution {
   savingsFeeCharges       SavingsFeeCharge[]
   savingsRestrictions     SavingsRestriction[]
   standingInstructions    StandingInstruction[]
+  savingsStatements       SavingsStatement[]
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -1198,6 +1199,7 @@ model SavingsAccount {
 
   feeCharges   SavingsFeeCharge[]
   restrictions SavingsRestriction[]
+  statements   SavingsStatement[]
   promoExpiresAt    DateTime? @map("promo_expires_at")
 
   lastAccrualDate DateTime? @map("last_accrual_date")
@@ -2453,5 +2455,37 @@ model StandingInstructionExecution {
   failureReason  String?         @map("failure_reason")
 
   @@map("standing_instruction_execution")
+  @@schema("nexus")
+}
+
+// doc §59 Savings Statements. §59.5 "Historical statements remain
+// available" — taken literally: the actual transaction list and computed
+// totals are captured as a permanent snapshot at generation time, not
+// just a request log. Re-downloading a statement for the same period
+// always shows the same figures, even if something about the account
+// changes afterward. The PDF itself is regenerated on demand from this
+// snapshot rather than stored as a binary blob — no file-storage
+// infrastructure needed for this feature specifically.
+model SavingsStatement {
+  id            String         @id(map: "pk_savings_statement") @default(uuid())
+  institution   Institution    @relation(fields: [institutionId], references: [id], onDelete: Cascade, map: "fk_savings_statement_institution")
+  institutionId String         @map("institution_id")
+  account       SavingsAccount @relation(fields: [accountId], references: [id], onDelete: Cascade, map: "fk_savings_statement_account")
+  accountId     String         @map("account_id")
+
+  periodStart    DateTime @map("period_start")
+  periodEnd      DateTime @map("period_end")
+  openingBalance Decimal  @map("opening_balance") @db.Decimal(14, 2)
+  closingBalance Decimal  @map("closing_balance") @db.Decimal(14, 2)
+  totalInterest  Decimal  @map("total_interest") @db.Decimal(14, 2)
+  totalFees      Decimal  @map("total_fees") @db.Decimal(14, 2)
+  // §59.5 "Statements reflect only posted transactions" — captured as it
+  // genuinely was at generation time.
+  transactionSnapshot Json @map("transaction_snapshot")
+
+  generatedById String   @map("generated_by_id")
+  generatedAt   DateTime @default(now()) @map("generated_at")
+
+  @@map("savings_statement")
   @@schema("nexus")
 }

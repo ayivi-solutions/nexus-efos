@@ -306,6 +306,32 @@ export const api = {
   reactivateSI: (id: string) => request(`/savings/standing-instructions/${id}/reactivate`, { method: "POST" }),
   cancelSI: (id: string) => request(`/savings/standing-instructions/${id}/cancel`, { method: "POST" }),
 
+  listSavingsStatements: (accountId: string) => request(`/savings/${accountId}/statements`),
+  generateSavingsStatement: async (accountId: string, periodStart: string, periodEnd: string) => {
+    const accessToken = typeof window !== "undefined" ? sessionStorage.getItem("nexus_access_token") : null;
+    const res = await fetch(`${API_BASE}/savings/${accountId}/statements/generate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}) },
+      body: JSON.stringify({ periodStart, periodEnd }),
+    });
+    if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error || "Could not generate statement"); }
+    const blob = await res.blob();
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement("a"); a.href = url; a.download = `statement-${accountId}.pdf`; a.click();
+    window.URL.revokeObjectURL(url);
+  },
+  downloadSavingsStatement: async (statementId: string, accountNumber: string) => {
+    const accessToken = typeof window !== "undefined" ? sessionStorage.getItem("nexus_access_token") : null;
+    const res = await fetch(`${API_BASE}/savings/statements/${statementId}/download`, {
+      headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : {},
+    });
+    if (!res.ok) throw new Error("Could not download statement");
+    const blob = await res.blob();
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement("a"); a.href = url; a.download = `statement-${accountNumber}.pdf`; a.click();
+    window.URL.revokeObjectURL(url);
+  },
+
   listSavingsAccounts: () => request("/savings"),
   getSavingsAccount: (id: string) => request(`/savings/${id}`),
   addSavingsHolder: (id: string, data: { customerId: string; role: string }) => request(`/savings/${id}/holders`, { method: "POST", body: JSON.stringify(data) }),

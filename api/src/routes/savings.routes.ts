@@ -7,6 +7,7 @@ import { generateAccountNumber } from "../lib/accountNumber";
 import { matchRules, executeMatchedRules } from "../lib/businessRules";
 import { nextExecutionDate } from "../lib/standingInstructions";
 import { runStandingInstructions } from "../lib/scheduler";
+import { generateStatementPdf } from "../lib/savingsStatementPdf";
 
 export const savingsRouter = Router();
 savingsRouter.use(requireAuth);
@@ -473,4 +474,100 @@ savingsRouter.post("/standing-instructions/:id/cancel", requirePermission("savin
 savingsRouter.post("/standing-instructions/run-now", requirePermission("institution.configure"), async (_req: AuthedRequest, res) => {
   await runStandingInstructions();
   res.json({ ok: true });
+});
+
+// =========================================================================
+// doc §59 Savings Statements
+// =========================================================================
+savingsRouter.get("/:id/statements", requirePermission("reports.view"), async (req: AuthedRequest, res) => {
+  const statements = await prisma.savingsStatement.findMany({ where: { accountId: req.params.id }, orderBy: { generatedAt: "desc" } });
+  res.json({ statements });
+});
+
+const statementSchema = z.object({ periodStart: z.string(), periodEnd: z.string() });
+
+// §59.5 "Statements reflect only posted transactions" — opening balance is
+// reconstructed from the real transaction immediately before the period
+// (its balanceAfter), never assumed or estimated. Closing balance and
+// totals are computed the same honest way from what's actually in the
+// database for this exact period.
+savingsRouter.post("/:id/statements/generate", requirePermission("reports.view"), async (req: AuthedRequest, res) => {
+  const parsed = statementSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+  const account = await prisma.savingsAccount.findFirst({
+    where: { id: req.params.id, institutionId: req.auth!.institutionId },
+    include: { customer: true, productVersion: { include: { product: true } }, institution: true },
+  });
+  if (!account) return res.status(404).json({ error: "Account not found" });
+
+  const periodStart = new Date(parsed.data.periodStart);
+  const periodEnd = new Date(parsed.data.periodEnd);
+  periodEnd.setHours(23, 59, 59, 999);
+
+  const priorTxn = await prisma.savingsTransaction.findFirst({
+    where: { accountId: account.id, createdAt: { lt: periodStart } },
+    orderBy: { createdAt: "desc" },
+  });
+  const openingBalance = priorTxn ? Number(priorTxn.balanceAfter) : 0;
+
+  const periodTxns = await prisma.savingsTransaction.findMany({
+    where: { accountId: account.id, createdAt: { gte: periodStart, lte: periodEnd } },
+    orderBy: { createdAt: "asc" },
+  });
+
+  const closingBalance = periodTxns.length > 0 ? Number(periodTxns[periodTxns.length - 1].balanceAfter) : openingBalance;
+  const totalInterest = periodTxns.filter((t) => t.type === "INTEREST").reduce((s, t) => s + Number(t.amount), 0);
+  const totalFees = periodTxns.filter((t) => t.type === "FEE").reduce((s, t) => s + Number(t.amount), 0);
+
+  const transactionSnapshot = periodTxns.map((t) => ({ date: t.createdAt, type: t.type, amount: Number(t.amount), balanceAfter: Number(t.balanceAfter) }));
+
+  const statement = await prisma.savingsStatement.create({
+    data: {
+      institutionId: req.auth!.institutionId, accountId: account.id, periodStart, periodEnd,
+      openingBalance, closingBalance, totalInterest, totalFees,
+      transactionSnapshot: transactionSnapshot as any, generatedById: req.auth!.userId,
+    },
+  });
+
+  await prisma.auditLog.create({
+    data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "savings.statement_generated", resource: "savings_account", resourceId: account.id, metadata: { statementId: statement.id, periodStart, periodEnd } },
+  });
+
+  const pdfBuffer = await generateStatementPdf({
+    institution: { legalName: account.institution.legalName, regulatorId: account.institution.regulatorId, phone: account.institution.phone, email: account.institution.email },
+    customer: { fullName: account.customer.fullName, phone: account.customer.phone, customerNumber: account.customer.customerNumber },
+    account: { accountNumber: account.accountNumber, productName: account.productVersion?.product?.code || "Savings" },
+    periodStart, periodEnd, openingBalance, closingBalance, totalInterest, totalFees,
+    transactions: transactionSnapshot, generatedAt: statement.generatedAt,
+  });
+
+  res.setHeader("Content-Type", "application/pdf");
+  res.setHeader("Content-Disposition", `attachment; filename="statement-${account.accountNumber}-${parsed.data.periodStart}.pdf"`);
+  res.send(pdfBuffer);
+});
+
+// §59.3 "Statement History" — re-download a previously generated
+// statement's PDF from its stored snapshot, guaranteed identical to what
+// was generated then, even if the account's data has since changed.
+savingsRouter.get("/statements/:statementId/download", requirePermission("reports.view"), async (req: AuthedRequest, res) => {
+  const statement = await prisma.savingsStatement.findFirst({
+    where: { id: req.params.statementId, institutionId: req.auth!.institutionId },
+    include: { account: { include: { customer: true, productVersion: { include: { product: true } }, institution: true } } },
+  });
+  if (!statement) return res.status(404).json({ error: "Statement not found" });
+
+  const pdfBuffer = await generateStatementPdf({
+    institution: { legalName: statement.account.institution.legalName, regulatorId: statement.account.institution.regulatorId, phone: statement.account.institution.phone, email: statement.account.institution.email },
+    customer: { fullName: statement.account.customer.fullName, phone: statement.account.customer.phone, customerNumber: statement.account.customer.customerNumber },
+    account: { accountNumber: statement.account.accountNumber, productName: statement.account.productVersion?.product?.code || "Savings" },
+    periodStart: statement.periodStart, periodEnd: statement.periodEnd,
+    openingBalance: Number(statement.openingBalance), closingBalance: Number(statement.closingBalance),
+    totalInterest: Number(statement.totalInterest), totalFees: Number(statement.totalFees),
+    transactions: statement.transactionSnapshot as any, generatedAt: statement.generatedAt,
+  });
+
+  res.setHeader("Content-Type", "application/pdf");
+  res.setHeader("Content-Disposition", `attachment; filename="statement-${statement.account.accountNumber}.pdf"`);
+  res.send(pdfBuffer);
 });

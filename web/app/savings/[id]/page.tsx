@@ -29,6 +29,9 @@ export default function SavingsDetailPage() {
   const [selectedFeeType, setSelectedFeeType] = useState("");
   const [restrictions, setRestrictions] = useState<any[]>([]);
   const [restrictionForm, setRestrictionForm] = useState({ type: "DEBIT_RESTRICTION", reason: "" });
+  const [statements, setStatements] = useState<any[]>([]);
+  const [statementForm, setStatementForm] = useState({ periodStart: "", periodEnd: "" });
+  const [genBusy, setGenBusy] = useState(false);
 
   function load() {
     api.getSavingsAccount(id).then((res) => setAccount(res.account)).catch((err) => setError(err.message));
@@ -36,6 +39,16 @@ export default function SavingsDetailPage() {
     api.listSavingsFeeTypes().then((r) => setFeeTypes(r.feeTypes)).catch(() => {});
     api.listSavingsFeeCharges(id).then((r) => setFeeCharges(r.charges)).catch(() => {});
     api.listSavingsRestrictions(id).then((r) => setRestrictions(r.restrictions)).catch(() => {});
+    api.listSavingsStatements(id).then((r) => setStatements(r.statements)).catch(() => {});
+  }
+
+  async function handleGenerateStatement(e: React.FormEvent) {
+    e.preventDefault();
+    setGenBusy(true); setError(null);
+    try {
+      await api.generateSavingsStatement(id, statementForm.periodStart, statementForm.periodEnd);
+      load();
+    } catch (err: any) { setError(err.message || "Could not generate statement"); } finally { setGenBusy(false); }
   }
 
   async function handleApplyFee() {
@@ -416,6 +429,37 @@ export default function SavingsDetailPage() {
                     </tr>
                   ))}
                   {restrictions.length === 0 && <tr><td colSpan={4} className="text-center text-text-muted text-sm py-8">No restrictions on this account.</td></tr>}
+                </tbody>
+              </table>
+            </div>
+
+            {/* doc §59 Savings Statements */}
+            <h2 className="font-display font-semibold text-lg text-ink-900 mb-3 mt-10">Statements</h2>
+            <form onSubmit={handleGenerateStatement} className="card p-4 mb-4 flex flex-wrap items-end gap-3">
+              <label className="block">
+                <span className="block text-[13px] text-text-500 mb-1.5">From</span>
+                <input required type="date" className="input" value={statementForm.periodStart} onChange={(e) => setStatementForm((f) => ({ ...f, periodStart: e.target.value }))} />
+              </label>
+              <label className="block">
+                <span className="block text-[13px] text-text-500 mb-1.5">To</span>
+                <input required type="date" className="input" value={statementForm.periodEnd} onChange={(e) => setStatementForm((f) => ({ ...f, periodEnd: e.target.value }))} />
+              </label>
+              <button type="submit" disabled={genBusy} className="btn-primary">{genBusy ? "Generating…" : "Generate & Download"}</button>
+            </form>
+            <div className="card overflow-x-auto">
+              <table className="w-full min-w-[500px] text-sm table-modern">
+                <thead><tr><th>Period</th><th>Opening</th><th>Closing</th><th>Generated</th><th></th></tr></thead>
+                <tbody>
+                  {statements.map((s: any) => (
+                    <tr key={s.id}>
+                      <td className="text-text-700">{new Date(s.periodStart).toLocaleDateString()} – {new Date(s.periodEnd).toLocaleDateString()}</td>
+                      <td className="text-text-700">GHS {Number(s.openingBalance).toLocaleString()}</td>
+                      <td className="text-text-700">GHS {Number(s.closingBalance).toLocaleString()}</td>
+                      <td className="text-text-700">{new Date(s.generatedAt).toLocaleDateString()}</td>
+                      <td><button onClick={() => api.downloadSavingsStatement(s.id, account.accountNumber)} className="btn-text text-gold-600">Download</button></td>
+                    </tr>
+                  ))}
+                  {statements.length === 0 && <tr><td colSpan={5} className="text-center text-text-muted text-sm py-8">No statements generated yet.</td></tr>}
                 </tbody>
               </table>
             </div>
