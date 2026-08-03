@@ -11,17 +11,45 @@ export default function GeneralLedgerPage() {
   const toast = useToast();
   const [error, setError] = useState<string | null>(null);
   useErrorToast(error);
-  const [tab, setTab] = useState<"accounts" | "journals">("accounts");
+  const [tab, setTab] = useState<"accounts" | "journals" | "periods">("accounts");
 
   const [accounts, setAccounts] = useState<any[]>([]);
   const [journals, setJournals] = useState<any[]>([]);
   const [accountForm, setAccountForm] = useState({ code: "", name: "", category: "ASSET" });
-  const [journalForm, setJournalForm] = useState({ description: "", lines: [{ accountId: "", debit: "", credit: "" }, { accountId: "", debit: "", credit: "" }] });
+  const [journalForm, setJournalForm] = useState({ description: "", postingDate: "", lines: [{ accountId: "", debit: "", credit: "" }, { accountId: "", debit: "", credit: "" }] });
+  const [fiscalYears, setFiscalYears] = useState<any[]>([]);
+  const [yearForm, setYearForm] = useState({ name: "", startDate: "", endDate: "" });
+  const [periodForm, setPeriodForm] = useState({ fiscalYearId: "", name: "", startDate: "", endDate: "" });
   const [busy, setBusy] = useState(false);
 
   function load() {
     api.listGLAccounts().then((r) => setAccounts(r.accounts)).catch((e) => setError(e.message));
     api.listJournals().then((r) => setJournals(r.journals)).catch(() => {});
+    api.listFiscalYears().then((r) => setFiscalYears(r.fiscalYears)).catch(() => {});
+  }
+
+  async function handleCreateFiscalYear(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy(true); setError(null);
+    try { await api.createFiscalYear(yearForm); setYearForm({ name: "", startDate: "", endDate: "" }); toast.success("Fiscal year created."); load(); }
+    catch (err: any) { setError(err.message || "Could not create fiscal year"); } finally { setBusy(false); }
+  }
+
+  async function handleCreatePeriod(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy(true); setError(null);
+    try { await api.createFinancialPeriod(periodForm); setPeriodForm({ fiscalYearId: "", name: "", startDate: "", endDate: "" }); toast.success("Period created."); load(); }
+    catch (err: any) { setError(err.message || "Could not create period"); } finally { setBusy(false); }
+  }
+
+  async function handlePeriodAction(id: string, action: "close" | "lock" | "reopen") {
+    setBusy(true); setError(null);
+    try {
+      if (action === "close") await api.closeFinancialPeriod(id);
+      else if (action === "lock") await api.lockFinancialPeriod(id);
+      else { const reason = window.prompt("Reason for requesting reopen:"); if (!reason) return; await api.requestPeriodReopen(id, reason); toast.info("Reopen submitted for approval."); }
+      load();
+    } catch (err: any) { setError(err.message || "Could not update period"); } finally { setBusy(false); }
   }
   useEffect(() => { load(); }, []);
 
@@ -48,10 +76,11 @@ export default function GeneralLedgerPage() {
     try {
       await api.createJournal({
         description: journalForm.description,
+        postingDate: journalForm.postingDate,
         lines: journalForm.lines.map((l) => ({ accountId: l.accountId, debit: Number(l.debit) || 0, credit: Number(l.credit) || 0 })),
       });
       toast.success("Journal created as DRAFT.");
-      setJournalForm({ description: "", lines: [{ accountId: "", debit: "", credit: "" }, { accountId: "", debit: "", credit: "" }] });
+      setJournalForm({ description: "", postingDate: "", lines: [{ accountId: "", debit: "", credit: "" }, { accountId: "", debit: "", credit: "" }] });
       load();
     } catch (err: any) { setError(err.message || "Could not create journal"); } finally { setBusy(false); }
   }
@@ -74,6 +103,7 @@ export default function GeneralLedgerPage() {
         <div className="flex gap-2 mb-6">
           <button onClick={() => setTab("accounts")} className={`btn-text ${tab === "accounts" ? "text-gold-600 font-semibold" : "text-text-muted"}`}>Chart of Accounts</button>
           <button onClick={() => setTab("journals")} className={`btn-text ${tab === "journals" ? "text-gold-600 font-semibold" : "text-text-muted"}`}>Journals</button>
+          <button onClick={() => setTab("periods")} className={`btn-text ${tab === "periods" ? "text-gold-600 font-semibold" : "text-text-muted"}`}>Fiscal Periods</button>
         </div>
 
         {tab === "accounts" && (
@@ -110,7 +140,13 @@ export default function GeneralLedgerPage() {
         {tab === "journals" && (
           <>
             <form onSubmit={handleCreateJournal} className="card p-5 mb-6">
-              <input required placeholder="Description" className="input mb-3" value={journalForm.description} onChange={(e) => setJournalForm((f) => ({ ...f, description: e.target.value }))} />
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
+                <input required placeholder="Description" className="input" value={journalForm.description} onChange={(e) => setJournalForm((f) => ({ ...f, description: e.target.value }))} />
+                <label className="block">
+                  <span className="block text-[13px] text-text-500 mb-1.5">Posting date</span>
+                  <input required type="date" className="input" value={journalForm.postingDate} onChange={(e) => setJournalForm((f) => ({ ...f, postingDate: e.target.value }))} />
+                </label>
+              </div>
               {journalForm.lines.map((l, i) => (
                 <div key={i} className="grid grid-cols-3 gap-2 mb-2">
                   <select required className="input !py-1.5" value={l.accountId} onChange={(e) => updateLine(i, "accountId", e.target.value)}>
@@ -138,7 +174,10 @@ export default function GeneralLedgerPage() {
                   {journals.map((j: any) => (
                     <tr key={j.id}>
                       <td className="font-mono text-[12px] text-text-700">{j.journalNumber}</td>
-                      <td className="text-text-900">{j.description}</td>
+                      <td className="text-text-900">
+                        {j.description}
+                        {j.status === "REJECTED" && j.rejectionReason && <div className="text-rose-600 text-[11px] mt-0.5">{j.rejectionReason}</div>}
+                      </td>
                       <td className="text-text-700">{j.type}</td>
                       <td><span className={`badge ${j.status === "POSTED" ? "bg-green-100 text-green-600" : j.status === "REJECTED" ? "bg-rose-100 text-rose-600" : j.status === "PENDING_APPROVAL" ? "bg-gold-500/15 text-gold-600" : "bg-paper-100 text-text-muted"}`}>{j.status.replaceAll("_", " ")}</span></td>
                       <td>{j.status === "DRAFT" && <button onClick={() => handleRequestPosting(j.id)} className="btn-text text-gold-600">Request posting</button>}</td>
@@ -148,6 +187,55 @@ export default function GeneralLedgerPage() {
                 </tbody>
               </table>
             </div>
+          </>
+        )}
+        {tab === "periods" && (
+          <>
+            <div className="grid grid-cols-1 dt:grid-cols-2 gap-4 mb-6">
+              <form onSubmit={handleCreateFiscalYear} className="card p-4">
+                <div className="font-medium text-[13px] text-text-900 mb-2">New fiscal year</div>
+                <input required placeholder="Name (e.g. FY2026)" className="input !text-[12px] mb-2" value={yearForm.name} onChange={(e) => setYearForm((f) => ({ ...f, name: e.target.value }))} />
+                <input required type="date" className="input !text-[12px] mb-2" value={yearForm.startDate} onChange={(e) => setYearForm((f) => ({ ...f, startDate: e.target.value }))} />
+                <input required type="date" className="input !text-[12px] mb-2" value={yearForm.endDate} onChange={(e) => setYearForm((f) => ({ ...f, endDate: e.target.value }))} />
+                <button type="submit" disabled={busy} className="btn-text text-gold-600">Create</button>
+              </form>
+              <form onSubmit={handleCreatePeriod} className="card p-4">
+                <div className="font-medium text-[13px] text-text-900 mb-2">New period</div>
+                <select required className="input !text-[12px] mb-2" value={periodForm.fiscalYearId} onChange={(e) => setPeriodForm((f) => ({ ...f, fiscalYearId: e.target.value }))}>
+                  <option value="">Fiscal year…</option>
+                  {fiscalYears.map((y: any) => (<option key={y.id} value={y.id}>{y.name}</option>))}
+                </select>
+                <input required placeholder="Name (e.g. January 2026)" className="input !text-[12px] mb-2" value={periodForm.name} onChange={(e) => setPeriodForm((f) => ({ ...f, name: e.target.value }))} />
+                <input required type="date" className="input !text-[12px] mb-2" value={periodForm.startDate} onChange={(e) => setPeriodForm((f) => ({ ...f, startDate: e.target.value }))} />
+                <input required type="date" className="input !text-[12px] mb-2" value={periodForm.endDate} onChange={(e) => setPeriodForm((f) => ({ ...f, endDate: e.target.value }))} />
+                <button type="submit" disabled={busy} className="btn-text text-gold-600">Create</button>
+              </form>
+            </div>
+
+            {fiscalYears.map((y: any) => (
+              <div key={y.id} className="card p-5 mb-4">
+                <div className="font-display font-semibold text-base text-ink-900 mb-3">{y.name}</div>
+                <table className="w-full text-sm table-modern">
+                  <thead><tr><th>Period</th><th>Dates</th><th>Status</th><th></th></tr></thead>
+                  <tbody>
+                    {(y.periods || []).map((p: any) => (
+                      <tr key={p.id}>
+                        <td className="text-text-900 font-medium">{p.name}</td>
+                        <td className="text-text-700 text-[12.5px]">{new Date(p.startDate).toLocaleDateString()} – {new Date(p.endDate).toLocaleDateString()}</td>
+                        <td><span className={`badge ${p.status === "OPEN" ? "bg-green-100 text-green-600" : p.status === "LOCKED" ? "bg-rose-100 text-rose-600" : "bg-paper-100 text-text-muted"}`}>{p.status}</span></td>
+                        <td className="whitespace-nowrap space-x-2">
+                          {p.status === "OPEN" && <button onClick={() => handlePeriodAction(p.id, "close")} className="btn-text text-gold-600">Close</button>}
+                          {p.status === "CLOSED" && <button onClick={() => handlePeriodAction(p.id, "reopen")} className="btn-text text-green-600">Request reopen</button>}
+                          {p.status === "CLOSED" && <button onClick={() => handlePeriodAction(p.id, "lock")} className="btn-text text-rose-600">Lock</button>}
+                        </td>
+                      </tr>
+                    ))}
+                    {(!y.periods || y.periods.length === 0) && <tr><td colSpan={4} className="text-center text-text-muted text-sm py-4">No periods yet.</td></tr>}
+                  </tbody>
+                </table>
+              </div>
+            ))}
+            {fiscalYears.length === 0 && <p className="text-text-muted text-sm text-center py-8">No fiscal years created.</p>}
           </>
         )}
       </div>

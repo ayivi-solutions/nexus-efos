@@ -35,3 +35,14 @@ export function generateJournalNumber(): string {
   const rand = Math.floor(Math.random() * 1000).toString().padStart(3, "0");
   return "JN" + Date.now().toString().slice(-10) + rand;
 }
+
+// doc §120.3 "Closed periods prevent unauthorised postings" — a single
+// shared lookup, used both at journal creation and again at posting
+// approval time, so there is exactly one place that decides "is this
+// date postable," not two implementations that could drift apart.
+export async function findPostablePeriod(prisma: any, institutionId: string, date: Date): Promise<{ id: string; status: string } | null> {
+  const period = await prisma.financialPeriod.findFirst({
+    where: { institutionId, startDate: { lte: date }, endDate: { gte: date } },
+  });
+  return period;
+}
