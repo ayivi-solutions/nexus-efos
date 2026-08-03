@@ -86,6 +86,7 @@ model Institution {
   savingsFeeTypes         SavingsFeeType[]
   savingsFeeCharges       SavingsFeeCharge[]
   savingsRestrictions     SavingsRestriction[]
+  standingInstructions    StandingInstruction[]
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -2365,5 +2366,92 @@ model SavingsRestriction {
   createdAt DateTime @default(now()) @map("created_at")
 
   @@map("savings_restriction")
+  @@schema("nexus")
+}
+
+// doc §58 Standing Instructions. §58.3 lists External Transfers and
+// Scheduled Deposits among the named sub-types; neither is buildable here
+// honestly — External Transfers need real payment-rail integration (the
+// same Tier-3-adjacent gap as Mobile Money/Bank Integration), and a
+// "Scheduled Deposit" with no funding source wouldn't be a real deposit,
+// just a number appearing from nowhere. What's genuinely executable
+// end-to-end within the system today: transfers and repayments between
+// accounts that already exist here, and scheduled withdrawals.
+enum StandingInstructionType {
+  INTERNAL_TRANSFER
+  LOAN_REPAYMENT
+  SCHEDULED_WITHDRAWAL
+
+  @@schema("nexus")
+}
+
+enum StandingInstructionFrequency {
+  DAILY
+  WEEKLY
+  FORTNIGHTLY
+  MONTHLY
+  QUARTERLY
+  HALF_YEARLY
+  ANNUALLY
+
+  @@schema("nexus")
+}
+
+enum StandingInstructionStatus {
+  ACTIVE
+  SUSPENDED
+  CANCELLED
+
+  @@schema("nexus")
+}
+
+model StandingInstruction {
+  id            String      @id(map: "pk_standing_instruction") @default(uuid())
+  institution   Institution @relation(fields: [institutionId], references: [id], onDelete: Cascade, map: "fk_standing_instruction_institution")
+  institutionId String      @map("institution_id")
+
+  type                StandingInstructionType
+  sourceAccountId     String                       @map("source_account_id")
+  destinationAccountId String?                     @map("destination_account_id") // INTERNAL_TRANSFER only
+  destinationLoanId   String?                       @map("destination_loan_id") // LOAN_REPAYMENT only
+  amount              Decimal                       @db.Decimal(14, 2)
+  frequency           StandingInstructionFrequency
+  nextExecutionDate   DateTime                      @map("next_execution_date")
+  status              StandingInstructionStatus     @default(ACTIVE)
+
+  // §58.5 "Retry policies are configurable" / "Failed executions
+  // generate alerts" — a simple, real retry policy: skip and retry next
+  // scheduled run on insufficient balance, auto-suspend after too many
+  // consecutive failures rather than retrying forever silently.
+  maxRetries          Int @default(3) @map("max_retries")
+  consecutiveFailures Int @default(0) @map("consecutive_failures")
+
+  createdById String   @map("created_by_id")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  executions StandingInstructionExecution[]
+
+  @@map("standing_instruction")
+  @@schema("nexus")
+}
+
+enum ExecutionStatus {
+  SUCCESS
+  FAILED
+
+  @@schema("nexus")
+}
+
+model StandingInstructionExecution {
+  id           String               @id(map: "pk_si_execution") @default(uuid())
+  instruction  StandingInstruction  @relation(fields: [instructionId], references: [id], onDelete: Cascade, map: "fk_si_execution_instruction")
+  instructionId String              @map("instruction_id")
+
+  executedAt     DateTime        @default(now()) @map("executed_at")
+  status         ExecutionStatus
+  amount         Decimal         @db.Decimal(14, 2)
+  failureReason  String?         @map("failure_reason")
+
+  @@map("standing_instruction_execution")
   @@schema("nexus")
 }

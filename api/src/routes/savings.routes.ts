@@ -5,6 +5,8 @@ import { requireAuth, AuthedRequest } from "../middleware/auth";
 import { requirePermission } from "../middleware/rbac";
 import { generateAccountNumber } from "../lib/accountNumber";
 import { matchRules, executeMatchedRules } from "../lib/businessRules";
+import { nextExecutionDate } from "../lib/standingInstructions";
+import { runStandingInstructions } from "../lib/scheduler";
 
 export const savingsRouter = Router();
 savingsRouter.use(requireAuth);
@@ -389,4 +391,86 @@ savingsRouter.post("/restrictions/:restrictionId/request-removal", requirePermis
   });
 
   res.status(202).json({ pendingApproval: true });
+});
+
+// =========================================================================
+// doc §58 Standing Instructions
+// =========================================================================
+
+const createSISchema = z.object({
+  type: z.enum(["INTERNAL_TRANSFER", "LOAN_REPAYMENT", "SCHEDULED_WITHDRAWAL"]),
+  sourceAccountId: z.string(),
+  destinationAccountId: z.string().optional(),
+  destinationLoanId: z.string().optional(),
+  amount: z.number().positive(),
+  frequency: z.enum(["DAILY", "WEEKLY", "FORTNIGHTLY", "MONTHLY", "QUARTERLY", "HALF_YEARLY", "ANNUALLY"]),
+  startDate: z.string(),
+});
+
+savingsRouter.get("/standing-instructions", requirePermission("reports.view"), async (req: AuthedRequest, res) => {
+  const instructions = await prisma.standingInstruction.findMany({ where: { institutionId: req.auth!.institutionId }, orderBy: { createdAt: "desc" } });
+  res.json({ instructions });
+});
+
+savingsRouter.post("/standing-instructions", requirePermission("savings.initiate"), async (req: AuthedRequest, res) => {
+  const parsed = createSISchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+  if (parsed.data.type === "INTERNAL_TRANSFER" && !parsed.data.destinationAccountId) return res.status(400).json({ error: "destinationAccountId is required for INTERNAL_TRANSFER" });
+  if (parsed.data.type === "LOAN_REPAYMENT" && !parsed.data.destinationLoanId) return res.status(400).json({ error: "destinationLoanId is required for LOAN_REPAYMENT" });
+
+  const source = await prisma.savingsAccount.findFirst({ where: { id: parsed.data.sourceAccountId, institutionId: req.auth!.institutionId, status: "ACTIVE" } });
+  if (!source) return res.status(404).json({ error: "Source account not found or not ACTIVE — doc §58.5 'execute only on active accounts' applies at creation too" });
+
+  const instruction = await prisma.standingInstruction.create({
+    data: {
+      institutionId: req.auth!.institutionId, type: parsed.data.type as any, sourceAccountId: parsed.data.sourceAccountId,
+      destinationAccountId: parsed.data.destinationAccountId, destinationLoanId: parsed.data.destinationLoanId,
+      amount: parsed.data.amount, frequency: parsed.data.frequency as any, nextExecutionDate: new Date(parsed.data.startDate),
+      createdById: req.auth!.userId,
+    },
+  });
+
+  await prisma.auditLog.create({
+    data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "savings.standing_instruction_created", resource: "standing_instruction", resourceId: instruction.id },
+  });
+
+  res.status(201).json({ instruction });
+});
+
+savingsRouter.get("/standing-instructions/:id/executions", requirePermission("reports.view"), async (req: AuthedRequest, res) => {
+  const executions = await prisma.standingInstructionExecution.findMany({ where: { instructionId: req.params.id }, orderBy: { executedAt: "desc" } });
+  res.json({ executions });
+});
+
+savingsRouter.post("/standing-instructions/:id/suspend", requirePermission("savings.initiate"), async (req: AuthedRequest, res) => {
+  const updated = await prisma.standingInstruction.updateMany({ where: { id: req.params.id, institutionId: req.auth!.institutionId }, data: { status: "SUSPENDED" } });
+  if (updated.count === 0) return res.status(404).json({ error: "Not found" });
+  res.json({ ok: true });
+});
+
+savingsRouter.post("/standing-instructions/:id/reactivate", requirePermission("savings.initiate"), async (req: AuthedRequest, res) => {
+  const instruction = await prisma.standingInstruction.findFirst({ where: { id: req.params.id, institutionId: req.auth!.institutionId } });
+  if (!instruction) return res.status(404).json({ error: "Not found" });
+  // Reactivating resets the failure counter and moves the next run to
+  // today — otherwise a long-suspended instruction would immediately
+  // re-fail on an execution date from weeks or months ago.
+  const updated = await prisma.standingInstruction.update({
+    where: { id: instruction.id },
+    data: { status: "ACTIVE", consecutiveFailures: 0, nextExecutionDate: new Date() },
+  });
+  res.json({ instruction: updated });
+});
+
+savingsRouter.post("/standing-instructions/:id/cancel", requirePermission("savings.initiate"), async (req: AuthedRequest, res) => {
+  const updated = await prisma.standingInstruction.updateMany({ where: { id: req.params.id, institutionId: req.auth!.institutionId }, data: { status: "CANCELLED" } });
+  if (updated.count === 0) return res.status(404).json({ error: "Not found" });
+  res.json({ ok: true });
+});
+
+// Manual trigger, same pattern as the arrears check — for testing and
+// pilot setup without waiting for 01:00.
+savingsRouter.post("/standing-instructions/run-now", requirePermission("institution.configure"), async (_req: AuthedRequest, res) => {
+  await runStandingInstructions();
+  res.json({ ok: true });
 });

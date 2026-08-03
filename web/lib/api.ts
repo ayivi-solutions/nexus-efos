@@ -299,6 +299,13 @@ export const api = {
   createSavingsRestriction: (accountId: string, data: { type: string; reason: string; expiresAt?: string }) => request(`/savings/${accountId}/restrictions`, { method: "POST", body: JSON.stringify(data) }),
   requestRestrictionRemoval: (restrictionId: string, reason?: string) => request(`/savings/restrictions/${restrictionId}/request-removal`, { method: "POST", body: JSON.stringify({ reason }) }),
 
+  listStandingInstructions: () => request("/savings/standing-instructions"),
+  createStandingInstruction: (data: any) => request("/savings/standing-instructions", { method: "POST", body: JSON.stringify(data) }),
+  listSIExecutions: (id: string) => request(`/savings/standing-instructions/${id}/executions`),
+  suspendSI: (id: string) => request(`/savings/standing-instructions/${id}/suspend`, { method: "POST" }),
+  reactivateSI: (id: string) => request(`/savings/standing-instructions/${id}/reactivate`, { method: "POST" }),
+  cancelSI: (id: string) => request(`/savings/standing-instructions/${id}/cancel`, { method: "POST" }),
+
   listSavingsAccounts: () => request("/savings"),
   getSavingsAccount: (id: string) => request(`/savings/${id}`),
   addSavingsHolder: (id: string, data: { customerId: string; role: string }) => request(`/savings/${id}/holders`, { method: "POST", body: JSON.stringify(data) }),
