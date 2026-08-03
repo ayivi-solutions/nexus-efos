@@ -53,6 +53,25 @@ real customer data.
 - Repayment allocation: oldest installment first, interest before
   principal — the same rule used everywhere it matters, including
   historical repayment replay during migration.
+- Credit Assessment: a transparent, weighted risk score (debt-to-income,
+  repayment capacity, customer risk rating, existing arrears), with
+  existing arrears or a HIGH risk rating both forcing human review
+  regardless of how clean the score otherwise looks. Credit Bureau checks
+  are an honest manual attestation, not a fake integration — that needs a
+  real contract with an actual bureau.
+- Guarantor Management: registration/approval/release, guarantee limits
+  enforced against loan principal.
+- Collateral Management: registration/revaluation/release/realisation,
+  gated to approved-or-later loans.
+- Arrears Management: automatic daily classification (Current/1-30/31-
+  60/61-90/90+) via a real scheduled job, Promise-to-Pay recording, and a
+  genuine PAR30 calculation on the Loan report.
+- Penalty Management: fixed or percentage penalties computed server-side
+  from real arrears data, waivers requiring the same authorisation as loan
+  approval.
+- Restructuring, Rescheduling, and Write-Off — all three route through the
+  Approval Workflow; restructure regenerates the remaining schedule using
+  the same amortization function real disbursement relies on.
 
 **Savings**
 - Interest Management: 3 calculation methods (Daily Balance, Average Daily
@@ -165,22 +184,46 @@ system roles already seeded and ready to assign.
 
 ## Not yet built
 
+A full EFS compliance audit (`docs/efs-compliance-audit.md`, ~110 sections
+checked requirement-by-requirement) drives an active 9-phase build plan,
+directly grounded in a real pilot partner's actual Operations Supervisor
+job schedule — each phase maps to something that role genuinely needs day
+to day, not a generic feature list.
+
+**Phase 1 (Loan Servicing, EFS §64-77) is complete** — Credit Assessment,
+Guarantor, Collateral, Arrears, Penalty, Restructuring, Rescheduling,
+Write-Off, all real and tested, described above.
+
+**Remaining phases:**
+- **Phase 2 — Collections in full** (EFS §78-85). The hardest remaining
+  piece in the whole roadmap: offline-capable field collection with local
+  storage, sync, and conflict resolution is genuine, substantial
+  engineering, not a quick add.
+- **Phase 3 — Savings completeness**: fees/charges, account restrictions,
+  standing instructions, statements.
+- **Phase 4 — Cash & Vault Management** (EFS §111-115) — cashbook,
+  withdrawal book, petty cash, vault book, treasury book, cheque tracking.
+- **Phase 5 — General Ledger** (EFS §116-125).
+- **Phase 6 — Payroll** (EFS §206-215) — salaries, GRA, SSNIT, Tier 2.
+- **Phase 7 — Asset Management** (EFS §186-195) — fixed asset register.
+- **Phase 8 — Ghana regulatory reporting** (BOG, GDPC, GAMC, TMA) —
+  deliberately blocked on the pilot partner furnishing the real official
+  templates; building against a guessed format would create false
+  confidence in compliance that isn't real.
+- **Phase 9 — remaining Customer/cross-cutting gaps** from the audit
+  (customer merge workflow, consent management, advanced search, etc.).
+
+**Also open, outside the 9-phase roadmap:**
 - Optimistic-locking conflict rejection has a fully working backend
   (Customer/Employee/Role reject a stale update with a 409), wired into
   those same three edit forms on the frontend.
 - Notification multi-channel (SMS/Email/WhatsApp) — in-app only today;
-  needs a provider decision (Twilio, SendGrid/SES, WhatsApp Business API)
-  before the integration itself can be built.
-- MFA / enhanced security controls — explicitly parked pending a dedicated
-  Enterprise Security Specification.
-- Collections, Share Management, Fixed Deposits, Treasury, General Ledger,
-  Payments modules.
-- Scheduled/automated interest posting — currently staff-triggered; real
-  job-scheduling infrastructure doesn't exist yet.
-- A systematic, section-by-section audit of the full EFS (322 sections)
-  against what's actually built. One section (Customer Registration) got
-  this treatment after a real gap surfaced it and found 3 missing
-  requirements; the rest of the document hasn't had the same check yet.
+  needs a provider decision before the integration itself can be built.
+- MFA / enhanced security controls — parked pending a dedicated Enterprise
+  Security Specification.
+- Scheduled/automated Savings interest posting — currently staff-
+  triggered; the scheduler infrastructure now exists (built for Loan
+  Arrears) but hasn't been wired to this yet.
 
 ## Design decisions worth flagging
 
@@ -194,6 +237,12 @@ system roles already seeded and ready to assign.
   automatically by a Prisma middleware reading the logged-in user from
   request-scoped storage — no route handler sets these manually.
 - Refresh tokens are stored as SHA-256 hashes, never plaintext.
+- The first genuine scheduled-job infrastructure (node-cron, running
+  inside the existing long-lived API process — no separate worker needed
+  at this scale) was built for daily loan arrears classification, and now
+  unblocks other previously scheduler-dependent gaps (Savings dormancy,
+  KYC expiry, watchlist re-screening) as their own bounded future
+  additions on the same pattern.
 - Loan amortization and repayment-allocation logic live in one shared
   library, used by both real-time repayments and Data Migration's
   historical-repayment replay — not two implementations that could drift
