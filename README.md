@@ -215,6 +215,31 @@ real customer data.
   feature) that doesn't exist yet — named honestly rather than faked.
   AI-Based Financial Insights waits on the AI spec.
 
+**Payroll** (in progress)
+- Payroll Configuration: calendars, periods (with real overlap
+  prevention), salary grades, pay groups, earning/deduction codes,
+  overtime rules.
+- Salary Structure Management: employee compensation via the Approval
+  Workflow, a new active structure genuinely supersedes the old one
+  rather than editing it — compensation history for free.
+- The real calculation engine: PAYE and SSNIT/Tier 2, tested exactly
+  against the GRA's own published cumulative-tax figures at every band
+  boundary, not just internally consistent. Confirmed 2026 rates: 7-band
+  monthly PAYE table, SSNIT Employee 5.5%, SSNIT Employer (Tier 1) 8%,
+  Tier 2 Employer 5%, insurable earnings ceiling GHS 69,000/month,
+  minimum GHS 587.79/month.
+- Real frontend forms for creating and activating tax tables (dynamic
+  band rows) and statutory rates (name-locked to prevent a typo breaking
+  the processing engine's exact-name matching) — since these figures
+  genuinely change annually, this is a form submission each year, not a
+  script or a code change.
+- Duplicate payroll processing for the same period blocked by a real
+  database constraint. Exactly one tax table and one of each named
+  statutory rate can be active at a time.
+- Not yet built: Allowance/Deduction wiring to real employee loans,
+  Approval/Disbursement, Payslip/Self-Service, Payroll Accounting (the
+  first real GL auto-posting integration), Reporting/Analytics.
+
 **Accessibility**
 - WCAG AA color contrast (verified programmatically, not eyeballed),
   screen-reader-announced notifications, keyboard focus indicators,
@@ -327,8 +352,14 @@ from every other module into the GL (§116.4's full integration — a
 genuinely separate, later effort), and AI-Based Financial Insights within
 §125 specifically, pending the AI spec.
 
+**Phase 6 (Payroll, EFS §206-215) is in progress** — Payroll
+Configuration (§207), Salary Structure Management (§208), and the
+Processing engine (§210/§212, PAYE and SSNIT/Tier 2) all real and
+described above. Remaining: Allowance/Deduction wiring to real employee
+loans (§209), Approval/Disbursement (§211), Payslip/Self-Service (§213),
+Payroll Accounting (§214), Reporting/Analytics (§215).
+
 **Remaining phases:**
-- **Phase 6 — Payroll** (EFS §206-215) — salaries, GRA, SSNIT, Tier 2.
 - **Phase 7 — Asset Management** (EFS §186-195) — fixed asset register.
 - **Phase 8 — Ghana regulatory reporting** (BOG, GDPC, GAMC, TMA) —
   deliberately blocked on the pilot partner furnishing the real official
