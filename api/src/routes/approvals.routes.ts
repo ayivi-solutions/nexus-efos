@@ -199,6 +199,11 @@ async function applyApproval(request: { id: string; type: string; targetId: stri
       break;
     }
 
+    case "RECURRING_JOURNAL_ACTIVATION": {
+      await prisma.recurringJournal.update({ where: { id: request.targetId }, data: { status: "ACTIVE" } });
+      break;
+    }
+
     case "SAVINGS_RESTRICTION_CREATE": {
       await prisma.savingsRestriction.update({ where: { id: request.targetId }, data: { status: "ACTIVE", approvedById, activatedAt: new Date() } });
       break;
@@ -292,6 +297,9 @@ approvalsRouter.post("/:id/reject", requirePermission("institution.configure"), 
     // resubmitting — unlike a cash variance, there's no reason to force
     // the account and journal to stay locked out of correction.
     await prisma.journal.update({ where: { id: request.targetId }, data: { status: "DRAFT" } });
+  }
+  if (request.type === "RECURRING_JOURNAL_ACTIVATION") {
+    await prisma.recurringJournal.update({ where: { id: request.targetId }, data: { status: "DRAFT" } });
   }
 
   await prisma.approvalRequest.update({

@@ -359,6 +359,12 @@ export const api = {
   createJournal: (data: any) => request("/general-ledger/journals", { method: "POST", body: JSON.stringify(data) }),
   requestJournalPosting: (id: string) => request(`/general-ledger/journals/${id}/request-posting`, { method: "POST" }),
 
+  listRecurringJournals: () => request("/general-ledger/recurring-journals"),
+  createRecurringJournal: (data: any) => request("/general-ledger/recurring-journals", { method: "POST", body: JSON.stringify(data) }),
+  requestRecurringActivation: (id: string) => request(`/general-ledger/recurring-journals/${id}/request-activation`, { method: "POST" }),
+  suspendRecurringJournal: (id: string) => request(`/general-ledger/recurring-journals/${id}/suspend`, { method: "POST" }),
+  reactivateRecurringJournal: (id: string) => request(`/general-ledger/recurring-journals/${id}/reactivate`, { method: "POST" }),
+
   listFiscalYears: () => request("/general-ledger/fiscal-years"),
   createFiscalYear: (data: any) => request("/general-ledger/fiscal-years", { method: "POST", body: JSON.stringify(data) }),
   createFinancialPeriod: (data: any) => request("/general-ledger/financial-periods", { method: "POST", body: JSON.stringify(data) }),

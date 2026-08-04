@@ -97,6 +97,7 @@ model Institution {
   journals                Journal[]
   fiscalYears             FiscalYear[]
   financialPeriods        FinancialPeriod[]
+  recurringJournals       RecurringJournal[]
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -833,6 +834,7 @@ enum ApprovalRequestType {
   CASH_BALANCING_VARIANCE  // doc §115
   JOURNAL_POSTING  // doc §118
   FINANCIAL_PERIOD_REOPEN  // doc §120
+  RECURRING_JOURNAL_ACTIVATION  // doc §122
 
   @@schema("nexus")
 }
@@ -2408,6 +2410,7 @@ enum StandingInstructionFrequency {
   QUARTERLY
   HALF_YEARLY
   ANNUALLY
+  CUSTOM  // doc §122.2 "Custom Schedules" — also usable by Standing Instructions
 
   @@schema("nexus")
 }
@@ -2431,6 +2434,11 @@ model StandingInstruction {
   destinationLoanId   String?                       @map("destination_loan_id") // LOAN_REPAYMENT only
   amount              Decimal                       @db.Decimal(14, 2)
   frequency           StandingInstructionFrequency
+  // Only used when frequency is CUSTOM — added alongside Recurring
+  // Journal Management (§122), which shares this same frequency enum;
+  // without this field, selecting CUSTOM here would silently default to
+  // a meaningless 1-day interval.
+  customIntervalDays  Int?                          @map("custom_interval_days")
   nextExecutionDate   DateTime                      @map("next_execution_date")
   status              StandingInstructionStatus     @default(ACTIVE)
 
@@ -2872,5 +2880,60 @@ model FinancialPeriod {
   createdAt DateTime @default(now()) @map("created_at")
 
   @@map("financial_period")
+  @@schema("nexus")
+}
+
+// doc §122 Recurring Journal Management. §122.3 "Manual overrides require
+// authorisation" is read as: the template itself needs authorised
+// approval to go live (same Approval Workflow pattern as Business Rules
+// activation) — once ACTIVE, each scheduled execution posts automatically
+// without per-run approval, since re-approving an already-approved
+// recurring pattern every single run would defeat the point of
+// automating it.
+enum RecurringJournalStatus {
+  DRAFT
+  PENDING_APPROVAL
+  ACTIVE
+  SUSPENDED
+
+  @@schema("nexus")
+}
+
+model RecurringJournal {
+  id            String                       @id(map: "pk_recurring_journal") @default(uuid())
+  institution   Institution                  @relation(fields: [institutionId], references: [id], onDelete: Cascade, map: "fk_recurring_journal_institution")
+  institutionId String                       @map("institution_id")
+
+  description        String
+  // A snapshot of journal lines: [{ accountId, debit, credit, description }]
+  lineTemplate        Json                         @map("line_template")
+  frequency           StandingInstructionFrequency
+  customIntervalDays  Int?                         @map("custom_interval_days")
+  nextExecutionDate   DateTime                     @map("next_execution_date")
+  status              RecurringJournalStatus       @default(DRAFT)
+
+  maxRetries          Int @default(3) @map("max_retries")
+  consecutiveFailures Int @default(0) @map("consecutive_failures")
+
+  createdById String   @map("created_by_id")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  executions RecurringJournalExecution[]
+
+  @@map("recurring_journal")
+  @@schema("nexus")
+}
+
+model RecurringJournalExecution {
+  id                 String           @id(map: "pk_recurring_journal_execution") @default(uuid())
+  recurringJournal   RecurringJournal @relation(fields: [recurringJournalId], references: [id], onDelete: Cascade, map: "fk_rj_execution_recurring_journal")
+  recurringJournalId String           @map("recurring_journal_id")
+
+  executedAt    DateTime        @default(now()) @map("executed_at")
+  status        ExecutionStatus
+  journalId     String?         @map("journal_id")
+  failureReason String?         @map("failure_reason")
+
+  @@map("recurring_journal_execution")
   @@schema("nexus")
 }

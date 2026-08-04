@@ -10,9 +10,15 @@
 // if the month is shorter" semantics would need more logic than this
 // pass includes; flagged here rather than silently shipped as a
 // non-issue.
-export type SIFrequency = "DAILY" | "WEEKLY" | "FORTNIGHTLY" | "MONTHLY" | "QUARTERLY" | "HALF_YEARLY" | "ANNUALLY";
+export type SIFrequency = "DAILY" | "WEEKLY" | "FORTNIGHTLY" | "MONTHLY" | "QUARTERLY" | "HALF_YEARLY" | "ANNUALLY" | "CUSTOM";
 
-export function nextExecutionDate(from: Date, frequency: SIFrequency): Date {
+// customIntervalDays is only read when frequency is CUSTOM (doc §122.2
+// "Custom Schedules") — extended here rather than forked into a second
+// copy, since Recurring Journal Management (§122) needs the exact same
+// scheduling logic as Standing Instructions (§58), just with one more
+// frequency option. Tested (including regression-checking every existing
+// frequency still behaves identically) before this was wired anywhere.
+export function nextExecutionDate(from: Date, frequency: SIFrequency, customIntervalDays?: number): Date {
   const d = new Date(from);
   switch (frequency) {
     case "DAILY": d.setDate(d.getDate() + 1); break;
@@ -22,6 +28,7 @@ export function nextExecutionDate(from: Date, frequency: SIFrequency): Date {
     case "QUARTERLY": d.setMonth(d.getMonth() + 3); break;
     case "HALF_YEARLY": d.setMonth(d.getMonth() + 6); break;
     case "ANNUALLY": d.setFullYear(d.getFullYear() + 1); break;
+    case "CUSTOM": d.setDate(d.getDate() + (customIntervalDays && customIntervalDays > 0 ? customIntervalDays : 1)); break;
   }
   return d;
 }

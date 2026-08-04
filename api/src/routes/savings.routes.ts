@@ -404,7 +404,8 @@ const createSISchema = z.object({
   destinationAccountId: z.string().optional(),
   destinationLoanId: z.string().optional(),
   amount: z.number().positive(),
-  frequency: z.enum(["DAILY", "WEEKLY", "FORTNIGHTLY", "MONTHLY", "QUARTERLY", "HALF_YEARLY", "ANNUALLY"]),
+  frequency: z.enum(["DAILY", "WEEKLY", "FORTNIGHTLY", "MONTHLY", "QUARTERLY", "HALF_YEARLY", "ANNUALLY", "CUSTOM"]),
+  customIntervalDays: z.number().int().positive().optional(),
   startDate: z.string(),
 });
 
@@ -427,7 +428,8 @@ savingsRouter.post("/standing-instructions", requirePermission("savings.initiate
     data: {
       institutionId: req.auth!.institutionId, type: parsed.data.type as any, sourceAccountId: parsed.data.sourceAccountId,
       destinationAccountId: parsed.data.destinationAccountId, destinationLoanId: parsed.data.destinationLoanId,
-      amount: parsed.data.amount, frequency: parsed.data.frequency as any, nextExecutionDate: new Date(parsed.data.startDate),
+      amount: parsed.data.amount, frequency: parsed.data.frequency as any, customIntervalDays: parsed.data.customIntervalDays,
+      nextExecutionDate: new Date(parsed.data.startDate),
       createdById: req.auth!.userId,
     },
   });

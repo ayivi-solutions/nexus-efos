@@ -11,7 +11,7 @@ export default function GeneralLedgerPage() {
   const toast = useToast();
   const [error, setError] = useState<string | null>(null);
   useErrorToast(error);
-  const [tab, setTab] = useState<"accounts" | "journals" | "periods">("accounts");
+  const [tab, setTab] = useState<"accounts" | "journals" | "periods" | "recurring">("accounts");
 
   const [accounts, setAccounts] = useState<any[]>([]);
   const [journals, setJournals] = useState<any[]>([]);
@@ -20,12 +20,45 @@ export default function GeneralLedgerPage() {
   const [fiscalYears, setFiscalYears] = useState<any[]>([]);
   const [yearForm, setYearForm] = useState({ name: "", startDate: "", endDate: "" });
   const [periodForm, setPeriodForm] = useState({ fiscalYearId: "", name: "", startDate: "", endDate: "" });
+  const [recurringJournals, setRecurringJournals] = useState<any[]>([]);
+  const [recurringForm, setRecurringForm] = useState({ description: "", frequency: "MONTHLY", customIntervalDays: "", startDate: "", lines: [{ accountId: "", debit: "", credit: "" }, { accountId: "", debit: "", credit: "" }] });
   const [busy, setBusy] = useState(false);
 
   function load() {
     api.listGLAccounts().then((r) => setAccounts(r.accounts)).catch((e) => setError(e.message));
     api.listJournals().then((r) => setJournals(r.journals)).catch(() => {});
     api.listFiscalYears().then((r) => setFiscalYears(r.fiscalYears)).catch(() => {});
+    api.listRecurringJournals().then((r) => setRecurringJournals(r.recurringJournals)).catch(() => {});
+  }
+
+  function updateRecurringLine(i: number, key: string, value: string) {
+    setRecurringForm((f) => { const lines = [...f.lines]; lines[i] = { ...lines[i], [key]: value }; return { ...f, lines }; });
+  }
+
+  async function handleCreateRecurring(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy(true); setError(null);
+    try {
+      await api.createRecurringJournal({
+        description: recurringForm.description, frequency: recurringForm.frequency,
+        customIntervalDays: recurringForm.customIntervalDays ? Number(recurringForm.customIntervalDays) : undefined,
+        startDate: recurringForm.startDate,
+        lines: recurringForm.lines.map((l) => ({ accountId: l.accountId, debit: Number(l.debit) || 0, credit: Number(l.credit) || 0 })),
+      });
+      toast.success("Recurring journal created as DRAFT.");
+      setRecurringForm({ description: "", frequency: "MONTHLY", customIntervalDays: "", startDate: "", lines: [{ accountId: "", debit: "", credit: "" }, { accountId: "", debit: "", credit: "" }] });
+      load();
+    } catch (err: any) { setError(err.message || "Could not create recurring journal"); } finally { setBusy(false); }
+  }
+
+  async function handleRecurringAction(id: string, action: "activate" | "suspend" | "reactivate") {
+    setBusy(true); setError(null);
+    try {
+      if (action === "activate") { await api.requestRecurringActivation(id); toast.info("Submitted for approval."); }
+      else if (action === "suspend") await api.suspendRecurringJournal(id);
+      else await api.reactivateRecurringJournal(id);
+      load();
+    } catch (err: any) { setError(err.message || "Could not update recurring journal"); } finally { setBusy(false); }
   }
 
   async function handleCreateFiscalYear(e: React.FormEvent) {
@@ -104,6 +137,7 @@ export default function GeneralLedgerPage() {
           <button onClick={() => setTab("accounts")} className={`btn-text ${tab === "accounts" ? "text-gold-600 font-semibold" : "text-text-muted"}`}>Chart of Accounts</button>
           <button onClick={() => setTab("journals")} className={`btn-text ${tab === "journals" ? "text-gold-600 font-semibold" : "text-text-muted"}`}>Journals</button>
           <button onClick={() => setTab("periods")} className={`btn-text ${tab === "periods" ? "text-gold-600 font-semibold" : "text-text-muted"}`}>Fiscal Periods</button>
+          <button onClick={() => setTab("recurring")} className={`btn-text ${tab === "recurring" ? "text-gold-600 font-semibold" : "text-text-muted"}`}>Recurring Journals</button>
         </div>
 
         {tab === "accounts" && (
@@ -236,6 +270,60 @@ export default function GeneralLedgerPage() {
               </div>
             ))}
             {fiscalYears.length === 0 && <p className="text-text-muted text-sm text-center py-8">No fiscal years created.</p>}
+          </>
+        )}
+        {tab === "recurring" && (
+          <>
+            <form onSubmit={handleCreateRecurring} className="card p-5 mb-6">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-3">
+                <input required placeholder="Description" className="input" value={recurringForm.description} onChange={(e) => setRecurringForm((f) => ({ ...f, description: e.target.value }))} />
+                <select className="input" value={recurringForm.frequency} onChange={(e) => setRecurringForm((f) => ({ ...f, frequency: e.target.value }))}>
+                  {["DAILY", "WEEKLY", "FORTNIGHTLY", "MONTHLY", "QUARTERLY", "HALF_YEARLY", "ANNUALLY", "CUSTOM"].map((fr) => (<option key={fr} value={fr}>{fr}</option>))}
+                </select>
+                <input required type="date" className="input" value={recurringForm.startDate} onChange={(e) => setRecurringForm((f) => ({ ...f, startDate: e.target.value }))} />
+              </div>
+              {recurringForm.frequency === "CUSTOM" && (
+                <input required type="number" min="1" placeholder="Every N days" className="input mb-3 !w-40" value={recurringForm.customIntervalDays} onChange={(e) => setRecurringForm((f) => ({ ...f, customIntervalDays: e.target.value }))} />
+              )}
+              {recurringForm.lines.map((l, i) => (
+                <div key={i} className="grid grid-cols-3 gap-2 mb-2">
+                  <select required className="input !py-1.5" value={l.accountId} onChange={(e) => updateRecurringLine(i, "accountId", e.target.value)}>
+                    <option value="">Account…</option>
+                    {accounts.map((a: any) => (<option key={a.id} value={a.id}>{a.code} — {a.name}</option>))}
+                  </select>
+                  <input type="number" step="0.01" placeholder="Debit" className="input !py-1.5" value={l.debit} onChange={(e) => updateRecurringLine(i, "debit", e.target.value)} />
+                  <input type="number" step="0.01" placeholder="Credit" className="input !py-1.5" value={l.credit} onChange={(e) => updateRecurringLine(i, "credit", e.target.value)} />
+                </div>
+              ))}
+              <div className="flex gap-2 mb-3">
+                <button type="button" onClick={() => setRecurringForm((f) => ({ ...f, lines: [...f.lines, { accountId: "", debit: "", credit: "" }] }))} className="btn-text text-gold-600">+ Add line</button>
+                {recurringForm.lines.length > 2 && <button type="button" onClick={() => setRecurringForm((f) => ({ ...f, lines: f.lines.slice(0, -1) }))} className="btn-text text-rose-600">Remove last</button>}
+              </div>
+              <button type="submit" disabled={busy} className="btn-primary">Create template (as Draft)</button>
+            </form>
+
+            <div className="card overflow-x-auto">
+              <table className="w-full min-w-[720px] text-sm table-modern">
+                <thead><tr><th>Description</th><th>Frequency</th><th>Next run</th><th>Failures</th><th>Status</th><th></th></tr></thead>
+                <tbody>
+                  {recurringJournals.map((rj: any) => (
+                    <tr key={rj.id}>
+                      <td className="text-text-900">{rj.description}</td>
+                      <td className="text-text-700">{rj.frequency}{rj.frequency === "CUSTOM" ? ` (${rj.customIntervalDays}d)` : ""}</td>
+                      <td className="text-text-700">{new Date(rj.nextExecutionDate).toLocaleDateString()}</td>
+                      <td className="text-text-700">{rj.consecutiveFailures}/{rj.maxRetries}</td>
+                      <td><span className={`badge ${rj.status === "ACTIVE" ? "bg-green-100 text-green-600" : rj.status === "SUSPENDED" ? "bg-rose-100 text-rose-600" : rj.status === "PENDING_APPROVAL" ? "bg-gold-500/15 text-gold-600" : "bg-paper-100 text-text-muted"}`}>{rj.status.replaceAll("_", " ")}</span></td>
+                      <td className="whitespace-nowrap space-x-2">
+                        {rj.status === "DRAFT" && <button onClick={() => handleRecurringAction(rj.id, "activate")} className="btn-text text-gold-600">Request activation</button>}
+                        {rj.status === "ACTIVE" && <button onClick={() => handleRecurringAction(rj.id, "suspend")} className="btn-text text-rose-600">Suspend</button>}
+                        {rj.status === "SUSPENDED" && <button onClick={() => handleRecurringAction(rj.id, "reactivate")} className="btn-text text-green-600">Reactivate</button>}
+                      </td>
+                    </tr>
+                  ))}
+                  {recurringJournals.length === 0 && <tr><td colSpan={6} className="text-center text-text-muted text-sm py-8">No recurring journals.</td></tr>}
+                </tbody>
+              </table>
+            </div>
           </>
         )}
       </div>

@@ -4,6 +4,7 @@ import { prisma } from "../lib/prisma";
 import { requireAuth, AuthedRequest } from "../middleware/auth";
 import { requirePermission } from "../middleware/rbac";
 import { isBalanced, generateJournalNumber, findPostablePeriod } from "../lib/generalLedger";
+import { runRecurringJournals } from "../lib/scheduler";
 
 // doc §117 Chart of Accounts, §118 Journal Management, §119 Ledger
 // Posting — the foundational double-entry engine. Deliberately NOT yet
@@ -198,4 +199,75 @@ generalLedgerRouter.post("/financial-periods/:id/lock", requirePermission("insti
   const updated = await prisma.financialPeriod.update({ where: { id: period.id }, data: { status: "LOCKED", lockedById: req.auth!.userId, lockedAt: new Date() } });
   await prisma.auditLog.create({ data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "financial_period.lock", resource: "financial_period", resourceId: period.id } });
   res.json({ period: updated });
+});
+
+// -------------------------------------------------------------------------
+// §122 Recurring Journal Management
+// -------------------------------------------------------------------------
+
+generalLedgerRouter.get("/recurring-journals", requirePermission("reports.view"), async (req: AuthedRequest, res) => {
+  const recurringJournals = await prisma.recurringJournal.findMany({ where: { institutionId: req.auth!.institutionId }, orderBy: { createdAt: "desc" } });
+  res.json({ recurringJournals });
+});
+
+const recurringLineSchema = z.object({ accountId: z.string(), debit: z.number().nonnegative(), credit: z.number().nonnegative() });
+const createRecurringSchema = z.object({
+  description: z.string().min(2), lines: z.array(recurringLineSchema).min(2),
+  frequency: z.enum(["DAILY", "WEEKLY", "FORTNIGHTLY", "MONTHLY", "QUARTERLY", "HALF_YEARLY", "ANNUALLY", "CUSTOM"]),
+  customIntervalDays: z.number().int().positive().optional(),
+  startDate: z.string(),
+});
+
+// §122.3 "Debits equal credits" applies to the template itself, checked
+// with the exact same tested function every other journal uses.
+generalLedgerRouter.post("/recurring-journals", requirePermission("institution.configure"), async (req: AuthedRequest, res) => {
+  const parsed = createRecurringSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+  if (!isBalanced(parsed.data.lines)) return res.status(400).json({ error: "Total debits must equal total credits" });
+
+  const recurringJournal = await prisma.recurringJournal.create({
+    data: {
+      institutionId: req.auth!.institutionId, description: parsed.data.description, lineTemplate: parsed.data.lines as any,
+      frequency: parsed.data.frequency as any, customIntervalDays: parsed.data.customIntervalDays,
+      nextExecutionDate: new Date(parsed.data.startDate), createdById: req.auth!.userId,
+    },
+  });
+
+  await prisma.auditLog.create({ data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "recurring_journal.create", resource: "recurring_journal", resourceId: recurringJournal.id } });
+  res.status(201).json({ recurringJournal });
+});
+
+// §122.3 "Manual overrides require authorisation" — the template needs
+// authorised approval before its scheduled executions can ever run.
+generalLedgerRouter.post("/recurring-journals/:id/request-activation", requirePermission("institution.configure"), async (req: AuthedRequest, res) => {
+  const rj = await prisma.recurringJournal.findFirst({ where: { id: req.params.id, institutionId: req.auth!.institutionId } });
+  if (!rj) return res.status(404).json({ error: "Recurring journal not found" });
+  if (rj.status !== "DRAFT") return res.status(400).json({ error: `Only a DRAFT template can request activation (currently ${rj.status})` });
+
+  await prisma.approvalRequest.create({
+    data: { institutionId: req.auth!.institutionId, type: "RECURRING_JOURNAL_ACTIVATION", targetType: "RecurringJournal", targetId: rj.id, payload: {}, reason: `Activate recurring journal: ${rj.description}`, requestedById: req.auth!.userId },
+  });
+  await prisma.recurringJournal.update({ where: { id: rj.id }, data: { status: "PENDING_APPROVAL" } });
+  res.status(202).json({ pendingApproval: true });
+});
+
+generalLedgerRouter.post("/recurring-journals/:id/suspend", requirePermission("institution.configure"), async (req: AuthedRequest, res) => {
+  const updated = await prisma.recurringJournal.updateMany({ where: { id: req.params.id, institutionId: req.auth!.institutionId }, data: { status: "SUSPENDED" } });
+  if (updated.count === 0) return res.status(404).json({ error: "Not found" });
+  res.json({ ok: true });
+});
+
+generalLedgerRouter.post("/recurring-journals/:id/reactivate", requirePermission("institution.configure"), async (req: AuthedRequest, res) => {
+  const rj = await prisma.recurringJournal.findFirst({ where: { id: req.params.id, institutionId: req.auth!.institutionId } });
+  if (!rj) return res.status(404).json({ error: "Not found" });
+  if (rj.status !== "SUSPENDED") return res.status(400).json({ error: "Only a SUSPENDED template can be reactivated" });
+  const updated = await prisma.recurringJournal.update({ where: { id: rj.id }, data: { status: "ACTIVE", consecutiveFailures: 0, nextExecutionDate: new Date() } });
+  res.json({ recurringJournal: updated });
+});
+
+// Manual trigger — the real check runs automatically at 01:00 (see
+// lib/scheduler.ts); this exists for testing and pilot setup.
+generalLedgerRouter.post("/recurring-journals/run-now", requirePermission("institution.configure"), async (_req: AuthedRequest, res) => {
+  await runRecurringJournals();
+  res.json({ ok: true });
 });

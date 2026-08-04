@@ -12,7 +12,7 @@ export default function StandingInstructionsPage() {
   const [instructions, setInstructions] = useState<any[]>([]);
   const [accounts, setAccounts] = useState<any[]>([]);
   const [loans, setLoans] = useState<any[]>([]);
-  const [form, setForm] = useState({ type: "INTERNAL_TRANSFER", sourceAccountId: "", destinationAccountId: "", destinationLoanId: "", amount: "", frequency: "MONTHLY", startDate: "" });
+  const [form, setForm] = useState({ type: "INTERNAL_TRANSFER", sourceAccountId: "", destinationAccountId: "", destinationLoanId: "", amount: "", frequency: "MONTHLY", customIntervalDays: "", startDate: "" });
   const [busy, setBusy] = useState(false);
 
   function load() {
@@ -26,9 +26,9 @@ export default function StandingInstructionsPage() {
     e.preventDefault();
     setBusy(true); setError(null);
     try {
-      await api.createStandingInstruction({ ...form, amount: Number(form.amount) });
+      await api.createStandingInstruction({ ...form, amount: Number(form.amount), customIntervalDays: form.customIntervalDays ? Number(form.customIntervalDays) : undefined });
       toast.success("Standing instruction created.");
-      setForm({ type: "INTERNAL_TRANSFER", sourceAccountId: "", destinationAccountId: "", destinationLoanId: "", amount: "", frequency: "MONTHLY", startDate: "" });
+      setForm({ type: "INTERNAL_TRANSFER", sourceAccountId: "", destinationAccountId: "", destinationLoanId: "", amount: "", frequency: "MONTHLY", customIntervalDays: "", startDate: "" });
       load();
     } catch (err: any) { setError(err.message || "Could not create instruction"); } finally { setBusy(false); }
   }
@@ -73,8 +73,11 @@ export default function StandingInstructionsPage() {
           )}
           <input required type="number" step="0.01" placeholder="Amount" className="input !w-28" value={form.amount} onChange={(e) => setForm((f) => ({ ...f, amount: e.target.value }))} />
           <select className="input" value={form.frequency} onChange={(e) => setForm((f) => ({ ...f, frequency: e.target.value }))}>
-            {["DAILY", "WEEKLY", "FORTNIGHTLY", "MONTHLY", "QUARTERLY", "HALF_YEARLY", "ANNUALLY"].map((f) => (<option key={f} value={f}>{f}</option>))}
+            {["DAILY", "WEEKLY", "FORTNIGHTLY", "MONTHLY", "QUARTERLY", "HALF_YEARLY", "ANNUALLY", "CUSTOM"].map((f) => (<option key={f} value={f}>{f}</option>))}
           </select>
+          {form.frequency === "CUSTOM" && (
+            <input required type="number" min="1" placeholder="Every N days" className="input !w-32" value={form.customIntervalDays} onChange={(e) => setForm((f) => ({ ...f, customIntervalDays: e.target.value }))} />
+          )}
           <input required type="date" className="input" value={form.startDate} onChange={(e) => setForm((f) => ({ ...f, startDate: e.target.value }))} />
           <button type="submit" disabled={busy} className="btn-primary">Create</button>
         </form>
