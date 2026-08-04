@@ -249,6 +249,19 @@ async function applyApproval(request: { id: string; type: string; targetId: stri
       break;
     }
 
+    // doc §208.3 "Salary changes follow approval workflows" — approving
+    // marks this structure ACTIVE and supersedes whatever was previously
+    // active for the same employee, never deleting it.
+    case "SALARY_STRUCTURE_CHANGE": {
+      const structure = await prisma.employeeSalaryStructure.findUniqueOrThrow({ where: { id: request.targetId } });
+      await prisma.employeeSalaryStructure.updateMany({
+        where: { employeeId: structure.employeeId, institutionId: structure.institutionId, status: "ACTIVE" },
+        data: { status: "SUPERSEDED" },
+      });
+      await prisma.employeeSalaryStructure.update({ where: { id: structure.id }, data: { status: "ACTIVE", approvedById } });
+      break;
+    }
+
     case "SAVINGS_RESTRICTION_CREATE": {
       await prisma.savingsRestriction.update({ where: { id: request.targetId }, data: { status: "ACTIVE", approvedById, activatedAt: new Date() } });
       break;
@@ -345,6 +358,9 @@ approvalsRouter.post("/:id/reject", requirePermission("institution.configure"), 
   }
   if (request.type === "RECURRING_JOURNAL_ACTIVATION") {
     await prisma.recurringJournal.update({ where: { id: request.targetId }, data: { status: "DRAFT" } });
+  }
+  if (request.type === "SALARY_STRUCTURE_CHANGE") {
+    await prisma.employeeSalaryStructure.update({ where: { id: request.targetId }, data: { status: "DRAFT" } });
   }
   if (request.type === "INTER_BRANCH_TRANSFER") {
     await prisma.interBranchTransfer.update({ where: { id: request.targetId }, data: { status: "REJECTED" } });

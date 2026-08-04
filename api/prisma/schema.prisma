@@ -100,6 +100,16 @@ model Institution {
   recurringJournals       RecurringJournal[]
   branchSettlementAccounts BranchSettlementAccount[]
   interBranchTransfers    InterBranchTransfer[]
+  payrollCalendars        PayrollCalendar[]
+  payrollPeriods          PayrollPeriod[]
+  salaryGrades            SalaryGrade[]
+  payGroups               PayGroup[]
+  earningCodes            EarningCode[]
+  deductionCodes          DeductionCode[]
+  taxTables               TaxTable[]
+  statutoryContributionRates StatutoryContributionRate[]
+  employeeSalaryStructures EmployeeSalaryStructure[]
+  overtimeRules           OvertimeRule[]
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -838,6 +848,7 @@ enum ApprovalRequestType {
   FINANCIAL_PERIOD_REOPEN  // doc §120
   RECURRING_JOURNAL_ACTIVATION  // doc §122
   INTER_BRANCH_TRANSFER  // doc §121
+  SALARY_STRUCTURE_CHANGE  // doc §208
 
   @@schema("nexus")
 }
@@ -2993,5 +3004,281 @@ model InterBranchTransfer {
   createdAt     DateTime @default(now()) @map("created_at")
 
   @@map("inter_branch_transfer")
+  @@schema("nexus")
+}
+
+// doc §206-208 Payroll Management: Overview, Configuration, Salary
+// Structure. §212 Statutory Compliance's actual rates are deliberately
+// NOT populated here — the schema/structure exists so configuration is
+// real infrastructure, not a placeholder, but no PAYE/SSNIT/Tier 2
+// calculation happens anywhere in this codebase until the person confirms
+// the exact, current, authoritative GRA/SSNIT figures. Building the
+// calculation engine against unconfirmed or conflicting rates found via
+// web search would risk real financial and legal consequences for real
+// employees' pay and the institution's statutory filings.
+enum PayFrequency {
+  MONTHLY
+  BI_WEEKLY
+  WEEKLY
+
+  @@schema("nexus")
+}
+
+model PayrollCalendar {
+  id            String       @id(map: "pk_payroll_calendar") @default(uuid())
+  institution   Institution  @relation(fields: [institutionId], references: [id], onDelete: Cascade, map: "fk_payroll_calendar_institution")
+  institutionId String       @map("institution_id")
+
+  name         String
+  frequency    PayFrequency
+  payDayOfMonth Int?         @map("pay_day_of_month") // for MONTHLY — which calendar day salaries are paid
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  periods PayrollPeriod[]
+
+  @@map("payroll_calendar")
+  @@schema("nexus")
+}
+
+enum PayrollPeriodStatus {
+  OPEN
+  PROCESSING
+  PENDING_APPROVAL
+  APPROVED
+  PAID
+  CLOSED
+
+  @@schema("nexus")
+}
+
+// §207.3 "Payroll periods cannot overlap" — enforced in the route, same
+// discipline as Financial Periods (§120).
+model PayrollPeriod {
+  id            String              @id(map: "pk_payroll_period") @default(uuid())
+  institution   Institution         @relation(fields: [institutionId], references: [id], onDelete: Cascade, map: "fk_payroll_period_institution")
+  institutionId String              @map("institution_id")
+  calendar      PayrollCalendar     @relation(fields: [calendarId], references: [id], onDelete: Restrict, map: "fk_payroll_period_calendar")
+  calendarId    String              @map("calendar_id")
+
+  name      String
+  startDate DateTime              @map("start_date")
+  endDate   DateTime              @map("end_date")
+  payDate   DateTime              @map("pay_date")
+  status    PayrollPeriodStatus   @default(OPEN)
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("payroll_period")
+  @@schema("nexus")
+}
+
+model SalaryGrade {
+  id            String      @id(map: "pk_salary_grade") @default(uuid())
+  institution   Institution @relation(fields: [institutionId], references: [id], onDelete: Cascade, map: "fk_salary_grade_institution")
+  institutionId String      @map("institution_id")
+
+  name      String
+  minSalary Decimal @map("min_salary") @db.Decimal(12, 2)
+  maxSalary Decimal @map("max_salary") @db.Decimal(12, 2)
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@unique([institutionId, name], map: "uq_salary_grade_institution_name")
+  @@map("salary_grade")
+  @@schema("nexus")
+}
+
+model PayGroup {
+  id            String      @id(map: "pk_pay_group") @default(uuid())
+  institution   Institution @relation(fields: [institutionId], references: [id], onDelete: Cascade, map: "fk_pay_group_institution")
+  institutionId String      @map("institution_id")
+
+  name       String
+  calendarId String @map("calendar_id")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@unique([institutionId, name], map: "uq_pay_group_institution_name")
+  @@map("pay_group")
+  @@schema("nexus")
+}
+
+enum EarningCategory {
+  BASIC
+  ALLOWANCE
+  BONUS
+  OVERTIME
+  OTHER
+
+  @@schema("nexus")
+}
+
+// §209.2's named allowance types (Housing, Transport, Risk, Medical) are
+// all just EarningCodes with category=ALLOWANCE — a configurable list,
+// not hardcoded enum values, since institutions genuinely differ here.
+model EarningCode {
+  id            String           @id(map: "pk_earning_code") @default(uuid())
+  institution   Institution      @relation(fields: [institutionId], references: [id], onDelete: Cascade, map: "fk_earning_code_institution")
+  institutionId String           @map("institution_id")
+
+  code     String
+  name     String
+  category EarningCategory
+  // Whether this earning is subject to PAYE — real, load-bearing for the
+  // future tax calculation, decided at configuration time per earning
+  // type, not assumed uniformly.
+  taxable  Boolean          @default(true)
+  active   Boolean          @default(true)
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@unique([institutionId, code], map: "uq_earning_code_institution_code")
+  @@map("earning_code")
+  @@schema("nexus")
+}
+
+enum DeductionCategory {
+  STATUTORY
+  LOAN
+  INSURANCE
+  UNION
+  OTHER
+
+  @@schema("nexus")
+}
+
+model DeductionCode {
+  id            String            @id(map: "pk_deduction_code") @default(uuid())
+  institution   Institution       @relation(fields: [institutionId], references: [id], onDelete: Cascade, map: "fk_deduction_code_institution")
+  institutionId String            @map("institution_id")
+
+  code     String
+  name     String
+  category DeductionCategory
+  active   Boolean           @default(true)
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@unique([institutionId, code], map: "uq_deduction_code_institution_code")
+  @@map("deduction_code")
+  @@schema("nexus")
+}
+
+// §207.2 "Tax Tables" — the real shape (named table, effective date,
+// ordered bands with rates) exists so this is genuine infrastructure, but
+// deliberately shipped with zero bands populated. No route anywhere
+// computes tax from this yet — that's §210/§212, blocked on confirmed
+// rates.
+model TaxTable {
+  id            String      @id(map: "pk_tax_table") @default(uuid())
+  institution   Institution @relation(fields: [institutionId], references: [id], onDelete: Cascade, map: "fk_tax_table_institution")
+  institutionId String      @map("institution_id")
+
+  name          String
+  effectiveDate DateTime @map("effective_date")
+  active        Boolean  @default(false) // deliberately defaults to inactive — nothing should compute from an unconfirmed table
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  bands TaxBand[]
+
+  @@map("tax_table")
+  @@schema("nexus")
+}
+
+model TaxBand {
+  id         String   @id(map: "pk_tax_band") @default(uuid())
+  taxTable   TaxTable @relation(fields: [taxTableId], references: [id], onDelete: Cascade, map: "fk_tax_band_tax_table")
+  taxTableId String   @map("tax_table_id")
+
+  sequence   Int
+  lowerBound Decimal  @map("lower_bound") @db.Decimal(14, 2)
+  upperBound Decimal? @map("upper_bound") // null = no upper bound, the top band
+  rate       Decimal  @db.Decimal(5, 2) // a percentage, e.g. 17.50
+
+  @@map("tax_band")
+  @@schema("nexus")
+}
+
+// §212.2 "Social Security Contributions" / "Pension Contributions" — same
+// deliberate non-population as TaxTable, for the same reason.
+model StatutoryContributionRate {
+  id            String      @id(map: "pk_statutory_contribution_rate") @default(uuid())
+  institution   Institution @relation(fields: [institutionId], references: [id], onDelete: Cascade, map: "fk_statutory_contribution_rate_institution")
+  institutionId String      @map("institution_id")
+
+  name          String   // e.g. "SSNIT Employee", "SSNIT Employer", "Tier 2 Employer"
+  rate          Decimal  @db.Decimal(5, 2)
+  ceiling       Decimal? @db.Decimal(14, 2) // e.g. the SSNIT insurable earnings ceiling, if applicable
+  effectiveDate DateTime @map("effective_date")
+  active        Boolean  @default(false)
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("statutory_contribution_rate")
+  @@schema("nexus")
+}
+
+model OvertimeRule {
+  id            String      @id(map: "pk_overtime_rule") @default(uuid())
+  institution   Institution @relation(fields: [institutionId], references: [id], onDelete: Cascade, map: "fk_overtime_rule_institution")
+  institutionId String      @map("institution_id")
+
+  name       String
+  multiplier Decimal @db.Decimal(4, 2) // e.g. 1.50 for time-and-a-half, 2.00 for double time
+  active     Boolean @default(true)
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("overtime_rule")
+  @@schema("nexus")
+}
+
+// doc §208 Salary Structure Management. A new record supersedes the
+// previous one rather than editing in place — §208.3 "Historical salary
+// records remain available" comes for free from this, the same pattern
+// used for Loan Restructuring and Journal reversals.
+enum SalaryStructureStatus {
+  DRAFT
+  PENDING_APPROVAL
+  ACTIVE
+  SUPERSEDED
+
+  @@schema("nexus")
+}
+
+model EmployeeSalaryStructure {
+  id            String                 @id(map: "pk_employee_salary_structure") @default(uuid())
+  institution   Institution            @relation(fields: [institutionId], references: [id], onDelete: Cascade, map: "fk_employee_salary_structure_institution")
+  institutionId String                 @map("institution_id")
+
+  employeeId    String
+  payGroupId    String?  @map("pay_group_id")
+  salaryGradeId String?  @map("salary_grade_id")
+  basicSalary   Decimal  @map("basic_salary") @db.Decimal(12, 2)
+  effectiveDate DateTime @map("effective_date")
+  status        SalaryStructureStatus @default(DRAFT)
+
+  createdById  String  @map("created_by_id")
+  approvedById String? @map("approved_by_id")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  allowances EmployeeAllowance[]
+
+  @@map("employee_salary_structure")
+  @@schema("nexus")
+}
+
+model EmployeeAllowance {
+  id                        String                  @id(map: "pk_employee_allowance") @default(uuid())
+  salaryStructure           EmployeeSalaryStructure @relation(fields: [employeeSalaryStructureId], references: [id], onDelete: Cascade, map: "fk_employee_allowance_salary_structure")
+  employeeSalaryStructureId String                  @map("employee_salary_structure_id")
+  earningCodeId             String                  @map("earning_code_id")
+
+  amount             Decimal @db.Decimal(12, 2) // a flat amount, or a percentage if isPercentageOfBasic
+  isPercentageOfBasic Boolean @default(false) @map("is_percentage_of_basic")
+
+  @@map("employee_allowance")
   @@schema("nexus")
 }
