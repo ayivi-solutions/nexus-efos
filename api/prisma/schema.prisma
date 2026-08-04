@@ -3212,6 +3212,7 @@ model StatutoryContributionRate {
   name          String   // e.g. "SSNIT Employee", "SSNIT Employer", "Tier 2 Employer"
   rate          Decimal  @db.Decimal(5, 2)
   ceiling       Decimal? @db.Decimal(14, 2) // e.g. the SSNIT insurable earnings ceiling, if applicable
+  minimum       Decimal? @db.Decimal(14, 2) // e.g. the SSNIT minimum insurable earning floor, if applicable
   effectiveDate DateTime @map("effective_date")
   active        Boolean  @default(false)
 

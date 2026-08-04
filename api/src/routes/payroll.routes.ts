@@ -165,12 +165,12 @@ payrollRouter.get("/statutory-rates", requirePermission("reports.view"), async (
   res.json({ rates });
 });
 
-const statutoryRateSchema = z.object({ name: z.string().min(1), rate: z.number().min(0).max(100), ceiling: z.number().positive().optional(), effectiveDate: z.string() });
+const statutoryRateSchema = z.object({ name: z.string().min(1), rate: z.number().min(0).max(100), ceiling: z.number().positive().optional(), minimum: z.number().nonnegative().optional(), effectiveDate: z.string() });
 
 payrollRouter.post("/statutory-rates", requirePermission("institution.configure"), async (req: AuthedRequest, res) => {
   const parsed = statutoryRateSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
-  const rate = await prisma.statutoryContributionRate.create({ data: { institutionId: req.auth!.institutionId, name: parsed.data.name, rate: parsed.data.rate, ceiling: parsed.data.ceiling, effectiveDate: new Date(parsed.data.effectiveDate), active: false } });
+  const rate = await prisma.statutoryContributionRate.create({ data: { institutionId: req.auth!.institutionId, name: parsed.data.name, rate: parsed.data.rate, ceiling: parsed.data.ceiling, minimum: parsed.data.minimum, effectiveDate: new Date(parsed.data.effectiveDate), active: false } });
   await prisma.auditLog.create({ data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "statutory_rate.create", resource: "statutory_contribution_rate", resourceId: rate.id } });
   res.status(201).json({ rate });
 });
@@ -326,9 +326,9 @@ payrollRouter.post("/periods/:periodId/process", requirePermission("institution.
     const grossPay = round2(basicSalary + totalAllowances);
     const taxableIncome = round2(basicSalary + taxableAllowances);
     const paye = calculatePAYE(taxableIncome, bands);
-    const ssnitEmployee = calculateStatutoryContribution(basicSalary, Number(ssnitEmployeeRate.rate), ssnitEmployeeRate.ceiling ? Number(ssnitEmployeeRate.ceiling) : null, null);
-    const ssnitEmployerTier1 = calculateStatutoryContribution(basicSalary, Number(ssnitEmployerRate.rate), ssnitEmployerRate.ceiling ? Number(ssnitEmployerRate.ceiling) : null, null);
-    const tier2Employer = calculateStatutoryContribution(basicSalary, Number(tier2Rate.rate), tier2Rate.ceiling ? Number(tier2Rate.ceiling) : null, null);
+    const ssnitEmployee = calculateStatutoryContribution(basicSalary, Number(ssnitEmployeeRate.rate), ssnitEmployeeRate.ceiling ? Number(ssnitEmployeeRate.ceiling) : null, ssnitEmployeeRate.minimum ? Number(ssnitEmployeeRate.minimum) : null);
+    const ssnitEmployerTier1 = calculateStatutoryContribution(basicSalary, Number(ssnitEmployerRate.rate), ssnitEmployerRate.ceiling ? Number(ssnitEmployerRate.ceiling) : null, ssnitEmployerRate.minimum ? Number(ssnitEmployerRate.minimum) : null);
+    const tier2Employer = calculateStatutoryContribution(basicSalary, Number(tier2Rate.rate), tier2Rate.ceiling ? Number(tier2Rate.ceiling) : null, tier2Rate.minimum ? Number(tier2Rate.minimum) : null);
     const netPay = round2(grossPay - paye - ssnitEmployee);
 
     entries.push({ employeeId: structure.employeeId, basicSalary, grossPay, taxableIncome, paye, ssnitEmployee, ssnitEmployerTier1, tier2Employer, otherDeductions: 0, netPay });
