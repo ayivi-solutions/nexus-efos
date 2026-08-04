@@ -381,6 +381,10 @@ export const api = {
   requestInterBranchTransfer: (data: any) => request("/inter-branch/transfers", { method: "POST", body: JSON.stringify(data) }),
   getOutstandingBalances: () => request("/inter-branch/reports/outstanding-balances"),
 
+  getProfitabilityTrend: (months?: number) => request(`/analytics/trends/profitability${months ? `?months=${months}` : ""}`),
+  getNetIncomeForecast: (months?: number) => request(`/analytics/forecast/net-income${months ? `?months=${months}` : ""}`),
+  getBranchPerformance: () => request("/analytics/branch-performance"),
+
   listFiscalYears: () => request("/general-ledger/fiscal-years"),
   createFiscalYear: (data: any) => request("/general-ledger/fiscal-years", { method: "POST", body: JSON.stringify(data) }),
   createFinancialPeriod: (data: any) => request("/general-ledger/financial-periods", { method: "POST", body: JSON.stringify(data) }),

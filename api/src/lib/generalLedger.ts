@@ -77,3 +77,25 @@ export function aggregateBalancesAsOf(lines: LedgerLineForAggregation[]): Map<st
 // date range rather than everything since inception. Same function,
 // different input — not a second implementation.
 export const aggregateBalancesForPeriod = aggregateBalancesAsOf;
+
+// doc §125.2 "Financial Forecasting" — a genuine, disclosed technique:
+// simple linear regression (least squares) over recent historical
+// periods, projecting forward. This is NOT machine learning and isn't
+// presented as such — it's an honest, transparent trend line, clearly
+// labeled wherever it's shown, standing in until the AI spec lands and a
+// real predictive model can be layered on top of the same underlying
+// data this produces.
+export function linearTrendForecast(values: number[]): { slope: number; intercept: number; nextValue: number } {
+  const n = values.length;
+  if (n < 2) return { slope: 0, intercept: values[0] || 0, nextValue: values[0] || 0 };
+  const xs = values.map((_, i) => i);
+  const sumX = xs.reduce((s, x) => s + x, 0);
+  const sumY = values.reduce((s, y) => s + y, 0);
+  const sumXY = xs.reduce((s, x, i) => s + x * values[i], 0);
+  const sumXX = xs.reduce((s, x) => s + x * x, 0);
+  const denom = n * sumXX - sumX * sumX;
+  const slope = denom === 0 ? 0 : (n * sumXY - sumX * sumY) / denom;
+  const intercept = (sumY - slope * sumX) / n;
+  const nextValue = round2(slope * n + intercept);
+  return { slope: round2(slope), intercept: round2(intercept), nextValue };
+}
