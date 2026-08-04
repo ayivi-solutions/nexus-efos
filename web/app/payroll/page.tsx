@@ -25,6 +25,8 @@ export default function PayrollPage() {
   const [statutoryRates, setStatutoryRates] = useState<any[]>([]);
   const [runs, setRuns] = useState<any[]>([]);
   const [selectedRun, setSelectedRun] = useState<any>(null);
+  const [taxTableForm, setTaxTableForm] = useState({ name: "", effectiveDate: "", bands: [{ lowerBound: "0", upperBound: "", rate: "" }] });
+  const [statutoryRateForm, setStatutoryRateForm] = useState({ name: "SSNIT Employee", rate: "", ceiling: "", minimum: "", effectiveDate: "" });
 
   const [calForm, setCalForm] = useState({ name: "", frequency: "MONTHLY", payDayOfMonth: "" });
   const [periodForm, setPeriodForm] = useState({ calendarId: "", name: "", startDate: "", endDate: "", payDate: "" });
@@ -68,6 +70,54 @@ export default function PayrollPage() {
   async function viewRun(id: string) {
     try { const res = await api.getPayrollRun(id); setSelectedRun(res.run); } catch (err: any) { setError(err.message); }
   }
+
+  function updateBandRow(i: number, key: string, value: string) {
+    setTaxTableForm((f) => { const bands = [...f.bands]; bands[i] = { ...bands[i], [key]: value }; return { ...f, bands }; });
+  }
+  function addBandRow() {
+    setTaxTableForm((f) => {
+      // A new row's lower bound defaults to the previous row's upper
+      // bound, since bands are meant to sit end-to-end with no gaps.
+      const lastUpper = f.bands[f.bands.length - 1]?.upperBound || "";
+      return { ...f, bands: [...f.bands, { lowerBound: lastUpper, upperBound: "", rate: "" }] };
+    });
+  }
+  function removeBandRow(i: number) {
+    setTaxTableForm((f) => ({ ...f, bands: f.bands.filter((_, idx) => idx !== i) }));
+  }
+
+  async function handleCreateTaxTable(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy(true); setError(null);
+    try {
+      const bands = taxTableForm.bands.map((b, i) => ({
+        sequence: i + 1, lowerBound: Number(b.lowerBound),
+        upperBound: b.upperBound ? Number(b.upperBound) : undefined, // blank = open-ended top band
+        rate: Number(b.rate),
+      }));
+      await api.createTaxTable({ name: taxTableForm.name, effectiveDate: taxTableForm.effectiveDate, bands });
+      toast.success("Tax table created. Activate it from the list below when ready.");
+      setTaxTableForm({ name: "", effectiveDate: "", bands: [{ lowerBound: "0", upperBound: "", rate: "" }] });
+      load();
+    } catch (err: any) { setError(err.message || "Could not create tax table"); } finally { setBusy(false); }
+  }
+
+  async function handleCreateStatutoryRate(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy(true); setError(null);
+    try {
+      await api.createStatutoryRate({
+        name: statutoryRateForm.name, rate: Number(statutoryRateForm.rate),
+        ceiling: statutoryRateForm.ceiling ? Number(statutoryRateForm.ceiling) : undefined,
+        minimum: statutoryRateForm.minimum ? Number(statutoryRateForm.minimum) : undefined,
+        effectiveDate: statutoryRateForm.effectiveDate,
+      });
+      toast.success("Statutory rate created. Activate it from the list below when ready.");
+      setStatutoryRateForm({ name: "SSNIT Employee", rate: "", ceiling: "", minimum: "", effectiveDate: "" });
+      load();
+    } catch (err: any) { setError(err.message || "Could not create statutory rate"); } finally { setBusy(false); }
+  }
+
   useEffect(() => { load(); }, []);
 
   async function submit(fn: () => Promise<any>, resetFn: () => void, successMsg: string) {
@@ -192,7 +242,28 @@ export default function PayrollPage() {
 
         {tab === "tax" && (
           <>
-            <p className="text-[12.5px] text-text-muted mb-4">Confirmed against the GRA's own published cumulative-tax figures and tested exactly before this went live. Only ONE tax table can be active at a time — activating a new one deactivates whichever was active before.</p>
+            <p className="text-[12.5px] text-text-muted mb-4">Confirmed against the GRA's own published cumulative-tax figures and tested exactly before this went live. Only ONE tax table can be active at a time — activating a new one deactivates whichever was active before. When GRA revises the bands (as they do periodically), create a new table below rather than editing an old one — the previous table stays on file for historical reference.</p>
+
+            <form onSubmit={handleCreateTaxTable} className="card p-4 mb-6">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
+                <input required placeholder="Name (e.g. GRA PAYE 2027)" className="input" value={taxTableForm.name} onChange={(e) => setTaxTableForm((f) => ({ ...f, name: e.target.value }))} />
+                <input required type="date" className="input" value={taxTableForm.effectiveDate} onChange={(e) => setTaxTableForm((f) => ({ ...f, effectiveDate: e.target.value }))} />
+              </div>
+              <div className="text-[11px] text-text-muted mb-2">Leave the last row's upper bound blank for the open-ended top band.</div>
+              {taxTableForm.bands.map((b, i) => (
+                <div key={i} className="grid grid-cols-4 gap-2 mb-2 items-center">
+                  <input required type="number" step="0.01" placeholder="Lower bound" className="input !py-1.5" value={b.lowerBound} onChange={(e) => updateBandRow(i, "lowerBound", e.target.value)} />
+                  <input type="number" step="0.01" placeholder="Upper bound (blank = open)" className="input !py-1.5" value={b.upperBound} onChange={(e) => updateBandRow(i, "upperBound", e.target.value)} />
+                  <input required type="number" step="0.01" placeholder="Rate %" className="input !py-1.5" value={b.rate} onChange={(e) => updateBandRow(i, "rate", e.target.value)} />
+                  {taxTableForm.bands.length > 1 && <button type="button" onClick={() => removeBandRow(i)} className="btn-text text-rose-600 !text-[11px]">Remove</button>}
+                </div>
+              ))}
+              <div className="flex gap-2 mb-3 mt-2">
+                <button type="button" onClick={addBandRow} className="btn-text text-gold-600">+ Add band</button>
+              </div>
+              <button type="submit" disabled={busy} className="btn-primary">Create Tax Table</button>
+            </form>
+
             <div className="space-y-3">
               {taxTables.map((t: any) => (
                 <div key={t.id} className="card p-4">
@@ -215,7 +286,21 @@ export default function PayrollPage() {
 
         {tab === "statutory" && (
           <>
-            <p className="text-[12.5px] text-text-muted mb-4">Confirmed 2026 rates: SSNIT Employee 5.5%, SSNIT Employer (Tier 1) 8%, Tier 2 Employer 5% — combined employer 13%, combined total 18.5%. Ceiling GHS 69,000/month, minimum GHS 587.79/month. Names must be exactly "SSNIT Employee", "SSNIT Employer Tier 1", "Tier 2 Employer" for payroll processing to find them.</p>
+            <p className="text-[12.5px] text-text-muted mb-4">Confirmed 2026 rates: SSNIT Employee 5.5%, SSNIT Employer (Tier 1) 8%, Tier 2 Employer 5% — combined employer 13%, combined total 18.5%. Ceiling GHS 69,000/month, minimum GHS 587.79/month. Names must be exactly "SSNIT Employee", "SSNIT Employer Tier 1", "Tier 2 Employer" for payroll processing to find them. When SSNIT revises the ceiling (they do this annually, per their own published notices), create a new rate below rather than editing the old one.</p>
+
+            <form onSubmit={handleCreateStatutoryRate} className="card p-4 mb-6 flex flex-wrap items-end gap-3">
+              <select className="input" value={statutoryRateForm.name} onChange={(e) => setStatutoryRateForm((f) => ({ ...f, name: e.target.value }))}>
+                <option value="SSNIT Employee">SSNIT Employee</option>
+                <option value="SSNIT Employer Tier 1">SSNIT Employer Tier 1</option>
+                <option value="Tier 2 Employer">Tier 2 Employer</option>
+              </select>
+              <input required type="number" step="0.01" placeholder="Rate %" className="input !w-28" value={statutoryRateForm.rate} onChange={(e) => setStatutoryRateForm((f) => ({ ...f, rate: e.target.value }))} />
+              <input type="number" step="0.01" placeholder="Ceiling (GHS)" className="input !w-36" value={statutoryRateForm.ceiling} onChange={(e) => setStatutoryRateForm((f) => ({ ...f, ceiling: e.target.value }))} />
+              <input type="number" step="0.01" placeholder="Minimum (GHS)" className="input !w-36" value={statutoryRateForm.minimum} onChange={(e) => setStatutoryRateForm((f) => ({ ...f, minimum: e.target.value }))} />
+              <input required type="date" className="input" value={statutoryRateForm.effectiveDate} onChange={(e) => setStatutoryRateForm((f) => ({ ...f, effectiveDate: e.target.value }))} />
+              <button type="submit" disabled={busy} className="btn-primary">Create</button>
+            </form>
+
             <div className="card overflow-x-auto">
               <table className="w-full text-sm table-modern">
                 <thead><tr><th>Name</th><th>Rate</th><th>Ceiling</th><th>Status</th><th></th></tr></thead>
