@@ -195,9 +195,13 @@ real customer data.
   available platform-wide, currently used by Financial Statements;
   retrofitting the Loan/Savings/Collections reports to the same standard
   is real, separate work still ahead.
+- GL Reporting: Account Activity Report (a per-account statement with a
+  running balance), Branch and Period breakdowns, and an Executive
+  Dashboard. Report generation is genuinely audited — a gap that existed
+  across every report in the platform until this pass closed it here.
 - Not yet wired: automatic posting from Savings, Loans, or Cash & Vault
   into the GL (a real, separate integration effort) — and Inter-Branch
-  Accounting, GL Reporting, and Financial Analytics are still ahead.
+  Accounting and Financial Analytics are still ahead.
 
 **Accessibility**
 - WCAG AA color contrast (verified programmatically, not eyeballed),
@@ -302,12 +306,12 @@ book as named EFS sub-concepts are covered by the same Vault ledger
 mechanism rather than separate models — a petty cash fund is a vault with
 a smaller balance, not a structurally different thing.
 
-**Phase 5 (General Ledger, EFS §116-125) is in progress, 5 of 8 sections
+**Phase 5 (General Ledger, EFS §116-125) is in progress, 7 of 8 sections
 live** — Chart of Accounts, Journal Management, Ledger Posting, Financial
-Period Management, Recurring Journal Management, and Financial Statement
-Management all real and described above. Remaining: Inter-Branch
-Accounting (§121), GL Reporting (§124), Financial Analytics (§125, AI
-portions pending the AI spec), and wiring automatic posting from every
+Period Management, Recurring Journal Management, Financial Statement
+Management, and GL Reporting all real and described above. Remaining:
+Inter-Branch Accounting (§121), Financial Analytics (§125, AI portions
+pending the AI spec), and wiring automatic posting from every
 other module into the GL (§116.4's full integration — a genuinely
 separate, later effort).
 
