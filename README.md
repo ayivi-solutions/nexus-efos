@@ -166,6 +166,24 @@ real customer data.
   Vault data is fully captured (ledger entries, transfers, balancings)
   but doesn't have its own dedicated report page yet.
 
+**General Ledger** (in progress)
+- Chart of Accounts, Journal Management, and Ledger Posting: a real
+  double-entry engine. Debit=credit and standard balance-effect logic
+  (which side of which account category a debit vs. credit increases)
+  tested against 14 scenarios, including a real accounting scenario,
+  before touching a route.
+- Financial Period Management: closed/locked periods block journal
+  creation and are re-checked again at posting-approval time, not just
+  at creation.
+- Recurring Journal Management: templates activated via the Approval
+  Workflow, each scheduled execution posts a real journal automatically,
+  respecting period status and account activity, with a tested retry-
+  and-auto-suspend policy.
+- Not yet wired: automatic posting from Savings, Loans, or Cash & Vault
+  into the GL (a real, separate integration effort) — and Inter-Branch
+  Accounting, Financial Statements, GL Reporting, and Financial Analytics
+  are still ahead.
+
 **Accessibility**
 - WCAG AA color contrast (verified programmatically, not eyeballed),
   screen-reader-announced notifications, keyboard focus indicators,
@@ -269,8 +287,16 @@ book as named EFS sub-concepts are covered by the same Vault ledger
 mechanism rather than separate models — a petty cash fund is a vault with
 a smaller balance, not a structurally different thing.
 
+**Phase 5 (General Ledger, EFS §116-125) is in progress** — Chart of
+Accounts, Journal Management, Ledger Posting, Financial Period
+Management, and Recurring Journal Management all real and described
+above. Remaining: Inter-Branch Accounting (§121), Financial Statement
+Management (§123), GL Reporting (§124), Financial Analytics (§125, AI
+portions pending the AI spec), and wiring automatic posting from every
+other module into the GL (§116.4's full integration — a genuinely
+separate, later effort).
+
 **Remaining phases:**
-- **Phase 5 — General Ledger** (EFS §116-125).
 - **Phase 6 — Payroll** (EFS §206-215) — salaries, GRA, SSNIT, Tier 2.
 - **Phase 7 — Asset Management** (EFS §186-195) — fixed asset register.
 - **Phase 8 — Ghana regulatory reporting** (BOG, GDPC, GAMC, TMA) —
