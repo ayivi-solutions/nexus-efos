@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { useErrorToast, useToast } from "@/components/Toast";
 import { AppShell } from "@/components/AppShell";
+import { ReportRangeSelector } from "@/components/ReportRangeSelector";
 
 const CATEGORIES = ["ASSET", "LIABILITY", "EQUITY", "INCOME", "EXPENSE"];
 
@@ -11,7 +12,7 @@ export default function GeneralLedgerPage() {
   const toast = useToast();
   const [error, setError] = useState<string | null>(null);
   useErrorToast(error);
-  const [tab, setTab] = useState<"accounts" | "journals" | "periods" | "recurring">("accounts");
+  const [tab, setTab] = useState<"accounts" | "journals" | "periods" | "recurring" | "statements">("accounts");
 
   const [accounts, setAccounts] = useState<any[]>([]);
   const [journals, setJournals] = useState<any[]>([]);
@@ -22,7 +23,25 @@ export default function GeneralLedgerPage() {
   const [periodForm, setPeriodForm] = useState({ fiscalYearId: "", name: "", startDate: "", endDate: "" });
   const [recurringJournals, setRecurringJournals] = useState<any[]>([]);
   const [recurringForm, setRecurringForm] = useState({ description: "", frequency: "MONTHLY", customIntervalDays: "", startDate: "", lines: [{ accountId: "", debit: "", credit: "" }, { accountId: "", debit: "", credit: "" }] });
+  const [statementType, setStatementType] = useState<"trial-balance" | "balance-sheet" | "income-statement" | "changes-in-equity">("trial-balance");
+  const [rangeId, setRangeId] = useState("THIS_MONTH");
+  const [customFrom, setCustomFrom] = useState("");
+  const [customTo, setCustomTo] = useState("");
+  const [statementData, setStatementData] = useState<any>(null);
+  const [statementLoading, setStatementLoading] = useState(false);
   const [busy, setBusy] = useState(false);
+
+  async function loadStatement() {
+    if (rangeId === "CUSTOM" && (!customFrom || !customTo)) return;
+    setStatementLoading(true); setError(null);
+    try {
+      const fn = statementType === "trial-balance" ? api.getTrialBalance : statementType === "balance-sheet" ? api.getBalanceSheet : statementType === "income-statement" ? api.getIncomeStatement : api.getChangesInEquity;
+      const data = await fn(rangeId, customFrom || undefined, customTo || undefined);
+      setStatementData(data);
+    } catch (err: any) { setError(err.message || "Could not load statement"); } finally { setStatementLoading(false); }
+  }
+
+  useEffect(() => { if (tab === "statements") loadStatement(); }, [tab, statementType, rangeId, customFrom, customTo]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function load() {
     api.listGLAccounts().then((r) => setAccounts(r.accounts)).catch((e) => setError(e.message));
@@ -138,6 +157,7 @@ export default function GeneralLedgerPage() {
           <button onClick={() => setTab("journals")} className={`btn-text ${tab === "journals" ? "text-gold-600 font-semibold" : "text-text-muted"}`}>Journals</button>
           <button onClick={() => setTab("periods")} className={`btn-text ${tab === "periods" ? "text-gold-600 font-semibold" : "text-text-muted"}`}>Fiscal Periods</button>
           <button onClick={() => setTab("recurring")} className={`btn-text ${tab === "recurring" ? "text-gold-600 font-semibold" : "text-text-muted"}`}>Recurring Journals</button>
+          <button onClick={() => setTab("statements")} className={`btn-text ${tab === "statements" ? "text-gold-600 font-semibold" : "text-text-muted"}`}>Financial Statements</button>
         </div>
 
         {tab === "accounts" && (
@@ -324,6 +344,86 @@ export default function GeneralLedgerPage() {
                 </tbody>
               </table>
             </div>
+          </>
+        )}
+        {tab === "statements" && (
+          <>
+            <div className="flex flex-wrap items-end gap-3 mb-6">
+              <select className="input" value={statementType} onChange={(e) => setStatementType(e.target.value as any)}>
+                <option value="trial-balance">Trial Balance</option>
+                <option value="balance-sheet">Statement of Financial Position</option>
+                <option value="income-statement">Statement of Comprehensive Income</option>
+                <option value="changes-in-equity">Statement of Changes in Equity</option>
+              </select>
+              <ReportRangeSelector value={rangeId} onChange={setRangeId} customFrom={customFrom} customTo={customTo} onCustomChange={(f, t) => { setCustomFrom(f); setCustomTo(t); }} />
+            </div>
+
+            {statementLoading && <p className="text-text-muted text-sm py-8 text-center">Loading…</p>}
+
+            {!statementLoading && statementData && statementType === "trial-balance" && (
+              <div className="card overflow-x-auto">
+                <table className="w-full min-w-[500px] text-sm table-modern">
+                  <thead><tr><th>Code</th><th>Account</th><th>Debit</th><th>Credit</th></tr></thead>
+                  <tbody>
+                    {statementData.rows.map((r: any) => (
+                      <tr key={r.code}><td className="font-mono text-[12px] text-text-700">{r.code}</td><td className="text-text-900">{r.name}</td><td className="text-text-700">{r.debit ? `GHS ${r.debit.toLocaleString()}` : ""}</td><td className="text-text-700">{r.credit ? `GHS ${r.credit.toLocaleString()}` : ""}</td></tr>
+                    ))}
+                    <tr className="font-semibold"><td colSpan={2} className="text-text-900">Total</td><td className="text-text-900">GHS {statementData.totalDebit.toLocaleString()}</td><td className="text-text-900">GHS {statementData.totalCredit.toLocaleString()}</td></tr>
+                  </tbody>
+                </table>
+                <div className={`p-3 text-[12.5px] ${statementData.balanced ? "text-green-600" : "text-rose-600"}`}>{statementData.balanced ? "✓ Balanced" : "✗ Not balanced — investigate before relying on this statement"}</div>
+              </div>
+            )}
+
+            {!statementLoading && statementData && statementType === "balance-sheet" && (
+              <div className="grid grid-cols-1 dt:grid-cols-3 gap-4">
+                <div className="card p-5">
+                  <div className="font-medium text-[13px] text-text-900 mb-2">Assets</div>
+                  {statementData.assets.map((a: any) => (<div key={a.code} className="flex justify-between text-[12.5px] text-text-700 mb-1"><span>{a.name}</span><span>GHS {a.balance.toLocaleString()}</span></div>))}
+                  <div className="flex justify-between font-semibold text-text-900 border-t border-paper-100 pt-1 mt-2"><span>Total</span><span>GHS {statementData.totalAssets.toLocaleString()}</span></div>
+                </div>
+                <div className="card p-5">
+                  <div className="font-medium text-[13px] text-text-900 mb-2">Liabilities</div>
+                  {statementData.liabilities.map((a: any) => (<div key={a.code} className="flex justify-between text-[12.5px] text-text-700 mb-1"><span>{a.name}</span><span>GHS {a.balance.toLocaleString()}</span></div>))}
+                  <div className="flex justify-between font-semibold text-text-900 border-t border-paper-100 pt-1 mt-2"><span>Total</span><span>GHS {statementData.totalLiabilities.toLocaleString()}</span></div>
+                </div>
+                <div className="card p-5">
+                  <div className="font-medium text-[13px] text-text-900 mb-2">Equity</div>
+                  {statementData.equity.map((a: any) => (<div key={a.code} className="flex justify-between text-[12.5px] text-text-700 mb-1"><span>{a.name}</span><span>GHS {a.balance.toLocaleString()}</span></div>))}
+                  <div className="flex justify-between text-[12.5px] text-text-700 mb-1"><span>Net Income (since inception)</span><span>GHS {statementData.netIncomeSinceInception.toLocaleString()}</span></div>
+                  <div className="flex justify-between font-semibold text-text-900 border-t border-paper-100 pt-1 mt-2"><span>Total</span><span>GHS {statementData.totalEquity.toLocaleString()}</span></div>
+                </div>
+                <div className={`dt:col-span-3 text-[12.5px] ${statementData.balanced ? "text-green-600" : "text-rose-600"}`}>{statementData.balanced ? "✓ Assets = Liabilities + Equity" : "✗ Does not balance — investigate before relying on this statement"}</div>
+              </div>
+            )}
+
+            {!statementLoading && statementData && statementType === "income-statement" && (
+              <div className="grid grid-cols-1 dt:grid-cols-2 gap-4">
+                <div className="card p-5">
+                  <div className="font-medium text-[13px] text-text-900 mb-2">Income</div>
+                  {statementData.income.map((a: any) => (<div key={a.code} className="flex justify-between text-[12.5px] text-text-700 mb-1"><span>{a.name}</span><span>GHS {a.amount.toLocaleString()}</span></div>))}
+                  <div className="flex justify-between font-semibold text-text-900 border-t border-paper-100 pt-1 mt-2"><span>Total</span><span>GHS {statementData.totalIncome.toLocaleString()}</span></div>
+                </div>
+                <div className="card p-5">
+                  <div className="font-medium text-[13px] text-text-900 mb-2">Expenses</div>
+                  {statementData.expenses.map((a: any) => (<div key={a.code} className="flex justify-between text-[12.5px] text-text-700 mb-1"><span>{a.name}</span><span>GHS {a.amount.toLocaleString()}</span></div>))}
+                  <div className="flex justify-between font-semibold text-text-900 border-t border-paper-100 pt-1 mt-2"><span>Total</span><span>GHS {statementData.totalExpenses.toLocaleString()}</span></div>
+                </div>
+                <div className="dt:col-span-2 card p-5 bg-gold-500/10">
+                  <div className="flex justify-between font-semibold text-ink-900"><span>Net Income</span><span>GHS {statementData.netIncome.toLocaleString()}</span></div>
+                </div>
+              </div>
+            )}
+
+            {!statementLoading && statementData && statementType === "changes-in-equity" && (
+              <div className="card p-5 max-w-md">
+                <div className="flex justify-between text-[12.5px] text-text-700 mb-1"><span>Opening Equity</span><span>GHS {statementData.openingEquity.toLocaleString()}</span></div>
+                <div className="flex justify-between text-[12.5px] text-text-700 mb-1"><span>Net Income for Period</span><span>GHS {statementData.netIncomeForPeriod.toLocaleString()}</span></div>
+                <div className="flex justify-between text-[12.5px] text-text-700 mb-1"><span>Other Equity Movement</span><span>GHS {statementData.equityMovement.toLocaleString()}</span></div>
+                <div className="flex justify-between font-semibold text-text-900 border-t border-paper-100 pt-1 mt-2"><span>Closing Equity</span><span>GHS {statementData.closingEquity.toLocaleString()}</span></div>
+                <div className={`text-[11px] mt-2 ${statementData.reconciles ? "text-green-600" : "text-rose-600"}`}>{statementData.reconciles ? "✓ Reconciles" : "✗ Does not reconcile — investigate"}</div>
+              </div>
+            )}
           </>
         )}
       </div>

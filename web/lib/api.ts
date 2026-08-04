@@ -365,6 +365,11 @@ export const api = {
   suspendRecurringJournal: (id: string) => request(`/general-ledger/recurring-journals/${id}/suspend`, { method: "POST" }),
   reactivateRecurringJournal: (id: string) => request(`/general-ledger/recurring-journals/${id}/reactivate`, { method: "POST" }),
 
+  getTrialBalance: (range: string, from?: string, to?: string) => request(`/general-ledger/reports/trial-balance?range=${range}${from ? `&from=${from}&to=${to}` : ""}`),
+  getBalanceSheet: (range: string, from?: string, to?: string) => request(`/general-ledger/reports/balance-sheet?range=${range}${from ? `&from=${from}&to=${to}` : ""}`),
+  getIncomeStatement: (range: string, from?: string, to?: string) => request(`/general-ledger/reports/income-statement?range=${range}${from ? `&from=${from}&to=${to}` : ""}`),
+  getChangesInEquity: (range: string, from?: string, to?: string) => request(`/general-ledger/reports/changes-in-equity?range=${range}${from ? `&from=${from}&to=${to}` : ""}`),
+
   listFiscalYears: () => request("/general-ledger/fiscal-years"),
   createFiscalYear: (data: any) => request("/general-ledger/fiscal-years", { method: "POST", body: JSON.stringify(data) }),
   createFinancialPeriod: (data: any) => request("/general-ledger/financial-periods", { method: "POST", body: JSON.stringify(data) }),

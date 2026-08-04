@@ -3,7 +3,8 @@ import { z } from "zod";
 import { prisma } from "../lib/prisma";
 import { requireAuth, AuthedRequest } from "../middleware/auth";
 import { requirePermission } from "../middleware/rbac";
-import { isBalanced, generateJournalNumber, findPostablePeriod } from "../lib/generalLedger";
+import { isBalanced, generateJournalNumber, findPostablePeriod, aggregateBalancesAsOf, aggregateBalancesForPeriod } from "../lib/generalLedger";
+import { resolveReportRange, ReportRangeId } from "../lib/reportRanges";
 import { runRecurringJournals } from "../lib/scheduler";
 
 // doc §117 Chart of Accounts, §118 Journal Management, §119 Ledger
@@ -270,4 +271,171 @@ generalLedgerRouter.post("/recurring-journals/:id/reactivate", requirePermission
 generalLedgerRouter.post("/recurring-journals/run-now", requirePermission("institution.configure"), async (_req: AuthedRequest, res) => {
   await runRecurringJournals();
   res.json({ ok: true });
+});
+
+// -------------------------------------------------------------------------
+// §123 Financial Statement Management. §123.3 "Period restrictions are
+// enforced" — every statement here reads from Journal.status === "POSTED"
+// only, so an unposted draft or a rejected journal can never leak into a
+// financial statement. Cash Flow Statement and Consolidated Statements
+// are deliberately not built: Cash Flow needs account-level Operating/
+// Investing/Financing classification that doesn't exist yet (faking it
+// would produce actively wrong numbers presented as authoritative), and
+// Consolidated Statements need a multi-entity/subsidiary structure this
+// platform doesn't have — each institution is its own standalone
+// deployment. Both named here, not silently dropped.
+// -------------------------------------------------------------------------
+
+async function getPostedLinesUpTo(prisma: any, institutionId: string, asOf: Date) {
+  return prisma.journalLine.findMany({
+    where: { journal: { institutionId, status: "POSTED", postingDate: { lte: asOf } } },
+    include: { account: { select: { id: true, code: true, name: true, category: true } } },
+  });
+}
+
+async function getPostedLinesForPeriod(prisma: any, institutionId: string, from: Date, to: Date) {
+  return prisma.journalLine.findMany({
+    where: { journal: { institutionId, status: "POSTED", postingDate: { gte: from, lte: to } } },
+    include: { account: { select: { id: true, code: true, name: true, category: true } } },
+  });
+}
+
+function parseRangeQuery(req: AuthedRequest) {
+  const { range, from, to } = req.query as { range?: string; from?: string; to?: string };
+  const rangeId = (range || "TODAY") as ReportRangeId;
+  return resolveReportRange(rangeId, new Date(), rangeId === "CUSTOM" && from && to ? { from, to } : undefined);
+}
+
+// §123.2 Trial Balance — every account, as of a chosen date, debits and
+// credits shown separately (a debit-balance account's total in the debit
+// column, a credit-balance account's total in the credit column), the
+// two columns summing to the same total — the classic proof a ledger is
+// internally consistent.
+generalLedgerRouter.get("/reports/trial-balance", requirePermission("reports.view"), async (req: AuthedRequest, res) => {
+  const { to: asOfDate } = parseRangeQuery(req);
+  const lines = await getPostedLinesUpTo(prisma, req.auth!.institutionId, asOfDate);
+  const balances = aggregateBalancesAsOf(lines.map((l: any) => ({ accountId: l.accountId, category: l.account.category, debit: Number(l.debit), credit: Number(l.credit) })));
+
+  const accountsInvolved = new Map(lines.map((l: any) => [l.accountId, l.account]));
+  // Traced through all 4 cases by hand rather than relying on tsc this
+  // pass (see the build log for why): a debit-normal account (ASSET/
+  // EXPENSE) with a positive balance shows in the debit column, as
+  // expected; the same account with an abnormal negative balance shows
+  // the absolute value in the CREDIT column instead, not a negative
+  // debit — a real trial balance never shows negative numbers, an
+  // abnormal balance just sits on the other side.
+  const rows = Array.from(accountsInvolved.values()).map((a: any) => {
+    const bal = balances.get(a.id) || 0;
+    const isDebitNormal = a.category === "ASSET" || a.category === "EXPENSE";
+    let debit = 0, credit = 0;
+    if (isDebitNormal) {
+      if (bal >= 0) debit = bal; else credit = -bal;
+    } else {
+      if (bal >= 0) credit = bal; else debit = -bal;
+    }
+    return { code: a.code, name: a.name, category: a.category, debit, credit };
+  }).sort((a: any, b: any) => a.code.localeCompare(b.code));
+
+  const totalDebit = rows.reduce((s: number, r: any) => s + r.debit, 0);
+  const totalCredit = rows.reduce((s: number, r: any) => s + r.credit, 0);
+
+  res.json({ asOfDate, rows, totalDebit, totalCredit, balanced: Math.abs(totalDebit - totalCredit) < 0.01 });
+});
+
+// §123.2 Statement of Financial Position — Assets, Liabilities, Equity as
+// of a date, with the fundamental accounting-equation check surfaced
+// directly rather than left for someone to verify by hand.
+generalLedgerRouter.get("/reports/balance-sheet", requirePermission("reports.view"), async (req: AuthedRequest, res) => {
+  const { to: asOfDate } = parseRangeQuery(req);
+  const lines = await getPostedLinesUpTo(prisma, req.auth!.institutionId, asOfDate);
+  const balances = aggregateBalancesAsOf(lines.map((l: any) => ({ accountId: l.accountId, category: l.account.category, debit: Number(l.debit), credit: Number(l.credit) })));
+  const accountsInvolved = new Map(lines.map((l: any) => [l.accountId, l.account]));
+
+  const byCategory = (cat: string) => Array.from(accountsInvolved.values()).filter((a: any) => a.category === cat).map((a: any) => ({ code: a.code, name: a.name, balance: balances.get(a.id) || 0 })).sort((a: any, b: any) => a.code.localeCompare(b.code));
+
+  const assets = byCategory("ASSET");
+  const liabilities = byCategory("LIABILITY");
+  const equity = byCategory("EQUITY");
+
+  const totalAssets = assets.reduce((s: number, a: any) => s + a.balance, 0);
+  const totalLiabilities = liabilities.reduce((s: number, a: any) => s + a.balance, 0);
+  const totalEquityExclIncome = equity.reduce((s: number, a: any) => s + a.balance, 0);
+
+  // Retained earnings for the period aren't a posted equity account by
+  // default in a simple setup — net income since inception is folded in
+  // here explicitly so the equation genuinely balances without requiring
+  // a manual period-close journal first.
+  const incomeExpenseLines = lines.filter((l: any) => l.account.category === "INCOME" || l.account.category === "EXPENSE");
+  const ieBalances = aggregateBalancesAsOf(incomeExpenseLines.map((l: any) => ({ accountId: l.accountId, category: l.account.category, debit: Number(l.debit), credit: Number(l.credit) })));
+  const netIncomeSinceInception = Array.from(ieBalances.values()).reduce((s: number, v: number) => s + v, 0);
+
+  const totalEquity = totalEquityExclIncome + netIncomeSinceInception;
+
+  res.json({
+    asOfDate, assets, liabilities, equity, totalAssets, totalLiabilities, totalEquity,
+    netIncomeSinceInception, balanced: Math.abs(totalAssets - (totalLiabilities + totalEquity)) < 0.01,
+  });
+});
+
+// §123.2 Statement of Comprehensive Income — Income and Expense account
+// MOVEMENT strictly within the chosen period, not cumulative since
+// inception (which is what makes this an income statement rather than a
+// balance sheet line).
+generalLedgerRouter.get("/reports/income-statement", requirePermission("reports.view"), async (req: AuthedRequest, res) => {
+  const { from, to } = parseRangeQuery(req);
+  const lines = await getPostedLinesForPeriod(prisma, req.auth!.institutionId, from, to);
+  const ieLines = lines.filter((l: any) => l.account.category === "INCOME" || l.account.category === "EXPENSE");
+  const balances = aggregateBalancesForPeriod(ieLines.map((l: any) => ({ accountId: l.accountId, category: l.account.category, debit: Number(l.debit), credit: Number(l.credit) })));
+  const accountsInvolved = new Map(ieLines.map((l: any) => [l.accountId, l.account]));
+
+  const byCategory = (cat: string) => Array.from(accountsInvolved.values()).filter((a: any) => a.category === cat).map((a: any) => ({ code: a.code, name: a.name, amount: balances.get(a.id) || 0 })).sort((a: any, b: any) => a.code.localeCompare(b.code));
+
+  const income = byCategory("INCOME");
+  const expenses = byCategory("EXPENSE");
+  const totalIncome = income.reduce((s: number, a: any) => s + a.amount, 0);
+  const totalExpenses = expenses.reduce((s: number, a: any) => s + a.amount, 0);
+
+  res.json({ periodStart: from, periodEnd: to, income, expenses, totalIncome, totalExpenses, netIncome: totalIncome - totalExpenses });
+});
+
+// §123.2 Statement of Changes in Equity — opening equity (as of period
+// start) + net income for the period + any direct equity-account
+// movement during the period = closing equity (as of period end). The
+// arithmetic is a genuine identity, not just three numbers placed near
+// each other — closingEquity is computed independently (as-of period
+// end) and should equal opening + movement, surfaced so a mismatch would
+// be visible rather than hidden.
+generalLedgerRouter.get("/reports/changes-in-equity", requirePermission("reports.view"), async (req: AuthedRequest, res) => {
+  const { from, to } = parseRangeQuery(req);
+
+  // Exactly three real queries: the two boundary snapshots (for the
+  // independent closing-balance check) and one fetch of the period's own
+  // activity, reused for both the equity-account movement and the
+  // period's net income — not refetched a second time for each.
+  const linesAtStart = await getPostedLinesUpTo(prisma, req.auth!.institutionId, new Date(from.getTime() - 1));
+  const linesAtEnd = await getPostedLinesUpTo(prisma, req.auth!.institutionId, to);
+  const periodLines = await getPostedLinesForPeriod(prisma, req.auth!.institutionId, from, to);
+
+  const sumEquity = (lines: any[]) => {
+    const eq = lines.filter((l: any) => l.account.category === "EQUITY");
+    const bal = aggregateBalancesAsOf(eq.map((l: any) => ({ accountId: l.accountId, category: "EQUITY" as const, debit: Number(l.debit), credit: Number(l.credit) })));
+    return Array.from(bal.values()).reduce((s: number, v: number) => s + v, 0);
+  };
+  const sumIncomeExpense = (lines: any[]) => {
+    const ie = lines.filter((l: any) => l.account.category === "INCOME" || l.account.category === "EXPENSE");
+    const bal = aggregateBalancesAsOf(ie.map((l: any) => ({ accountId: l.accountId, category: l.account.category, debit: Number(l.debit), credit: Number(l.credit) })));
+    return Array.from(bal.values()).reduce((s: number, v: number) => s + v, 0);
+  };
+
+  const openingEquity = sumEquity(linesAtStart) + sumIncomeExpense(linesAtStart);
+  const equityMovement = sumEquity(periodLines);
+  const netIncomeForPeriod = sumIncomeExpense(periodLines);
+  const closingEquityComputed = sumEquity(linesAtEnd) + sumIncomeExpense(linesAtEnd);
+  const closingEquityExpected = openingEquity + equityMovement + netIncomeForPeriod;
+
+  res.json({
+    periodStart: from, periodEnd: to, openingEquity, netIncomeForPeriod, equityMovement,
+    closingEquity: closingEquityComputed,
+    reconciles: Math.abs(closingEquityComputed - closingEquityExpected) < 0.01,
+  });
 });

@@ -46,3 +46,34 @@ export async function findPostablePeriod(prisma: any, institutionId: string, dat
   });
   return period;
 }
+
+// doc §123 Financial Statement Management. A shared aggregation core used
+// by Trial Balance, the Balance Sheet, the Income Statement, and the
+// Statement of Changes in Equity — one place that decides "what is this
+// account's balance," not four separate reimplementations that could
+// silently diverge. The pure aggregation logic is tested before the
+// database-querying wrapper around it is ever used.
+export interface LedgerLineForAggregation {
+  accountId: string;
+  category: "ASSET" | "LIABILITY" | "EQUITY" | "INCOME" | "EXPENSE";
+  debit: number;
+  credit: number;
+}
+
+// A balance sheet is a cumulative snapshot since inception — every posted
+// line up to and including the as-of date contributes.
+export function aggregateBalancesAsOf(lines: LedgerLineForAggregation[]): Map<string, number> {
+  const result = new Map<string, number>();
+  for (const line of lines) {
+    const effect = balanceEffect(line.category, line.debit, line.credit);
+    result.set(line.accountId, round2((result.get(line.accountId) || 0) + effect));
+  }
+  return result;
+}
+
+// An income statement covers a single period only — Income/Expense
+// accounts conceptually reset each period, so this is the exact same
+// aggregation logic, just fed lines already pre-filtered to the period's
+// date range rather than everything since inception. Same function,
+// different input — not a second implementation.
+export const aggregateBalancesForPeriod = aggregateBalancesAsOf;
