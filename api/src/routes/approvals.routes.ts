@@ -262,6 +262,11 @@ async function applyApproval(request: { id: string; type: string; targetId: stri
       break;
     }
 
+    case "PAYROLL_RUN_APPROVAL": {
+      await prisma.payrollRun.update({ where: { id: request.targetId }, data: { status: "APPROVED", approvedById, approvedAt: new Date() } });
+      break;
+    }
+
     case "SAVINGS_RESTRICTION_CREATE": {
       await prisma.savingsRestriction.update({ where: { id: request.targetId }, data: { status: "ACTIVE", approvedById, activatedAt: new Date() } });
       break;
@@ -361,6 +366,9 @@ approvalsRouter.post("/:id/reject", requirePermission("institution.configure"), 
   }
   if (request.type === "SALARY_STRUCTURE_CHANGE") {
     await prisma.employeeSalaryStructure.update({ where: { id: request.targetId }, data: { status: "DRAFT" } });
+  }
+  if (request.type === "PAYROLL_RUN_APPROVAL") {
+    await prisma.payrollRun.update({ where: { id: request.targetId }, data: { status: "PROCESSED" } });
   }
   if (request.type === "INTER_BRANCH_TRANSFER") {
     await prisma.interBranchTransfer.update({ where: { id: request.targetId }, data: { status: "REJECTED" } });

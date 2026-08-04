@@ -382,3 +382,97 @@ payrollRouter.post("/periods/:periodId/process", requirePermission("institution.
 
   res.status(201).json({ run });
 });
+
+// -------------------------------------------------------------------------
+// §211 Payroll Approval and Disbursement. §211.3 "Salary payments occur
+// only after approval" — a real gate: PROCESSED must go through the
+// Approval Workflow to reach APPROVED, and only APPROVED can be marked
+// PAID. Mobile Money Payments are deliberately not built — no MoMo
+// provider integration exists anywhere in this platform (the same class
+// of gap as SMS/Email notifications, named in the README). Bank File
+// Generation produces a genuine, disclosed generic CSV — not tied to any
+// specific confirmed bank's exact required format, since none has been
+// confirmed the way GRA/SSNIT rates were.
+// -------------------------------------------------------------------------
+
+payrollRouter.post("/runs/:id/request-approval", requirePermission("institution.configure"), async (req: AuthedRequest, res) => {
+  const run = await prisma.payrollRun.findFirst({ where: { id: req.params.id, institutionId: req.auth!.institutionId } });
+  if (!run) return res.status(404).json({ error: "Payroll run not found" });
+  if (run.status !== "PROCESSED") return res.status(400).json({ error: `Only a PROCESSED run can request approval (currently ${run.status})` });
+
+  await prisma.approvalRequest.create({
+    data: { institutionId: req.auth!.institutionId, type: "PAYROLL_RUN_APPROVAL", targetType: "PayrollRun", targetId: run.id, payload: {}, reason: `Approve payroll run — total net GHS ${run.totalNet}`, requestedById: req.auth!.userId },
+  });
+  await prisma.payrollRun.update({ where: { id: run.id }, data: { status: "PENDING_APPROVAL" } });
+  res.status(202).json({ pendingApproval: true });
+});
+
+// §211.2 "Payment Confirmation" — no real bank/MoMo rails exist in this
+// platform, so this is a genuine, audited manual confirmation that the
+// actual transfer was executed OUTSIDE the system, not a fabricated
+// claim that Nexus EFOS itself moved the money.
+payrollRouter.post("/runs/:id/mark-paid", requirePermission("institution.configure"), async (req: AuthedRequest, res) => {
+  const run = await prisma.payrollRun.findFirst({ where: { id: req.params.id, institutionId: req.auth!.institutionId } });
+  if (!run) return res.status(404).json({ error: "Payroll run not found" });
+  if (run.status !== "APPROVED") return res.status(400).json({ error: `Only an APPROVED run can be marked paid (currently ${run.status})` });
+
+  const updated = await prisma.payrollRun.update({ where: { id: run.id }, data: { status: "PAID", paidById: req.auth!.userId, paidAt: new Date() } });
+  await prisma.auditLog.create({ data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "payroll_run.mark_paid", resource: "payroll_run", resourceId: run.id, metadata: { totalNet: run.totalNet } } });
+  res.json({ run: updated });
+});
+
+// §211.2 "Payroll Reversal"
+payrollRouter.post("/runs/:id/reverse", requirePermission("institution.configure"), async (req: AuthedRequest, res) => {
+  const { reason } = req.body as { reason?: string };
+  if (!reason) return res.status(400).json({ error: "A reason is required to reverse a payroll run" });
+  const run = await prisma.payrollRun.findFirst({ where: { id: req.params.id, institutionId: req.auth!.institutionId } });
+  if (!run) return res.status(404).json({ error: "Payroll run not found" });
+  if (!["APPROVED", "PAID"].includes(run.status)) return res.status(400).json({ error: `Only an APPROVED or PAID run can be reversed (currently ${run.status})` });
+
+  const updated = await prisma.payrollRun.update({ where: { id: run.id }, data: { status: "REVERSED", reversedById: req.auth!.userId, reversedAt: new Date(), reversalReason: reason } });
+  await prisma.auditLog.create({ data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "payroll_run.reverse", resource: "payroll_run", resourceId: run.id, metadata: { reason } } });
+  res.json({ run: updated });
+});
+
+// §211.2 "Bank File Generation" — a generic CSV. Employees with no bank
+// details on file are genuinely excluded and named in the response, not
+// silently skipped or given a fabricated placeholder account number.
+payrollRouter.get("/runs/:id/bank-file", requirePermission("institution.configure"), async (req: AuthedRequest, res) => {
+  const run = await prisma.payrollRun.findFirst({ where: { id: req.params.id, institutionId: req.auth!.institutionId }, include: { entries: true } });
+  if (!run) return res.status(404).json({ error: "Payroll run not found" });
+  if (run.status !== "APPROVED" && run.status !== "PAID") return res.status(400).json({ error: "A bank file can only be generated for an APPROVED or PAID run" });
+
+  const employeeIds = run.entries.map((e) => e.employeeId);
+  const employees = await prisma.employee.findMany({ where: { id: { in: employeeIds } }, select: { id: true, fullName: true, bankName: true, bankAccountNumber: true, bankAccountName: true } });
+  const empById = new Map(employees.map((e) => [e.id, e]));
+
+  const rows = ["Employee Name,Bank Name,Account Number,Account Name,Amount"];
+  const missingBankDetails: string[] = [];
+  for (const entry of run.entries) {
+    const emp = empById.get(entry.employeeId);
+    if (!emp?.bankAccountNumber) { missingBankDetails.push(emp?.fullName || entry.employeeId); continue; }
+    rows.push(`"${emp.fullName}","${emp.bankName || ""}","${emp.bankAccountNumber}","${emp.bankAccountName || emp.fullName}",${Number(entry.netPay).toFixed(2)}`);
+  }
+
+  await prisma.auditLog.create({ data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "payroll_run.bank_file_generated", resource: "payroll_run", resourceId: run.id, metadata: { missingBankDetailsCount: missingBankDetails.length } } });
+
+  if (missingBankDetails.length > 0) {
+    res.setHeader("X-Missing-Bank-Details", missingBankDetails.join("; "));
+  }
+  res.setHeader("Content-Type", "text/csv");
+  res.setHeader("Content-Disposition", `attachment; filename="payroll-bank-file-${run.id}.csv"`);
+  res.send(rows.join("\n"));
+});
+
+// §211.2 "Disbursement Reporting"
+payrollRouter.get("/reports/disbursement", requirePermission("reports.view"), async (req: AuthedRequest, res) => {
+  const runs = await prisma.payrollRun.findMany({ where: { institutionId: req.auth!.institutionId }, orderBy: { createdAt: "desc" } });
+  const summary = {
+    totalRuns: runs.length,
+    totalPaid: runs.filter((r) => r.status === "PAID").reduce((s, r) => s + Number(r.totalNet), 0),
+    pendingApproval: runs.filter((r) => r.status === "PENDING_APPROVAL").length,
+    approvedNotYetPaid: runs.filter((r) => r.status === "APPROVED").length,
+    reversed: runs.filter((r) => r.status === "REVERSED").length,
+  };
+  res.json({ runs, summary });
+});

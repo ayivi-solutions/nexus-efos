@@ -88,6 +88,9 @@ const updateSchema = z.object({
   employmentDate: z.string().datetime().optional().nullable(),
   confirmationDate: z.string().datetime().optional().nullable(),
   reportingManagerId: z.string().optional().nullable(),
+  bankName: z.string().optional().nullable(),
+  bankAccountNumber: z.string().optional().nullable(),
+  bankAccountName: z.string().optional().nullable(),
 });
 
 employeeRouter.patch("/:id", requirePermission("users.administer"), async (req: AuthedRequest, res) => {

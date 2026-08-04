@@ -74,6 +74,25 @@ export default function PayrollPage() {
     catch (err: any) { setError(err.message || "Could not process payroll"); } finally { setBusy(false); }
   }
 
+  async function handleRunAction(id: string, action: "approve" | "paid" | "reverse") {
+    setBusy(true); setError(null);
+    try {
+      if (action === "approve") { await api.requestPayrollRunApproval(id); toast.info("Submitted for approval."); }
+      else if (action === "paid") { await api.markPayrollRunPaid(id); toast.success("Marked as paid."); }
+      else { const reason = window.prompt("Reason for reversing this payroll run:"); if (!reason) { setBusy(false); return; } await api.reversePayrollRun(id, reason); toast.info("Run reversed."); }
+      load();
+    } catch (err: any) { setError(err.message || "Could not update payroll run"); } finally { setBusy(false); }
+  }
+
+  async function handleBankFile(id: string) {
+    setBusy(true); setError(null);
+    try {
+      const missing = await api.downloadPayrollBankFile(id);
+      if (missing) toast.info(`Bank file downloaded. Missing bank details, excluded: ${missing}`);
+      else toast.success("Bank file downloaded.");
+    } catch (err: any) { setError(err.message || "Could not generate bank file"); } finally { setBusy(false); }
+  }
+
   async function viewRun(id: string) {
     try { const res = await api.getPayrollRun(id); setSelectedRun(res.run); } catch (err: any) { setError(err.message); }
   }
@@ -471,19 +490,24 @@ export default function PayrollPage() {
             <h2 className="font-display font-semibold text-lg text-ink-900 mb-3">Payroll Runs</h2>
             <div className="card overflow-x-auto mb-6">
               <table className="w-full text-sm table-modern">
-                <thead><tr><th>Processed</th><th>Employees</th><th>Gross</th><th>Deductions</th><th>Net</th><th></th></tr></thead>
+                <thead><tr><th>Processed</th><th>Employees</th><th>Net</th><th>Status</th><th></th></tr></thead>
                 <tbody>
                   {runs.map((r: any) => (
                     <tr key={r.id}>
                       <td className="text-text-700">{r.processedAt ? new Date(r.processedAt).toLocaleString() : "—"}</td>
                       <td className="text-text-700">{r.entries?.length ?? "—"}</td>
-                      <td className="text-text-700">GHS {Number(r.totalGross).toLocaleString()}</td>
-                      <td className="text-text-700">GHS {Number(r.totalDeductions).toLocaleString()}</td>
                       <td className="text-text-900 font-medium">GHS {Number(r.totalNet).toLocaleString()}</td>
-                      <td><button onClick={() => viewRun(r.id)} className="btn-text text-gold-600">View</button></td>
+                      <td><span className={`badge ${r.status === "PAID" ? "bg-green-100 text-green-600" : r.status === "REVERSED" ? "bg-rose-100 text-rose-600" : r.status === "APPROVED" ? "bg-gold-500/15 text-gold-600" : "bg-paper-100 text-text-muted"}`}>{r.status.replaceAll("_", " ")}</span></td>
+                      <td className="whitespace-nowrap space-x-2">
+                        <button onClick={() => viewRun(r.id)} className="btn-text text-gold-600">View</button>
+                        {r.status === "PROCESSED" && <button onClick={() => handleRunAction(r.id, "approve")} className="btn-text text-gold-600">Request approval</button>}
+                        {r.status === "APPROVED" && <button onClick={() => handleRunAction(r.id, "paid")} className="btn-text text-green-600">Mark paid</button>}
+                        {r.status === "APPROVED" && <button onClick={() => handleBankFile(r.id)} className="btn-text text-gold-600">Bank file</button>}
+                        {(r.status === "APPROVED" || r.status === "PAID") && <button onClick={() => handleRunAction(r.id, "reverse")} className="btn-text text-rose-600">Reverse</button>}
+                      </td>
                     </tr>
                   ))}
-                  {runs.length === 0 && <tr><td colSpan={6} className="text-center text-text-muted text-sm py-8">No payroll runs yet.</td></tr>}
+                  {runs.length === 0 && <tr><td colSpan={5} className="text-center text-text-muted text-sm py-8">No payroll runs yet.</td></tr>}
                 </tbody>
               </table>
             </div>

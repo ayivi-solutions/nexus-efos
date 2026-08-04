@@ -441,6 +441,15 @@ model Employee {
 
   status EmploymentStatus @default(ACTIVE)
 
+  // doc §211.2 "Bank File Generation" needs somewhere real to pull an
+  // account number from — added here rather than fabricated at export
+  // time. Genuinely optional: an employee with no bank details on file
+  // simply won't appear in a generated bank file, surfaced as a real,
+  // visible gap rather than silently producing an invalid row.
+  bankName          String? @map("bank_name")
+  bankAccountNumber String? @map("bank_account_number")
+  bankAccountName   String? @map("bank_account_name")
+
   user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull, map: "fk_employee_user")
   userId String? @unique @map("user_id")
 
@@ -850,6 +859,7 @@ enum ApprovalRequestType {
   RECURRING_JOURNAL_ACTIVATION  // doc §122
   INTER_BRANCH_TRANSFER  // doc §121
   SALARY_STRUCTURE_CHANGE  // doc §208
+  PAYROLL_RUN_APPROVAL  // doc §211
 
   @@schema("nexus")
 }
@@ -3296,6 +3306,9 @@ enum PayrollRunStatus {
   DRAFT
   PROCESSING
   PROCESSED
+  PENDING_APPROVAL
+  APPROVED
+  PAID
   REVERSED
 
   @@schema("nexus")
@@ -3314,7 +3327,20 @@ model PayrollRun {
 
   processedById String?   @map("processed_by_id")
   processedAt   DateTime? @map("processed_at")
-  createdAt     DateTime  @default(now()) @map("created_at")
+
+  // §211.3 "Salary payments occur only after approval" — real gate, not
+  // just a label. paidById/paidAt are only ever set once status reaches
+  // PAID, which itself is only reachable from APPROVED.
+  approvedById String?   @map("approved_by_id")
+  approvedAt   DateTime? @map("approved_at")
+  paidById     String?   @map("paid_by_id")
+  paidAt       DateTime? @map("paid_at")
+
+  reversedById     String?   @map("reversed_by_id")
+  reversedAt       DateTime? @map("reversed_at")
+  reversalReason   String?   @map("reversal_reason")
+
+  createdAt DateTime @default(now()) @map("created_at")
 
   entries PayrollEntry[]
 

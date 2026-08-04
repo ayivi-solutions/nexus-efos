@@ -412,6 +412,21 @@ export const api = {
   listPayrollRuns: () => request("/payroll/runs"),
   getPayrollRun: (id: string) => request(`/payroll/runs/${id}`),
   processPayrollPeriod: (periodId: string) => request(`/payroll/periods/${periodId}/process`, { method: "POST" }),
+  requestPayrollRunApproval: (id: string) => request(`/payroll/runs/${id}/request-approval`, { method: "POST" }),
+  markPayrollRunPaid: (id: string) => request(`/payroll/runs/${id}/mark-paid`, { method: "POST" }),
+  reversePayrollRun: (id: string, reason: string) => request(`/payroll/runs/${id}/reverse`, { method: "POST", body: JSON.stringify({ reason }) }),
+  getDisbursementReport: () => request("/payroll/reports/disbursement"),
+  downloadPayrollBankFile: async (runId: string) => {
+    const accessToken = typeof window !== "undefined" ? sessionStorage.getItem("nexus_access_token") : null;
+    const res = await fetch(`${API_BASE}/payroll/runs/${runId}/bank-file`, { headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : {} });
+    if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error || "Could not download bank file"); }
+    const missing = res.headers.get("X-Missing-Bank-Details");
+    const blob = await res.blob();
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement("a"); a.href = url; a.download = `payroll-bank-file-${runId}.csv`; a.click();
+    window.URL.revokeObjectURL(url);
+    return missing;
+  },
 
   listFiscalYears: () => request("/general-ledger/fiscal-years"),
   createFiscalYear: (data: any) => request("/general-ledger/fiscal-years", { method: "POST", body: JSON.stringify(data) }),
