@@ -3267,6 +3267,7 @@ model EmployeeSalaryStructure {
   createdAt    DateTime @default(now()) @map("created_at")
 
   allowances EmployeeAllowance[]
+  deductions EmployeeDeduction[]
 
   @@map("employee_salary_structure")
   @@schema("nexus")
@@ -3340,5 +3341,31 @@ model PayrollEntry {
   createdAt DateTime @default(now()) @map("created_at")
 
   @@map("payroll_entry")
+  @@schema("nexus")
+}
+
+// doc §209 Allowance and Deduction Management. EmployeeDeduction mirrors
+// EmployeeAllowance exactly — same approval path (via the salary
+// structure it belongs to), same flat-or-percentage flexibility. Covers
+// Insurance, Union, and Custom deductions fully and really, and Loan
+// Deductions as a genuine, manually-entered recurring amount (e.g. a
+// staff loan repayment instalment) — NOT automatically tied to a
+// tracked staff-loan balance/disbursement/schedule, since no such system
+// exists anywhere in this schema. Building an automatic link to customer
+// Loans specifically would mean fabricating an Employee-to-Customer
+// relationship this platform doesn't have; a full staff-lending module
+// (its own disbursement, balance, and repayment-schedule tracking) is
+// real, separate, additional scope, named here rather than assumed.
+model EmployeeDeduction {
+  id                        String                  @id(map: "pk_employee_deduction") @default(uuid())
+  salaryStructure           EmployeeSalaryStructure @relation(fields: [employeeSalaryStructureId], references: [id], onDelete: Cascade, map: "fk_employee_deduction_salary_structure")
+  employeeSalaryStructureId String                  @map("employee_salary_structure_id")
+  deductionCodeId           String                  @map("deduction_code_id")
+
+  amount              Decimal @db.Decimal(12, 2) // a flat amount, or a percentage if isPercentageOfBasic
+  isPercentageOfBasic Boolean @default(false) @map("is_percentage_of_basic")
+  active              Boolean @default(true) // a deduction can be paused (e.g. a loan fully repaid) without losing its history
+
+  @@map("employee_deduction")
   @@schema("nexus")
 }

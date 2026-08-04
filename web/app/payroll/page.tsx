@@ -5,7 +5,7 @@ import { api } from "@/lib/api";
 import { useErrorToast, useToast } from "@/components/Toast";
 import { AppShell } from "@/components/AppShell";
 
-type Tab = "calendars" | "periods" | "grades" | "groups" | "earnings" | "deductions" | "overtime" | "tax" | "statutory" | "process";
+type Tab = "calendars" | "periods" | "grades" | "groups" | "earnings" | "deductions" | "overtime" | "tax" | "statutory" | "structures" | "process";
 
 export default function PayrollPage() {
   const toast = useToast();
@@ -27,6 +27,13 @@ export default function PayrollPage() {
   const [selectedRun, setSelectedRun] = useState<any>(null);
   const [taxTableForm, setTaxTableForm] = useState({ name: "", effectiveDate: "", bands: [{ lowerBound: "0", upperBound: "", rate: "" }] });
   const [statutoryRateForm, setStatutoryRateForm] = useState({ name: "SSNIT Employee", rate: "", ceiling: "", minimum: "", effectiveDate: "" });
+  const [employees, setEmployees] = useState<any[]>([]);
+  const [employeeStructures, setEmployeeStructures] = useState<any[]>([]);
+  const [structureForm, setStructureForm] = useState({
+    employeeId: "", payGroupId: "", salaryGradeId: "", basicSalary: "", effectiveDate: "",
+    allowances: [] as { earningCodeId: string; amount: string; isPercentageOfBasic: boolean }[],
+    deductions: [] as { deductionCodeId: string; amount: string; isPercentageOfBasic: boolean }[],
+  });
 
   const [calForm, setCalForm] = useState({ name: "", frequency: "MONTHLY", payDayOfMonth: "" });
   const [periodForm, setPeriodForm] = useState({ calendarId: "", name: "", startDate: "", endDate: "", payDate: "" });
@@ -118,7 +125,56 @@ export default function PayrollPage() {
     } catch (err: any) { setError(err.message || "Could not create statutory rate"); } finally { setBusy(false); }
   }
 
-  useEffect(() => { load(); }, []);
+  function addAllowanceRow() {
+    setStructureForm((f) => ({ ...f, allowances: [...f.allowances, { earningCodeId: "", amount: "", isPercentageOfBasic: false }] }));
+  }
+  function updateAllowanceRow(i: number, key: string, value: any) {
+    setStructureForm((f) => { const allowances = [...f.allowances]; allowances[i] = { ...allowances[i], [key]: value }; return { ...f, allowances }; });
+  }
+  function removeAllowanceRow(i: number) {
+    setStructureForm((f) => ({ ...f, allowances: f.allowances.filter((_, idx) => idx !== i) }));
+  }
+  function addDeductionRow() {
+    setStructureForm((f) => ({ ...f, deductions: [...f.deductions, { deductionCodeId: "", amount: "", isPercentageOfBasic: false }] }));
+  }
+  function updateDeductionRow(i: number, key: string, value: any) {
+    setStructureForm((f) => { const deductions = [...f.deductions]; deductions[i] = { ...deductions[i], [key]: value }; return { ...f, deductions }; });
+  }
+  function removeDeductionRow(i: number) {
+    setStructureForm((f) => ({ ...f, deductions: f.deductions.filter((_, idx) => idx !== i) }));
+  }
+
+  async function handleCreateStructure(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy(true); setError(null);
+    try {
+      await api.createSalaryStructure({
+        employeeId: structureForm.employeeId,
+        payGroupId: structureForm.payGroupId || undefined,
+        salaryGradeId: structureForm.salaryGradeId || undefined,
+        basicSalary: Number(structureForm.basicSalary),
+        effectiveDate: structureForm.effectiveDate,
+        allowances: structureForm.allowances.map((a) => ({ earningCodeId: a.earningCodeId, amount: Number(a.amount), isPercentageOfBasic: a.isPercentageOfBasic })),
+        deductions: structureForm.deductions.map((d) => ({ deductionCodeId: d.deductionCodeId, amount: Number(d.amount), isPercentageOfBasic: d.isPercentageOfBasic })),
+      });
+      toast.success("Salary structure created as DRAFT. Request approval to activate it.");
+      setStructureForm({ employeeId: "", payGroupId: "", salaryGradeId: "", basicSalary: "", effectiveDate: "", allowances: [], deductions: [] });
+      if (structureForm.employeeId) loadEmployeeStructures(structureForm.employeeId);
+    } catch (err: any) { setError(err.message || "Could not create salary structure"); } finally { setBusy(false); }
+  }
+
+  async function loadEmployeeStructures(employeeId: string) {
+    if (!employeeId) { setEmployeeStructures([]); return; }
+    try { const res = await api.getEmployeeSalaryStructures(employeeId); setEmployeeStructures(res.structures); } catch { setEmployeeStructures([]); }
+  }
+
+  async function handleRequestStructureApproval(id: string) {
+    setBusy(true); setError(null);
+    try { await api.requestSalaryStructureApproval(id); toast.info("Submitted for approval."); loadEmployeeStructures(structureForm.employeeId); }
+    catch (err: any) { setError(err.message || "Could not request approval"); } finally { setBusy(false); }
+  }
+
+  useEffect(() => { load(); api.listEmployees().then((r: any) => setEmployees(r.employees)).catch(() => {}); }, []);
 
   async function submit(fn: () => Promise<any>, resetFn: () => void, successMsg: string) {
     setBusy(true); setError(null);
@@ -130,7 +186,7 @@ export default function PayrollPage() {
     { id: "calendars", label: "Calendars" }, { id: "periods", label: "Periods" }, { id: "grades", label: "Salary Grades" },
     { id: "groups", label: "Pay Groups" }, { id: "earnings", label: "Earning Codes" }, { id: "deductions", label: "Deduction Codes" },
     { id: "overtime", label: "Overtime Rules" }, { id: "tax", label: "Tax Tables" },
-    { id: "statutory", label: "Statutory Rates" }, { id: "process", label: "Process Payroll" },
+    { id: "statutory", label: "Statutory Rates" }, { id: "structures", label: "Salary Structures" }, { id: "process", label: "Process Payroll" },
   ];
 
   return (
@@ -318,6 +374,80 @@ export default function PayrollPage() {
                 </tbody>
               </table>
             </div>
+          </>
+        )}
+
+        {tab === "structures" && (
+          <>
+            <form onSubmit={handleCreateStructure} className="card p-5 mb-6">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
+                <select required className="input" value={structureForm.employeeId} onChange={(e) => { setStructureForm((f) => ({ ...f, employeeId: e.target.value })); loadEmployeeStructures(e.target.value); }}>
+                  <option value="">Employee…</option>
+                  {employees.map((e: any) => (<option key={e.id} value={e.id}>{e.fullName}</option>))}
+                </select>
+                <input required type="date" className="input" value={structureForm.effectiveDate} onChange={(e) => setStructureForm((f) => ({ ...f, effectiveDate: e.target.value }))} />
+                <input required type="number" step="0.01" placeholder="Basic salary" className="input" value={structureForm.basicSalary} onChange={(e) => setStructureForm((f) => ({ ...f, basicSalary: e.target.value }))} />
+                <select className="input" value={structureForm.salaryGradeId} onChange={(e) => setStructureForm((f) => ({ ...f, salaryGradeId: e.target.value }))}>
+                  <option value="">Salary grade (optional)…</option>
+                  {grades.map((g: any) => (<option key={g.id} value={g.id}>{g.name}</option>))}
+                </select>
+                <select className="input" value={structureForm.payGroupId} onChange={(e) => setStructureForm((f) => ({ ...f, payGroupId: e.target.value }))}>
+                  <option value="">Pay group (optional)…</option>
+                  {groups.map((g: any) => (<option key={g.id} value={g.id}>{g.name}</option>))}
+                </select>
+              </div>
+
+              <div className="font-medium text-[12.5px] text-text-900 mb-2 mt-4">Allowances</div>
+              {structureForm.allowances.map((a, i) => (
+                <div key={i} className="grid grid-cols-4 gap-2 mb-2 items-center">
+                  <select required className="input !py-1.5" value={a.earningCodeId} onChange={(e) => updateAllowanceRow(i, "earningCodeId", e.target.value)}>
+                    <option value="">Earning code…</option>
+                    {earnings.map((c: any) => (<option key={c.id} value={c.id}>{c.name}</option>))}
+                  </select>
+                  <input required type="number" step="0.01" placeholder="Amount" className="input !py-1.5" value={a.amount} onChange={(e) => updateAllowanceRow(i, "amount", e.target.value)} />
+                  <label className="flex items-center gap-1 text-[11px] text-text-700"><input type="checkbox" checked={a.isPercentageOfBasic} onChange={(e) => updateAllowanceRow(i, "isPercentageOfBasic", e.target.checked)} /> % of basic</label>
+                  <button type="button" onClick={() => removeAllowanceRow(i)} className="btn-text text-rose-600 !text-[11px]">Remove</button>
+                </div>
+              ))}
+              <button type="button" onClick={addAllowanceRow} className="btn-text text-gold-600 mb-3">+ Add allowance</button>
+
+              <div className="font-medium text-[12.5px] text-text-900 mb-2 mt-2">Deductions</div>
+              {structureForm.deductions.map((d, i) => (
+                <div key={i} className="grid grid-cols-4 gap-2 mb-2 items-center">
+                  <select required className="input !py-1.5" value={d.deductionCodeId} onChange={(e) => updateDeductionRow(i, "deductionCodeId", e.target.value)}>
+                    <option value="">Deduction code…</option>
+                    {deductions.map((c: any) => (<option key={c.id} value={c.id}>{c.name}</option>))}
+                  </select>
+                  <input required type="number" step="0.01" placeholder="Amount" className="input !py-1.5" value={d.amount} onChange={(e) => updateDeductionRow(i, "amount", e.target.value)} />
+                  <label className="flex items-center gap-1 text-[11px] text-text-700"><input type="checkbox" checked={d.isPercentageOfBasic} onChange={(e) => updateDeductionRow(i, "isPercentageOfBasic", e.target.checked)} /> % of basic</label>
+                  <button type="button" onClick={() => removeDeductionRow(i)} className="btn-text text-rose-600 !text-[11px]">Remove</button>
+                </div>
+              ))}
+              <button type="button" onClick={addDeductionRow} className="btn-text text-gold-600 mb-3">+ Add deduction</button>
+
+              <div>
+                <button type="submit" disabled={busy} className="btn-primary">Create Salary Structure</button>
+              </div>
+            </form>
+
+            {structureForm.employeeId && (
+              <div className="card overflow-x-auto">
+                <table className="w-full text-sm table-modern">
+                  <thead><tr><th>Effective</th><th>Basic</th><th>Status</th><th></th></tr></thead>
+                  <tbody>
+                    {employeeStructures.map((s: any) => (
+                      <tr key={s.id}>
+                        <td className="text-text-700">{new Date(s.effectiveDate).toLocaleDateString()}</td>
+                        <td className="text-text-700">GHS {Number(s.basicSalary).toLocaleString()}</td>
+                        <td><span className={`badge ${s.status === "ACTIVE" ? "bg-green-100 text-green-600" : s.status === "PENDING_APPROVAL" ? "bg-gold-500/15 text-gold-600" : "bg-paper-100 text-text-muted"}`}>{s.status.replaceAll("_", " ")}</span></td>
+                        <td>{s.status === "DRAFT" && <button onClick={() => handleRequestStructureApproval(s.id)} className="btn-text text-gold-600">Request approval</button>}</td>
+                      </tr>
+                    ))}
+                    {employeeStructures.length === 0 && <tr><td colSpan={4} className="text-center text-text-muted text-sm py-6">No salary structures for this employee yet.</td></tr>}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </>
         )}
 

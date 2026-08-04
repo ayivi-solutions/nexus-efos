@@ -186,18 +186,26 @@ payrollRouter.post("/statutory-rates", requirePermission("institution.configure"
 payrollRouter.get("/salary-structures/:employeeId", requirePermission("reports.view"), async (req: AuthedRequest, res) => {
   const structures = await prisma.employeeSalaryStructure.findMany({
     where: { employeeId: req.params.employeeId, institutionId: req.auth!.institutionId },
-    include: { allowances: true },
+    include: { allowances: true, deductions: true },
     orderBy: { effectiveDate: "desc" },
   });
   res.json({ structures });
 });
 
 const allowanceSchema = z.object({ earningCodeId: z.string(), amount: z.number().positive(), isPercentageOfBasic: z.boolean().optional() });
+const deductionAssignmentSchema = z.object({ deductionCodeId: z.string(), amount: z.number().positive(), isPercentageOfBasic: z.boolean().optional() });
 const salaryStructureSchema = z.object({
   employeeId: z.string(), payGroupId: z.string().optional(), salaryGradeId: z.string().optional(),
   basicSalary: z.number().positive(), effectiveDate: z.string(), allowances: z.array(allowanceSchema).optional(),
+  deductions: z.array(deductionAssignmentSchema).optional(),
 });
 
+// §209.3 "Deductions shall not exceed approved limits" — the specific
+// statutory ceiling (if Ghana law sets one) hasn't been confirmed the
+// same rigorous way as the tax rates, so this deliberately checks only
+// the one universal, non-negotiable floor: total deductions can never
+// exceed gross pay, since a negative net pay is never valid regardless
+// of what any specific legal limit turns out to be.
 payrollRouter.post("/salary-structures", requirePermission("users.administer"), async (req: AuthedRequest, res) => {
   const parsed = salaryStructureSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
@@ -209,13 +217,21 @@ payrollRouter.post("/salary-structures", requirePermission("users.administer"), 
     }
   }
 
+  const totalAllowanceAmount = (parsed.data.allowances || []).reduce((s, a) => s + (a.isPercentageOfBasic ? parsed.data.basicSalary * (a.amount / 100) : a.amount), 0);
+  const totalDeductionAmount = (parsed.data.deductions || []).reduce((s, d) => s + (d.isPercentageOfBasic ? parsed.data.basicSalary * (d.amount / 100) : d.amount), 0);
+  const estimatedGross = parsed.data.basicSalary + totalAllowanceAmount;
+  if (totalDeductionAmount > estimatedGross) {
+    return res.status(400).json({ error: "Total deductions cannot exceed gross pay" });
+  }
+
   const structure = await prisma.employeeSalaryStructure.create({
     data: {
       institutionId: req.auth!.institutionId, employeeId: parsed.data.employeeId, payGroupId: parsed.data.payGroupId, salaryGradeId: parsed.data.salaryGradeId,
       basicSalary: parsed.data.basicSalary, effectiveDate: new Date(parsed.data.effectiveDate), createdById: req.auth!.userId,
       allowances: parsed.data.allowances ? { create: parsed.data.allowances.map((a) => ({ earningCodeId: a.earningCodeId, amount: a.amount, isPercentageOfBasic: a.isPercentageOfBasic || false })) } : undefined,
+      deductions: parsed.data.deductions ? { create: parsed.data.deductions.map((d) => ({ deductionCodeId: d.deductionCodeId, amount: d.amount, isPercentageOfBasic: d.isPercentageOfBasic || false })) } : undefined,
     },
-    include: { allowances: true },
+    include: { allowances: true, deductions: true },
   });
 
   await prisma.auditLog.create({ data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "salary_structure.create", resource: "employee_salary_structure", resourceId: structure.id, metadata: { employeeId: parsed.data.employeeId } } });
@@ -303,7 +319,7 @@ payrollRouter.post("/periods/:periodId/process", requirePermission("institution.
 
   const activeStructures = await prisma.employeeSalaryStructure.findMany({
     where: { institutionId: req.auth!.institutionId, status: "ACTIVE" },
-    include: { allowances: true },
+    include: { allowances: true, deductions: { where: { active: true } } },
   });
   const earningCodes = await prisma.earningCode.findMany({ where: { institutionId: req.auth!.institutionId } });
   const earningCodeById = new Map(earningCodes.map((e) => [e.id, e]));
@@ -323,17 +339,31 @@ payrollRouter.post("/periods/:periodId/process", requirePermission("institution.
       if (code?.taxable) taxableAllowances += amount;
     }
 
+    // §209.2 "Deduction Processing" — every active EmployeeDeduction on
+    // this structure genuinely reduces net pay now, not a hardcoded
+    // zero. Statutory deductions (PAYE, SSNIT) are calculated
+    // separately above and combined with these "other" deductions
+    // (loan repayment instalments, insurance, union dues, custom) below.
+    let otherDeductions = 0;
+    for (const deduction of structure.deductions) {
+      otherDeductions += deduction.isPercentageOfBasic ? round2(basicSalary * (Number(deduction.amount) / 100)) : Number(deduction.amount);
+    }
+
     const grossPay = round2(basicSalary + totalAllowances);
     const taxableIncome = round2(basicSalary + taxableAllowances);
     const paye = calculatePAYE(taxableIncome, bands);
     const ssnitEmployee = calculateStatutoryContribution(basicSalary, Number(ssnitEmployeeRate.rate), ssnitEmployeeRate.ceiling ? Number(ssnitEmployeeRate.ceiling) : null, ssnitEmployeeRate.minimum ? Number(ssnitEmployeeRate.minimum) : null);
     const ssnitEmployerTier1 = calculateStatutoryContribution(basicSalary, Number(ssnitEmployerRate.rate), ssnitEmployerRate.ceiling ? Number(ssnitEmployerRate.ceiling) : null, ssnitEmployerRate.minimum ? Number(ssnitEmployerRate.minimum) : null);
     const tier2Employer = calculateStatutoryContribution(basicSalary, Number(tier2Rate.rate), tier2Rate.ceiling ? Number(tier2Rate.ceiling) : null, tier2Rate.minimum ? Number(tier2Rate.minimum) : null);
-    const netPay = round2(grossPay - paye - ssnitEmployee);
+    // A structure's deductions were already checked against gross pay at
+    // creation time, but re-checked here too against the ACTUAL computed
+    // net pay this run — allowances/basic could differ from what was
+    // true when the deduction was first assigned.
+    const netPay = round2(Math.max(0, grossPay - paye - ssnitEmployee - otherDeductions));
 
-    entries.push({ employeeId: structure.employeeId, basicSalary, grossPay, taxableIncome, paye, ssnitEmployee, ssnitEmployerTier1, tier2Employer, otherDeductions: 0, netPay });
+    entries.push({ employeeId: structure.employeeId, basicSalary, grossPay, taxableIncome, paye, ssnitEmployee, ssnitEmployerTier1, tier2Employer, otherDeductions: round2(otherDeductions), netPay });
     totalGross += grossPay;
-    totalDeductions += paye + ssnitEmployee;
+    totalDeductions += paye + ssnitEmployee + otherDeductions;
     totalNet += netPay;
   }
 
