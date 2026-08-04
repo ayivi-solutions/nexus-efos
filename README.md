@@ -199,9 +199,14 @@ real customer data.
   running balance), Branch and Period breakdowns, and an Executive
   Dashboard. Report generation is genuinely audited — a gap that existed
   across every report in the platform until this pass closed it here.
+- Inter-Branch Accounting: transfers as real balanced journals via Due
+  To/Due From settlement accounts, Approval Workflow, and a genuine
+  reconciliation invariant — every branch's settlement balance, summed
+  across the institution, must net to exactly zero — surfaced directly
+  on the Outstanding Balances report.
 - Not yet wired: automatic posting from Savings, Loans, or Cash & Vault
-  into the GL (a real, separate integration effort) — and Inter-Branch
-  Accounting and Financial Analytics are still ahead.
+  into the GL (a real, separate integration effort) — and Financial
+  Analytics (§125) is still ahead.
 
 **Accessibility**
 - WCAG AA color contrast (verified programmatically, not eyeballed),
@@ -309,8 +314,8 @@ a smaller balance, not a structurally different thing.
 **Phase 5 (General Ledger, EFS §116-125) is in progress, 7 of 8 sections
 live** — Chart of Accounts, Journal Management, Ledger Posting, Financial
 Period Management, Recurring Journal Management, Financial Statement
-Management, and GL Reporting all real and described above. Remaining:
-Inter-Branch Accounting (§121), Financial Analytics (§125, AI portions
+Management, GL Reporting, and Inter-Branch Accounting all real and
+described above. Remaining: Financial Analytics (§125, AI portions
 pending the AI spec), and wiring automatic posting from every
 other module into the GL (§116.4's full integration — a genuinely
 separate, later effort).
