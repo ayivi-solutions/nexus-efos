@@ -349,6 +349,37 @@ genuinely separate, later effort), and AI-Based Financial Insights within
   triggered; the scheduler infrastructure now exists (built for Loan
   Arrears) but hasn't been wired to this yet.
 
+**Identified via the Operations Supervisor functional realignment
+document (4 Aug 2026), not yet in any phase — noted for later
+integration, not forgotten:**
+- **Cheque verification/tracking** — Cash & Vault Management (Phase 4)
+  covers cashbook, vault, and petty cash genuinely well, but cheque-
+  specific handling (verification, register, clearing status) was never
+  built as its own thing. Natural fit: an addition to Phase 4's existing
+  Cash & Vault module.
+- **Complaint Resolution / customer follow-up** — no complaints or
+  grievance tracking exists anywhere in the platform today. A real,
+  distinct gap from Customer onboarding (which does exist). Natural fit:
+  an extension of the Customer module.
+- **HR attendance, discipline, and performance tracking** — Employee
+  records exist (StaffX), but day-to-day attendance/scheduling/discipline
+  as dedicated features don't. Natural fit: an HR-focused addition,
+  possibly alongside Payroll (Phase 6) given the shared HR data.
+- **Internal audit findings/remediation tracking** — the Audit Log is
+  comprehensive and immutable, and the Approval Workflow enforces
+  segregation of duties, but there's no structured "finding → remediation
+  → close-out" workflow, which is a different thing from a transaction
+  log. Natural fit: a standalone Internal Control module.
+- **Consolidated portfolio/credit-performance dashboard** — PAR30 and
+  arrears classification exist at the loan level (§77); a rolled-up,
+  institution-wide portfolio-quality view specifically doesn't. Natural
+  fit: an extension of Financial Analytics (§125) or its own Credit Risk
+  reporting view.
+- Business Development & Sales (prospecting, market development, sales
+  pipeline) was reviewed and judged genuinely out of scope for a core
+  banking backend unless explicitly requested as a dedicated CRM/pipeline
+  feature — not treated as a gap, a deliberate scope boundary.
+
 ## Design decisions worth flagging
 
 - Institution registration is gated behind a shared setup key held only as
