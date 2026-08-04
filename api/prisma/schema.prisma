@@ -110,6 +110,7 @@ model Institution {
   statutoryContributionRates StatutoryContributionRate[]
   employeeSalaryStructures EmployeeSalaryStructure[]
   overtimeRules           OvertimeRule[]
+  payrollRuns             PayrollRun[]
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -3280,5 +3281,63 @@ model EmployeeAllowance {
   isPercentageOfBasic Boolean @default(false) @map("is_percentage_of_basic")
 
   @@map("employee_allowance")
+  @@schema("nexus")
+}
+
+// doc §210 Payroll Processing. §210.3 "Duplicate payroll processing is
+// prevented" — enforced via a unique constraint on payrollPeriodId, not
+// just a route-level check. §210.3 "Payroll processing uses approved
+// payroll configurations" — genuinely true: only ACTIVE salary
+// structures, ACTIVE tax tables, and ACTIVE statutory rates are ever
+// read; nothing DRAFT or inactive can contribute to a real calculation.
+enum PayrollRunStatus {
+  DRAFT
+  PROCESSING
+  PROCESSED
+  REVERSED
+
+  @@schema("nexus")
+}
+
+model PayrollRun {
+  id              String            @id(map: "pk_payroll_run") @default(uuid())
+  institution     Institution       @relation(fields: [institutionId], references: [id], onDelete: Cascade, map: "fk_payroll_run_institution")
+  institutionId   String            @map("institution_id")
+  payrollPeriodId String            @unique @map("payroll_period_id")
+
+  status          PayrollRunStatus @default(DRAFT)
+  totalGross      Decimal          @default(0) @map("total_gross") @db.Decimal(14, 2)
+  totalDeductions Decimal          @default(0) @map("total_deductions") @db.Decimal(14, 2)
+  totalNet        Decimal          @default(0) @map("total_net") @db.Decimal(14, 2)
+
+  processedById String?   @map("processed_by_id")
+  processedAt   DateTime? @map("processed_at")
+  createdAt     DateTime  @default(now()) @map("created_at")
+
+  entries PayrollEntry[]
+
+  @@map("payroll_run")
+  @@schema("nexus")
+}
+
+model PayrollEntry {
+  id           String     @id(map: "pk_payroll_entry") @default(uuid())
+  payrollRun   PayrollRun @relation(fields: [payrollRunId], references: [id], onDelete: Cascade, map: "fk_payroll_entry_payroll_run")
+  payrollRunId String     @map("payroll_run_id")
+
+  employeeId          String
+  basicSalary         Decimal @map("basic_salary") @db.Decimal(12, 2)
+  grossPay            Decimal @map("gross_pay") @db.Decimal(12, 2)
+  taxableIncome        Decimal @map("taxable_income") @db.Decimal(12, 2)
+  paye                Decimal @db.Decimal(12, 2)
+  ssnitEmployee       Decimal @map("ssnit_employee") @db.Decimal(12, 2)
+  ssnitEmployerTier1  Decimal @map("ssnit_employer_tier1") @db.Decimal(12, 2)
+  tier2Employer       Decimal @map("tier2_employer") @db.Decimal(12, 2)
+  otherDeductions     Decimal @default(0) @map("other_deductions") @db.Decimal(12, 2)
+  netPay              Decimal @map("net_pay") @db.Decimal(12, 2)
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("payroll_entry")
   @@schema("nexus")
 }

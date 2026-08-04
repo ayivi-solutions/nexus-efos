@@ -407,6 +407,12 @@ export const api = {
   createSalaryStructure: (data: any) => request("/payroll/salary-structures", { method: "POST", body: JSON.stringify(data) }),
   requestSalaryStructureApproval: (id: string) => request(`/payroll/salary-structures/${id}/request-approval`, { method: "POST" }),
 
+  activateTaxTable: (id: string) => request(`/payroll/tax-tables/${id}/activate`, { method: "POST" }),
+  activateStatutoryRate: (id: string) => request(`/payroll/statutory-rates/${id}/activate`, { method: "POST" }),
+  listPayrollRuns: () => request("/payroll/runs"),
+  getPayrollRun: (id: string) => request(`/payroll/runs/${id}`),
+  processPayrollPeriod: (periodId: string) => request(`/payroll/periods/${periodId}/process`, { method: "POST" }),
+
   listFiscalYears: () => request("/general-ledger/fiscal-years"),
   createFiscalYear: (data: any) => request("/general-ledger/fiscal-years", { method: "POST", body: JSON.stringify(data) }),
   createFinancialPeriod: (data: any) => request("/general-ledger/financial-periods", { method: "POST", body: JSON.stringify(data) }),

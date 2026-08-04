@@ -3,6 +3,7 @@ import { z } from "zod";
 import { prisma } from "../lib/prisma";
 import { requireAuth, AuthedRequest } from "../middleware/auth";
 import { requirePermission } from "../middleware/rbac";
+import { calculatePAYE, calculateStatutoryContribution, round2 } from "../lib/payrollCalc";
 
 // doc §206-208 Payroll Management: Overview, Configuration, Salary
 // Structure. Tax tables and statutory rates get real infrastructure here
@@ -231,4 +232,123 @@ payrollRouter.post("/salary-structures/:id/request-approval", requirePermission(
   });
   await prisma.employeeSalaryStructure.update({ where: { id: structure.id }, data: { status: "PENDING_APPROVAL" } });
   res.status(202).json({ pendingApproval: true });
+});
+
+// -------------------------------------------------------------------------
+// Activation — flips a confirmed-rate table/rate from inactive to active.
+// Deactivates any other active one of the same kind first, so exactly one
+// tax table and one of each named statutory rate is ever active at a
+// time (no ambiguity about which rate a calculation should use).
+// -------------------------------------------------------------------------
+
+payrollRouter.post("/tax-tables/:id/activate", requirePermission("institution.configure"), async (req: AuthedRequest, res) => {
+  const table = await prisma.taxTable.findFirst({ where: { id: req.params.id, institutionId: req.auth!.institutionId } });
+  if (!table) return res.status(404).json({ error: "Tax table not found" });
+  await prisma.taxTable.updateMany({ where: { institutionId: req.auth!.institutionId, active: true }, data: { active: false } });
+  const updated = await prisma.taxTable.update({ where: { id: table.id }, data: { active: true } });
+  await prisma.auditLog.create({ data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "tax_table.activate", resource: "tax_table", resourceId: table.id } });
+  res.json({ table: updated });
+});
+
+payrollRouter.post("/statutory-rates/:id/activate", requirePermission("institution.configure"), async (req: AuthedRequest, res) => {
+  const rate = await prisma.statutoryContributionRate.findFirst({ where: { id: req.params.id, institutionId: req.auth!.institutionId } });
+  if (!rate) return res.status(404).json({ error: "Statutory rate not found" });
+  await prisma.statutoryContributionRate.updateMany({ where: { institutionId: req.auth!.institutionId, name: rate.name, active: true }, data: { active: false } });
+  const updated = await prisma.statutoryContributionRate.update({ where: { id: rate.id }, data: { active: true } });
+  await prisma.auditLog.create({ data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "statutory_rate.activate", resource: "statutory_contribution_rate", resourceId: rate.id } });
+  res.json({ rate: updated });
+});
+
+// -------------------------------------------------------------------------
+// §210 Payroll Processing. §210.3 "Duplicate payroll processing is
+// prevented" via the unique payrollPeriodId constraint; the DB itself
+// rejects a second run for the same period, not just this route.
+// -------------------------------------------------------------------------
+
+payrollRouter.get("/runs", requirePermission("reports.view"), async (req: AuthedRequest, res) => {
+  const runs = await prisma.payrollRun.findMany({ where: { institutionId: req.auth!.institutionId }, orderBy: { createdAt: "desc" } });
+  res.json({ runs });
+});
+
+payrollRouter.get("/runs/:id", requirePermission("reports.view"), async (req: AuthedRequest, res) => {
+  const run = await prisma.payrollRun.findFirst({ where: { id: req.params.id, institutionId: req.auth!.institutionId }, include: { entries: true } });
+  if (!run) return res.status(404).json({ error: "Payroll run not found" });
+  res.json({ run });
+});
+
+// §210.2 "Payroll Calculation" — every active employee's basic salary
+// structure (§208) is pulled fresh, taxable vs non-taxable allowances
+// are split using each EarningCode's own taxable flag (§207), PAYE is
+// computed from the currently ACTIVE tax table using the tested
+// calculatePAYE function, and SSNIT/Tier 2 from the currently ACTIVE
+// statutory rates using calculateStatutoryContribution. Nothing here
+// invents a number — every figure traces back to real configuration.
+payrollRouter.post("/periods/:periodId/process", requirePermission("institution.configure"), async (req: AuthedRequest, res) => {
+  const period = await prisma.payrollPeriod.findFirst({ where: { id: req.params.periodId, institutionId: req.auth!.institutionId } });
+  if (!period) return res.status(404).json({ error: "Payroll period not found" });
+
+  const existingRun = await prisma.payrollRun.findUnique({ where: { payrollPeriodId: period.id } });
+  if (existingRun) return res.status(400).json({ error: "This period has already been processed — duplicate processing is not allowed" });
+
+  const taxTable = await prisma.taxTable.findFirst({ where: { institutionId: req.auth!.institutionId, active: true }, include: { bands: { orderBy: { sequence: "asc" } } } });
+  if (!taxTable) return res.status(400).json({ error: "No active tax table — activate one before processing payroll" });
+
+  const statutoryRates = await prisma.statutoryContributionRate.findMany({ where: { institutionId: req.auth!.institutionId, active: true } });
+  const ssnitEmployeeRate = statutoryRates.find((r) => r.name === "SSNIT Employee");
+  const ssnitEmployerRate = statutoryRates.find((r) => r.name === "SSNIT Employer Tier 1");
+  const tier2Rate = statutoryRates.find((r) => r.name === "Tier 2 Employer");
+  if (!ssnitEmployeeRate || !ssnitEmployerRate || !tier2Rate) {
+    return res.status(400).json({ error: "Active 'SSNIT Employee', 'SSNIT Employer Tier 1', and 'Tier 2 Employer' rates are all required before processing payroll" });
+  }
+
+  const activeStructures = await prisma.employeeSalaryStructure.findMany({
+    where: { institutionId: req.auth!.institutionId, status: "ACTIVE" },
+    include: { allowances: true },
+  });
+  const earningCodes = await prisma.earningCode.findMany({ where: { institutionId: req.auth!.institutionId } });
+  const earningCodeById = new Map(earningCodes.map((e) => [e.id, e]));
+
+  const bands = taxTable.bands.map((b) => ({ lowerBound: Number(b.lowerBound), upperBound: b.upperBound === null ? null : Number(b.upperBound), rate: Number(b.rate) }));
+
+  const entries = [];
+  let totalGross = 0, totalDeductions = 0, totalNet = 0;
+
+  for (const structure of activeStructures) {
+    const basicSalary = Number(structure.basicSalary);
+    let totalAllowances = 0, taxableAllowances = 0;
+    for (const allowance of structure.allowances) {
+      const code = earningCodeById.get(allowance.earningCodeId);
+      const amount = allowance.isPercentageOfBasic ? round2(basicSalary * (Number(allowance.amount) / 100)) : Number(allowance.amount);
+      totalAllowances += amount;
+      if (code?.taxable) taxableAllowances += amount;
+    }
+
+    const grossPay = round2(basicSalary + totalAllowances);
+    const taxableIncome = round2(basicSalary + taxableAllowances);
+    const paye = calculatePAYE(taxableIncome, bands);
+    const ssnitEmployee = calculateStatutoryContribution(basicSalary, Number(ssnitEmployeeRate.rate), ssnitEmployeeRate.ceiling ? Number(ssnitEmployeeRate.ceiling) : null, null);
+    const ssnitEmployerTier1 = calculateStatutoryContribution(basicSalary, Number(ssnitEmployerRate.rate), ssnitEmployerRate.ceiling ? Number(ssnitEmployerRate.ceiling) : null, null);
+    const tier2Employer = calculateStatutoryContribution(basicSalary, Number(tier2Rate.rate), tier2Rate.ceiling ? Number(tier2Rate.ceiling) : null, null);
+    const netPay = round2(grossPay - paye - ssnitEmployee);
+
+    entries.push({ employeeId: structure.employeeId, basicSalary, grossPay, taxableIncome, paye, ssnitEmployee, ssnitEmployerTier1, tier2Employer, otherDeductions: 0, netPay });
+    totalGross += grossPay;
+    totalDeductions += paye + ssnitEmployee;
+    totalNet += netPay;
+  }
+
+  const run = await prisma.payrollRun.create({
+    data: {
+      institutionId: req.auth!.institutionId, payrollPeriodId: period.id, status: "PROCESSED",
+      totalGross: round2(totalGross), totalDeductions: round2(totalDeductions), totalNet: round2(totalNet),
+      processedById: req.auth!.userId, processedAt: new Date(),
+      entries: { create: entries },
+    },
+    include: { entries: true },
+  });
+
+  await prisma.payrollPeriod.update({ where: { id: period.id }, data: { status: "PROCESSING" } });
+  await prisma.auditLog.create({ data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "payroll_run.process", resource: "payroll_run", resourceId: run.id, metadata: { periodId: period.id, employeeCount: entries.length } } });
+
+  res.status(201).json({ run });
 });

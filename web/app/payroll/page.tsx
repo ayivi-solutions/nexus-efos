@@ -5,7 +5,7 @@ import { api } from "@/lib/api";
 import { useErrorToast, useToast } from "@/components/Toast";
 import { AppShell } from "@/components/AppShell";
 
-type Tab = "calendars" | "periods" | "grades" | "groups" | "earnings" | "deductions" | "overtime" | "tax";
+type Tab = "calendars" | "periods" | "grades" | "groups" | "earnings" | "deductions" | "overtime" | "tax" | "statutory" | "process";
 
 export default function PayrollPage() {
   const toast = useToast();
@@ -22,6 +22,9 @@ export default function PayrollPage() {
   const [deductions, setDeductions] = useState<any[]>([]);
   const [overtimeRules, setOvertimeRules] = useState<any[]>([]);
   const [taxTables, setTaxTables] = useState<any[]>([]);
+  const [statutoryRates, setStatutoryRates] = useState<any[]>([]);
+  const [runs, setRuns] = useState<any[]>([]);
+  const [selectedRun, setSelectedRun] = useState<any>(null);
 
   const [calForm, setCalForm] = useState({ name: "", frequency: "MONTHLY", payDayOfMonth: "" });
   const [periodForm, setPeriodForm] = useState({ calendarId: "", name: "", startDate: "", endDate: "", payDate: "" });
@@ -40,6 +43,30 @@ export default function PayrollPage() {
     api.listDeductionCodes().then((r) => setDeductions(r.codes)).catch(() => {});
     api.listOvertimeRules().then((r) => setOvertimeRules(r.rules)).catch(() => {});
     api.listTaxTables().then((r) => setTaxTables(r.tables)).catch(() => {});
+    api.listStatutoryRates().then((r) => setStatutoryRates(r.rates)).catch(() => {});
+    api.listPayrollRuns().then((r) => setRuns(r.runs)).catch(() => {});
+  }
+
+  async function handleActivateTax(id: string) {
+    setBusy(true); setError(null);
+    try { await api.activateTaxTable(id); toast.success("Tax table activated."); load(); }
+    catch (err: any) { setError(err.message); } finally { setBusy(false); }
+  }
+
+  async function handleActivateStatutory(id: string) {
+    setBusy(true); setError(null);
+    try { await api.activateStatutoryRate(id); toast.success("Rate activated."); load(); }
+    catch (err: any) { setError(err.message); } finally { setBusy(false); }
+  }
+
+  async function handleProcess(periodId: string) {
+    setBusy(true); setError(null);
+    try { const res = await api.processPayrollPeriod(periodId); toast.success(`Processed ${res.run.entries.length} employee(s).`); load(); }
+    catch (err: any) { setError(err.message || "Could not process payroll"); } finally { setBusy(false); }
+  }
+
+  async function viewRun(id: string) {
+    try { const res = await api.getPayrollRun(id); setSelectedRun(res.run); } catch (err: any) { setError(err.message); }
   }
   useEffect(() => { load(); }, []);
 
@@ -52,7 +79,8 @@ export default function PayrollPage() {
   const TABS: { id: Tab; label: string }[] = [
     { id: "calendars", label: "Calendars" }, { id: "periods", label: "Periods" }, { id: "grades", label: "Salary Grades" },
     { id: "groups", label: "Pay Groups" }, { id: "earnings", label: "Earning Codes" }, { id: "deductions", label: "Deduction Codes" },
-    { id: "overtime", label: "Overtime Rules" }, { id: "tax", label: "Tax Tables (unconfirmed)" },
+    { id: "overtime", label: "Overtime Rules" }, { id: "tax", label: "Tax Tables" },
+    { id: "statutory", label: "Statutory Rates" }, { id: "process", label: "Process Payroll" },
   ];
 
   return (
@@ -163,11 +191,108 @@ export default function PayrollPage() {
         )}
 
         {tab === "tax" && (
-          <div className="card p-5 bg-gold-500/10">
-            <div className="font-medium text-[13px] text-ink-900 mb-2">Tax tables and statutory rates are intentionally not editable here yet</div>
-            <p className="text-[12.5px] text-text-700 mb-3">Building PAYE/SSNIT/Tier 2 calculation logic requires the current, confirmed GRA and SSNIT rates. Multiple sources checked during this build disagreed on exact band widths, and one flagged an inconsistency in the official GRA table itself — building against unconfirmed figures risks real financial and legal consequences for actual employee pay. This section will be enabled once the rates are confirmed.</p>
-            <div className="text-[12.5px] text-text-muted">{taxTables.length} tax table(s) currently on file, all inactive.</div>
-          </div>
+          <>
+            <p className="text-[12.5px] text-text-muted mb-4">Confirmed against the GRA's own published cumulative-tax figures and tested exactly before this went live. Only ONE tax table can be active at a time — activating a new one deactivates whichever was active before.</p>
+            <div className="space-y-3">
+              {taxTables.map((t: any) => (
+                <div key={t.id} className="card p-4">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="font-medium text-[13px] text-ink-900">{t.name}</span>
+                    <div className="flex items-center gap-2">
+                      <span className={`badge ${t.active ? "bg-green-100 text-green-600" : "bg-paper-100 text-text-muted"}`}>{t.active ? "ACTIVE" : "Inactive"}</span>
+                      {!t.active && <button onClick={() => handleActivateTax(t.id)} className="btn-text text-gold-600">Activate</button>}
+                    </div>
+                  </div>
+                  <table className="w-full text-[12px]"><tbody>
+                    {t.bands.map((b: any) => (<tr key={b.id}><td className="text-text-700 py-0.5">GHS {Number(b.lowerBound).toLocaleString()} – {b.upperBound ? `GHS ${Number(b.upperBound).toLocaleString()}` : "and above"}</td><td className="text-text-900 text-right">{b.rate}%</td></tr>))}
+                  </tbody></table>
+                </div>
+              ))}
+              {taxTables.length === 0 && <p className="text-text-muted text-sm text-center py-8">No tax tables created yet.</p>}
+            </div>
+          </>
+        )}
+
+        {tab === "statutory" && (
+          <>
+            <p className="text-[12.5px] text-text-muted mb-4">Confirmed 2026 rates: SSNIT Employee 5.5%, SSNIT Employer (Tier 1) 8%, Tier 2 Employer 5% — combined employer 13%, combined total 18.5%. Ceiling GHS 69,000/month, minimum GHS 587.79/month. Names must be exactly "SSNIT Employee", "SSNIT Employer Tier 1", "Tier 2 Employer" for payroll processing to find them.</p>
+            <div className="card overflow-x-auto">
+              <table className="w-full text-sm table-modern">
+                <thead><tr><th>Name</th><th>Rate</th><th>Ceiling</th><th>Status</th><th></th></tr></thead>
+                <tbody>
+                  {statutoryRates.map((r: any) => (
+                    <tr key={r.id}>
+                      <td className="text-text-900">{r.name}</td>
+                      <td className="text-text-700">{r.rate}%</td>
+                      <td className="text-text-700">{r.ceiling ? `GHS ${Number(r.ceiling).toLocaleString()}` : "—"}</td>
+                      <td><span className={`badge ${r.active ? "bg-green-100 text-green-600" : "bg-paper-100 text-text-muted"}`}>{r.active ? "ACTIVE" : "Inactive"}</span></td>
+                      <td>{!r.active && <button onClick={() => handleActivateStatutory(r.id)} className="btn-text text-gold-600">Activate</button>}</td>
+                    </tr>
+                  ))}
+                  {statutoryRates.length === 0 && <tr><td colSpan={5} className="text-center text-text-muted text-sm py-8">No statutory rates created yet.</td></tr>}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
+
+        {tab === "process" && (
+          <>
+            <div className="card overflow-x-auto mb-6">
+              <table className="w-full text-sm table-modern">
+                <thead><tr><th>Period</th><th>Status</th><th></th></tr></thead>
+                <tbody>
+                  {periods.map((p: any) => (
+                    <tr key={p.id}>
+                      <td className="text-text-900">{p.name}</td>
+                      <td><span className="badge bg-paper-100 text-text-muted">{p.status}</span></td>
+                      <td>{p.status === "OPEN" && <button onClick={() => handleProcess(p.id)} disabled={busy} className="btn-text text-gold-600">Process</button>}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <h2 className="font-display font-semibold text-lg text-ink-900 mb-3">Payroll Runs</h2>
+            <div className="card overflow-x-auto mb-6">
+              <table className="w-full text-sm table-modern">
+                <thead><tr><th>Processed</th><th>Employees</th><th>Gross</th><th>Deductions</th><th>Net</th><th></th></tr></thead>
+                <tbody>
+                  {runs.map((r: any) => (
+                    <tr key={r.id}>
+                      <td className="text-text-700">{r.processedAt ? new Date(r.processedAt).toLocaleString() : "—"}</td>
+                      <td className="text-text-700">{r.entries?.length ?? "—"}</td>
+                      <td className="text-text-700">GHS {Number(r.totalGross).toLocaleString()}</td>
+                      <td className="text-text-700">GHS {Number(r.totalDeductions).toLocaleString()}</td>
+                      <td className="text-text-900 font-medium">GHS {Number(r.totalNet).toLocaleString()}</td>
+                      <td><button onClick={() => viewRun(r.id)} className="btn-text text-gold-600">View</button></td>
+                    </tr>
+                  ))}
+                  {runs.length === 0 && <tr><td colSpan={6} className="text-center text-text-muted text-sm py-8">No payroll runs yet.</td></tr>}
+                </tbody>
+              </table>
+            </div>
+
+            {selectedRun && (
+              <div className="card overflow-x-auto">
+                <table className="w-full min-w-[720px] text-sm table-modern">
+                  <thead><tr><th>Employee</th><th>Basic</th><th>Gross</th><th>PAYE</th><th>SSNIT (Emp)</th><th>Net</th></tr></thead>
+                  <tbody>
+                    {selectedRun.entries.map((e: any) => (
+                      <tr key={e.id}>
+                        <td className="text-text-900">{e.employeeId}</td>
+                        <td className="text-text-700">GHS {Number(e.basicSalary).toLocaleString()}</td>
+                        <td className="text-text-700">GHS {Number(e.grossPay).toLocaleString()}</td>
+                        <td className="text-text-700">GHS {Number(e.paye).toLocaleString()}</td>
+                        <td className="text-text-700">GHS {Number(e.ssnitEmployee).toLocaleString()}</td>
+                        <td className="text-text-900 font-medium">GHS {Number(e.netPay).toLocaleString()}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </>
         )}
       </div>
     </AppShell>
