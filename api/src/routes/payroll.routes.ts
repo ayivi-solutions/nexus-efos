@@ -4,6 +4,7 @@ import { prisma } from "../lib/prisma";
 import { requireAuth, AuthedRequest } from "../middleware/auth";
 import { requirePermission } from "../middleware/rbac";
 import { calculatePAYE, calculateStatutoryContribution, round2 } from "../lib/payrollCalc";
+import { generatePayslipPdf } from "../lib/payslipPdf";
 
 // doc §206-208 Payroll Management: Overview, Configuration, Salary
 // Structure. Tax tables and statutory rates get real infrastructure here
@@ -475,4 +476,106 @@ payrollRouter.get("/reports/disbursement", requirePermission("reports.view"), as
     reversed: runs.filter((r) => r.status === "REVERSED").length,
   };
   res.json({ runs, summary });
+});
+
+// -------------------------------------------------------------------------
+// §213 Payslip and Employee Self-Service. §213.3 "Employees access only
+// their own payroll records" — the load-bearing security rule here: the
+// employeeId is NEVER taken from the request, always derived from the
+// authenticated user's own linked Employee record. No admin permission
+// gate on these routes at all — deliberately, since these are for every
+// employee, not just HR/admin staff, and the ownership check itself is
+// what keeps them safe. §213.3 "Every employee access is audited" —
+// genuinely logged on every payslip view/download below.
+// -------------------------------------------------------------------------
+
+async function resolveOwnEmployee(req: AuthedRequest) {
+  return prisma.employee.findFirst({ where: { userId: req.auth!.userId, institutionId: req.auth!.institutionId } });
+}
+
+payrollRouter.get("/my-payslips", async (req: AuthedRequest, res) => {
+  const employee = await resolveOwnEmployee(req);
+  if (!employee) return res.status(404).json({ error: "No employee record is linked to your account" });
+
+  const entries = await prisma.payrollEntry.findMany({
+    where: { employeeId: employee.id, payrollRun: { status: { in: ["APPROVED", "PAID"] } } },
+    include: { payrollRun: true },
+    orderBy: { createdAt: "desc" },
+  });
+
+  await prisma.auditLog.create({ data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "payslip.list_viewed", resource: "payroll_entry", resourceId: employee.id } });
+  res.json({ entries });
+});
+
+payrollRouter.get("/my-payslips/:entryId/download", async (req: AuthedRequest, res) => {
+  const employee = await resolveOwnEmployee(req);
+  if (!employee) return res.status(404).json({ error: "No employee record is linked to your account" });
+
+  const entry = await prisma.payrollEntry.findFirst({
+    where: { id: req.params.entryId, employeeId: employee.id }, // ownership enforced here, not just by listing
+    include: { payrollRun: true },
+  });
+  if (!entry) return res.status(404).json({ error: "Payslip not found" });
+  if (!["APPROVED", "PAID"].includes(entry.payrollRun.status)) return res.status(400).json({ error: "This payslip is not yet available" });
+
+  const period = await prisma.payrollPeriod.findUnique({ where: { id: entry.payrollRun.payrollPeriodId } });
+  const institution = await prisma.institution.findUnique({ where: { id: req.auth!.institutionId } });
+
+  const pdfBuffer = await generatePayslipPdf({
+    institution: { legalName: institution!.legalName, regulatorId: institution!.regulatorId },
+    employee: { fullName: employee.fullName, employeeNumber: employee.employeeNumber },
+    periodName: period?.name || "—", payDate: period?.payDate || entry.createdAt,
+    basicSalary: Number(entry.basicSalary), allowances: [], // line-item allowance detail not retained per-entry — see build log
+    grossPay: Number(entry.grossPay), paye: Number(entry.paye), ssnitEmployee: Number(entry.ssnitEmployee),
+    otherDeductions: entry.otherDeductions ? [{ name: "Other Deductions", amount: Number(entry.otherDeductions) }] : [],
+    netPay: Number(entry.netPay), generatedAt: new Date(),
+  });
+
+  await prisma.auditLog.create({ data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "payslip.downloaded", resource: "payroll_entry", resourceId: entry.id } });
+
+  res.setHeader("Content-Type", "application/pdf");
+  res.setHeader("Content-Disposition", `attachment; filename="payslip-${period?.name || entry.id}.pdf"`);
+  res.send(pdfBuffer);
+});
+
+// §213.2 "Tax Certificates" — an annual PAYE summary, the same real data
+// the DT 0108B annual schedule format the person shared expects, though
+// not yet formatted to match that exact GRA template — that's a real,
+// separate piece of work for when Statutory Reporting (§212's reporting
+// side) is built out.
+payrollRouter.get("/my-tax-certificate", async (req: AuthedRequest, res) => {
+  const employee = await resolveOwnEmployee(req);
+  if (!employee) return res.status(404).json({ error: "No employee record is linked to your account" });
+  const year = Number((req.query as any).year) || new Date().getFullYear();
+
+  const entries = await prisma.payrollEntry.findMany({
+    where: { employeeId: employee.id, payrollRun: { status: "PAID" }, createdAt: { gte: new Date(`${year}-01-01`), lte: new Date(`${year}-12-31T23:59:59`) } },
+  });
+
+  const totalGross = entries.reduce((s, e) => s + Number(e.grossPay), 0);
+  const totalPaye = entries.reduce((s, e) => s + Number(e.paye), 0);
+
+  await prisma.auditLog.create({ data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "tax_certificate.viewed", resource: "employee", resourceId: employee.id, metadata: { year } } });
+
+  res.json({ year, employeeName: employee.fullName, employeeNumber: employee.employeeNumber, payslipCount: entries.length, totalGross: Math.round(totalGross * 100) / 100, totalPaye: Math.round(totalPaye * 100) / 100 });
+});
+
+// §213.2 "Contribution Statements" — the equivalent annual summary for
+// SSNIT/Tier 2.
+payrollRouter.get("/my-contribution-statement", async (req: AuthedRequest, res) => {
+  const employee = await resolveOwnEmployee(req);
+  if (!employee) return res.status(404).json({ error: "No employee record is linked to your account" });
+  const year = Number((req.query as any).year) || new Date().getFullYear();
+
+  const entries = await prisma.payrollEntry.findMany({
+    where: { employeeId: employee.id, payrollRun: { status: "PAID" }, createdAt: { gte: new Date(`${year}-01-01`), lte: new Date(`${year}-12-31T23:59:59`) } },
+  });
+
+  const totalSsnitEmployee = entries.reduce((s, e) => s + Number(e.ssnitEmployee), 0);
+  const totalSsnitEmployerTier1 = entries.reduce((s, e) => s + Number(e.ssnitEmployerTier1), 0);
+  const totalTier2Employer = entries.reduce((s, e) => s + Number(e.tier2Employer), 0);
+
+  await prisma.auditLog.create({ data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "contribution_statement.viewed", resource: "employee", resourceId: employee.id, metadata: { year } } });
+
+  res.json({ year, employeeName: employee.fullName, payslipCount: entries.length, totalSsnitEmployee: Math.round(totalSsnitEmployee * 100) / 100, totalSsnitEmployerTier1: Math.round(totalSsnitEmployerTier1 * 100) / 100, totalTier2Employer: Math.round(totalTier2Employer * 100) / 100 });
 });

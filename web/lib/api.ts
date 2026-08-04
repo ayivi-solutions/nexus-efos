@@ -416,6 +416,19 @@ export const api = {
   markPayrollRunPaid: (id: string) => request(`/payroll/runs/${id}/mark-paid`, { method: "POST" }),
   reversePayrollRun: (id: string, reason: string) => request(`/payroll/runs/${id}/reverse`, { method: "POST", body: JSON.stringify({ reason }) }),
   getDisbursementReport: () => request("/payroll/reports/disbursement"),
+
+  listMyPayslips: () => request("/payroll/my-payslips"),
+  getMyTaxCertificate: (year?: number) => request(`/payroll/my-tax-certificate${year ? `?year=${year}` : ""}`),
+  getMyContributionStatement: (year?: number) => request(`/payroll/my-contribution-statement${year ? `?year=${year}` : ""}`),
+  downloadMyPayslip: async (entryId: string) => {
+    const accessToken = typeof window !== "undefined" ? sessionStorage.getItem("nexus_access_token") : null;
+    const res = await fetch(`${API_BASE}/payroll/my-payslips/${entryId}/download`, { headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : {} });
+    if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error || "Could not download payslip"); }
+    const blob = await res.blob();
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement("a"); a.href = url; a.download = `payslip-${entryId}.pdf`; a.click();
+    window.URL.revokeObjectURL(url);
+  },
   downloadPayrollBankFile: async (runId: string) => {
     const accessToken = typeof window !== "undefined" ? sessionStorage.getItem("nexus_access_token") : null;
     const res = await fetch(`${API_BASE}/payroll/runs/${runId}/bank-file`, { headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : {} });
