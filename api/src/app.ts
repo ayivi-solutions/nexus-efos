@@ -21,6 +21,7 @@ import { departmentsRouter, positionsRouter } from "./routes/departments.routes"
 import { collectionsRouter } from "./routes/collections.routes";
 import { cashVaultRouter } from "./routes/cashVault.routes";
 import { generalLedgerRouter } from "./routes/generalLedger.routes";
+import { interBranchRouter } from "./routes/interBranch.routes";
 
 export const app = express();
 
@@ -63,6 +64,7 @@ app.use("/v1/positions", positionsRouter);
 app.use("/v1/collections", collectionsRouter);
 app.use("/v1/cash-vault", cashVaultRouter);
 app.use("/v1/general-ledger", generalLedgerRouter);
+app.use("/v1/inter-branch", interBranchRouter);
 
 app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   console.error(err);

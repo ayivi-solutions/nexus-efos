@@ -98,6 +98,8 @@ model Institution {
   fiscalYears             FiscalYear[]
   financialPeriods        FinancialPeriod[]
   recurringJournals       RecurringJournal[]
+  branchSettlementAccounts BranchSettlementAccount[]
+  interBranchTransfers    InterBranchTransfer[]
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -835,6 +837,7 @@ enum ApprovalRequestType {
   JOURNAL_POSTING  // doc §118
   FINANCIAL_PERIOD_REOPEN  // doc §120
   RECURRING_JOURNAL_ACTIVATION  // doc §122
+  INTER_BRANCH_TRANSFER  // doc §121
 
   @@schema("nexus")
 }
@@ -2736,6 +2739,7 @@ model GLAccount {
   updatedAt DateTime @updatedAt @map("updated_at")
 
   journalLines JournalLine[]
+  branchSettlementAccount BranchSettlementAccount?
 
   @@unique([institutionId, code], map: "uq_gl_account_institution_code")
   @@map("gl_account")
@@ -2935,5 +2939,59 @@ model RecurringJournalExecution {
   failureReason String?         @map("failure_reason")
 
   @@map("recurring_journal_execution")
+  @@schema("nexus")
+}
+
+// doc §121 Inter-Branch Accounting. §121.3 "Inter-branch transactions
+// balance automatically" — genuinely true here, not a rule enforced by
+// convention: every transfer becomes a single, real 4-line Journal
+// (source's real account + source's settlement account, destination's
+// real account + destination's settlement account), validated by the
+// exact same isBalanced/balanceEffect engine every other journal in the
+// app uses. §121.3 "Settlement accounts reconcile correctly" — every
+// branch's settlement account balance, summed across the whole
+// institution, must net to exactly zero (every Due From has a matching
+// Due To somewhere else) — a real, checkable invariant, tested before
+// this touched a route.
+model BranchSettlementAccount {
+  id            String      @id(map: "pk_branch_settlement_account") @default(uuid())
+  institution   Institution @relation(fields: [institutionId], references: [id], onDelete: Cascade, map: "fk_branch_settlement_account_institution")
+  institutionId String      @map("institution_id")
+  branchId      String      @unique @map("branch_id")
+  glAccount     GLAccount   @relation(fields: [glAccountId], references: [id], onDelete: Restrict, map: "fk_branch_settlement_account_gl_account")
+  glAccountId   String      @unique @map("gl_account_id")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("branch_settlement_account")
+  @@schema("nexus")
+}
+
+enum InterBranchTransferStatus {
+  PENDING_APPROVAL
+  POSTED
+  REJECTED
+
+  @@schema("nexus")
+}
+
+model InterBranchTransfer {
+  id            String                     @id(map: "pk_inter_branch_transfer") @default(uuid())
+  institution   Institution                @relation(fields: [institutionId], references: [id], onDelete: Cascade, map: "fk_inter_branch_transfer_institution")
+  institutionId String                     @map("institution_id")
+
+  fromBranchId   String  @map("from_branch_id")
+  toBranchId     String  @map("to_branch_id")
+  fromGLAccountId String @map("from_gl_account_id") // the real account debited/credited at the source (e.g. Cash)
+  toGLAccountId   String @map("to_gl_account_id")   // the real account debited/credited at the destination
+  amount         Decimal @db.Decimal(14, 2)
+  description    String
+  status         InterBranchTransferStatus @default(PENDING_APPROVAL)
+
+  journalId     String? @map("journal_id") // set once posted
+  requestedById String  @map("requested_by_id")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  @@map("inter_branch_transfer")
   @@schema("nexus")
 }

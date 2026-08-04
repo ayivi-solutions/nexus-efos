@@ -375,6 +375,12 @@ export const api = {
   getGLByPeriod: () => request("/general-ledger/reports/by-period"),
   getGLDashboard: () => request("/general-ledger/reports/dashboard"),
 
+  listSettlementAccounts: () => request("/inter-branch/settlement-accounts"),
+  createSettlementAccount: (data: any) => request("/inter-branch/settlement-accounts", { method: "POST", body: JSON.stringify(data) }),
+  listInterBranchTransfers: () => request("/inter-branch/transfers"),
+  requestInterBranchTransfer: (data: any) => request("/inter-branch/transfers", { method: "POST", body: JSON.stringify(data) }),
+  getOutstandingBalances: () => request("/inter-branch/reports/outstanding-balances"),
+
   listFiscalYears: () => request("/general-ledger/fiscal-years"),
   createFiscalYear: (data: any) => request("/general-ledger/fiscal-years", { method: "POST", body: JSON.stringify(data) }),
   createFinancialPeriod: (data: any) => request("/general-ledger/financial-periods", { method: "POST", body: JSON.stringify(data) }),

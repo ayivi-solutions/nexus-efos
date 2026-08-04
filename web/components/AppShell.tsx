@@ -22,6 +22,7 @@ const NAV_FULL: { label: string; icon: string; href: string; perm: string | null
   { label: "Standing Instructions", icon: "↻", href: "/savings/standing-instructions", perm: "savings.initiate" },
   { label: "Cash & Vault", icon: "🏦", href: "/cash-vault", perm: "institution.configure" },
   { label: "General Ledger", icon: "📒", href: "/general-ledger", perm: "institution.configure" },
+  { label: "Inter-Branch", icon: "🔁", href: "/inter-branch", perm: "institution.configure" },
 ];
 
 export function AppShell({ active, children }: { active: string; children: React.ReactNode }) {

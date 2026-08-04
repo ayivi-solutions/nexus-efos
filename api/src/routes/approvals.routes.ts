@@ -3,7 +3,7 @@ import { prisma } from "../lib/prisma";
 import { requireAuth, AuthedRequest } from "../middleware/auth";
 import { requirePermission } from "../middleware/rbac";
 import { generateSchedule, round2 } from "../lib/loanSchedule";
-import { isBalanced, balanceEffect, findPostablePeriod } from "../lib/generalLedger";
+import { isBalanced, balanceEffect, findPostablePeriod, generateJournalNumber } from "../lib/generalLedger";
 
 export const approvalsRouter = Router();
 approvalsRouter.use(requireAuth);
@@ -204,6 +204,51 @@ async function applyApproval(request: { id: string; type: string; targetId: stri
       break;
     }
 
+    // doc §121.3 "Inter-branch transactions balance automatically" — a
+    // single, real 4-line Journal: the source's real account is credited
+    // and its settlement account debited (Due From the destination
+    // branch); the destination's real account is debited and its
+    // settlement account credited (Due To the source branch). Validated
+    // by the exact same isBalanced/balanceEffect engine every other
+    // journal in the app uses — not a separate, parallel implementation.
+    case "INTER_BRANCH_TRANSFER": {
+      const transfer = await prisma.interBranchTransfer.findUniqueOrThrow({ where: { id: request.targetId } });
+      const fromSettlement = await prisma.branchSettlementAccount.findUniqueOrThrow({ where: { branchId: transfer.fromBranchId }, include: { glAccount: true } });
+      const toSettlement = await prisma.branchSettlementAccount.findUniqueOrThrow({ where: { branchId: transfer.toBranchId }, include: { glAccount: true } });
+      const fromAccount = await prisma.gLAccount.findUniqueOrThrow({ where: { id: transfer.fromGLAccountId } });
+      const toAccount = await prisma.gLAccount.findUniqueOrThrow({ where: { id: transfer.toGLAccountId } });
+
+      const amount = Number(transfer.amount);
+      const lines = [
+        { accountId: fromSettlement.glAccountId, category: fromSettlement.glAccount.category, debit: amount, credit: 0 },
+        { accountId: transfer.fromGLAccountId, category: fromAccount.category, debit: 0, credit: amount },
+        { accountId: transfer.toGLAccountId, category: toAccount.category, debit: amount, credit: 0 },
+        { accountId: toSettlement.glAccountId, category: toSettlement.glAccount.category, debit: 0, credit: amount },
+      ];
+
+      if (!isBalanced(lines)) {
+        await prisma.interBranchTransfer.update({ where: { id: transfer.id }, data: { status: "REJECTED" } });
+        break;
+      }
+
+      const journal = await prisma.journal.create({
+        data: {
+          institutionId: transfer.institutionId, journalNumber: generateJournalNumber(), type: "AUTOMATIC",
+          description: `Inter-branch transfer: ${transfer.description}`, status: "POSTED", postedAt: new Date(),
+          createdById: transfer.requestedById, postedById: approvedById,
+          lines: { create: lines.map((l) => ({ accountId: l.accountId, debit: l.debit, credit: l.credit })) },
+        },
+      });
+
+      for (const line of lines) {
+        const effect = balanceEffect(line.category as any, line.debit, line.credit);
+        await prisma.gLAccount.update({ where: { id: line.accountId }, data: { balance: { increment: effect } } });
+      }
+
+      await prisma.interBranchTransfer.update({ where: { id: transfer.id }, data: { status: "POSTED", journalId: journal.id } });
+      break;
+    }
+
     case "SAVINGS_RESTRICTION_CREATE": {
       await prisma.savingsRestriction.update({ where: { id: request.targetId }, data: { status: "ACTIVE", approvedById, activatedAt: new Date() } });
       break;
@@ -300,6 +345,9 @@ approvalsRouter.post("/:id/reject", requirePermission("institution.configure"), 
   }
   if (request.type === "RECURRING_JOURNAL_ACTIVATION") {
     await prisma.recurringJournal.update({ where: { id: request.targetId }, data: { status: "DRAFT" } });
+  }
+  if (request.type === "INTER_BRANCH_TRANSFER") {
+    await prisma.interBranchTransfer.update({ where: { id: request.targetId }, data: { status: "REJECTED" } });
   }
 
   await prisma.approvalRequest.update({
