@@ -179,10 +179,25 @@ real customer data.
   Workflow, each scheduled execution posts a real journal automatically,
   respecting period status and account activity, with a tested retry-
   and-auto-suspend policy.
+- Financial Statement Management: Trial Balance, Statement of Financial
+  Position, Statement of Comprehensive Income, and Statement of Changes
+  in Equity — all computed from real posted journal history for the
+  exact date or period requested, not today's live balances relabeled as
+  historical. Cash Flow and Consolidated Statements deliberately not
+  built — real classification data and a multi-entity model don't exist
+  yet, and faking either would mean presenting invented numbers as
+  authoritative.
+- A standardized 34-option report date-range set (Today, This Quarter,
+  Last Month, Next 3-Months, and so on through a custom date entry),
+  correctly distinguishing calendar-aligned periods from rolling windows
+  — tested against 27 date-math scenarios including leap years and
+  year-boundary rollovers. Built as a shared, reusable component
+  available platform-wide, currently used by Financial Statements;
+  retrofitting the Loan/Savings/Collections reports to the same standard
+  is real, separate work still ahead.
 - Not yet wired: automatic posting from Savings, Loans, or Cash & Vault
   into the GL (a real, separate integration effort) — and Inter-Branch
-  Accounting, Financial Statements, GL Reporting, and Financial Analytics
-  are still ahead.
+  Accounting, GL Reporting, and Financial Analytics are still ahead.
 
 **Accessibility**
 - WCAG AA color contrast (verified programmatically, not eyeballed),
@@ -287,11 +302,11 @@ book as named EFS sub-concepts are covered by the same Vault ledger
 mechanism rather than separate models — a petty cash fund is a vault with
 a smaller balance, not a structurally different thing.
 
-**Phase 5 (General Ledger, EFS §116-125) is in progress** — Chart of
-Accounts, Journal Management, Ledger Posting, Financial Period
-Management, and Recurring Journal Management all real and described
-above. Remaining: Inter-Branch Accounting (§121), Financial Statement
-Management (§123), GL Reporting (§124), Financial Analytics (§125, AI
+**Phase 5 (General Ledger, EFS §116-125) is in progress, 5 of 8 sections
+live** — Chart of Accounts, Journal Management, Ledger Posting, Financial
+Period Management, Recurring Journal Management, and Financial Statement
+Management all real and described above. Remaining: Inter-Branch
+Accounting (§121), GL Reporting (§124), Financial Analytics (§125, AI
 portions pending the AI spec), and wiring automatic posting from every
 other module into the GL (§116.4's full integration — a genuinely
 separate, later effort).
