@@ -12,7 +12,7 @@ export default function GeneralLedgerPage() {
   const toast = useToast();
   const [error, setError] = useState<string | null>(null);
   useErrorToast(error);
-  const [tab, setTab] = useState<"accounts" | "journals" | "periods" | "recurring" | "statements">("accounts");
+  const [tab, setTab] = useState<"accounts" | "journals" | "periods" | "recurring" | "statements" | "glreports">("accounts");
 
   const [accounts, setAccounts] = useState<any[]>([]);
   const [journals, setJournals] = useState<any[]>([]);
@@ -29,7 +29,33 @@ export default function GeneralLedgerPage() {
   const [customTo, setCustomTo] = useState("");
   const [statementData, setStatementData] = useState<any>(null);
   const [statementLoading, setStatementLoading] = useState(false);
+  const [dashboard, setDashboard] = useState<any>(null);
+  const [activityAccountId, setActivityAccountId] = useState("");
+  const [activityRange, setActivityRange] = useState("THIS_MONTH");
+  const [activityCustomFrom, setActivityCustomFrom] = useState("");
+  const [activityCustomTo, setActivityCustomTo] = useState("");
+  const [activityData, setActivityData] = useState<any>(null);
+  const [byBranch, setByBranch] = useState<any>(null);
+  const [byPeriod, setByPeriod] = useState<any>(null);
   const [busy, setBusy] = useState(false);
+
+  async function loadGLReports() {
+    api.getGLDashboard().then(setDashboard).catch(() => {});
+    api.getGLByBranch("THIS_YEAR").then(setByBranch).catch(() => {});
+    api.getGLByPeriod().then(setByPeriod).catch(() => {});
+  }
+
+  async function loadAccountActivity() {
+    if (!activityAccountId) return;
+    if (activityRange === "CUSTOM" && (!activityCustomFrom || !activityCustomTo)) return;
+    try {
+      const data = await api.getAccountActivity(activityAccountId, activityRange, activityCustomFrom || undefined, activityCustomTo || undefined);
+      setActivityData(data);
+    } catch (err: any) { setError(err.message || "Could not load account activity"); }
+  }
+
+  useEffect(() => { if (tab === "glreports") loadGLReports(); }, [tab]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { loadAccountActivity(); }, [activityAccountId, activityRange, activityCustomFrom, activityCustomTo]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function loadStatement() {
     if (rangeId === "CUSTOM" && (!customFrom || !customTo)) return;
@@ -158,6 +184,7 @@ export default function GeneralLedgerPage() {
           <button onClick={() => setTab("periods")} className={`btn-text ${tab === "periods" ? "text-gold-600 font-semibold" : "text-text-muted"}`}>Fiscal Periods</button>
           <button onClick={() => setTab("recurring")} className={`btn-text ${tab === "recurring" ? "text-gold-600 font-semibold" : "text-text-muted"}`}>Recurring Journals</button>
           <button onClick={() => setTab("statements")} className={`btn-text ${tab === "statements" ? "text-gold-600 font-semibold" : "text-text-muted"}`}>Financial Statements</button>
+          <button onClick={() => setTab("glreports")} className={`btn-text ${tab === "glreports" ? "text-gold-600 font-semibold" : "text-text-muted"}`}>GL Reports</button>
         </div>
 
         {tab === "accounts" && (
@@ -424,6 +451,76 @@ export default function GeneralLedgerPage() {
                 <div className={`text-[11px] mt-2 ${statementData.reconciles ? "text-green-600" : "text-rose-600"}`}>{statementData.reconciles ? "✓ Reconciles" : "✗ Does not reconcile — investigate"}</div>
               </div>
             )}
+          </>
+        )}
+        {tab === "glreports" && (
+          <>
+            {dashboard && (
+              <div className="grid grid-cols-2 dt:grid-cols-6 gap-3 mb-8">
+                <div className="card p-3.5"><div className="font-display font-semibold text-lg text-gold-600">GHS {dashboard.totalAssets.toLocaleString()}</div><div className="text-[10.5px] text-text-muted uppercase">Total Assets</div></div>
+                <div className="card p-3.5"><div className="font-display font-semibold text-lg text-gold-600">GHS {dashboard.totalLiabilities.toLocaleString()}</div><div className="text-[10.5px] text-text-muted uppercase">Total Liabilities</div></div>
+                <div className="card p-3.5"><div className="font-display font-semibold text-lg text-gold-600">GHS {dashboard.totalEquity.toLocaleString()}</div><div className="text-[10.5px] text-text-muted uppercase">Total Equity</div></div>
+                <div className="card p-3.5"><div className="font-display font-semibold text-lg text-gold-600">GHS {dashboard.netIncomeSinceInception.toLocaleString()}</div><div className="text-[10.5px] text-text-muted uppercase">Net Income</div></div>
+                <div className="card p-3.5"><div className="font-display font-semibold text-lg text-rose-600">{dashboard.pendingJournals}</div><div className="text-[10.5px] text-text-muted uppercase">Pending Journals</div></div>
+                <div className="card p-3.5"><div className="font-display font-semibold text-lg text-text-900">{dashboard.openPeriods}</div><div className="text-[10.5px] text-text-muted uppercase">Open Periods</div></div>
+              </div>
+            )}
+
+            <h2 className="font-display font-semibold text-lg text-ink-900 mb-3">Account Activity</h2>
+            <div className="card p-4 mb-4 flex flex-wrap items-end gap-3">
+              <select className="input" value={activityAccountId} onChange={(e) => setActivityAccountId(e.target.value)}>
+                <option value="">Select account…</option>
+                {accounts.map((a: any) => (<option key={a.id} value={a.id}>{a.code} — {a.name}</option>))}
+              </select>
+              <ReportRangeSelector value={activityRange} onChange={setActivityRange} customFrom={activityCustomFrom} customTo={activityCustomTo} onCustomChange={(f, t) => { setActivityCustomFrom(f); setActivityCustomTo(t); }} />
+            </div>
+            {activityData && (
+              <div className="card overflow-x-auto mb-8">
+                <div className="p-3 text-[12.5px] text-text-700 border-b border-paper-100">Opening balance: GHS {activityData.openingBalance.toLocaleString()}</div>
+                <table className="w-full min-w-[600px] text-sm table-modern">
+                  <thead><tr><th>Date</th><th>Journal</th><th>Description</th><th>Debit</th><th>Credit</th><th>Balance</th></tr></thead>
+                  <tbody>
+                    {activityData.entries.map((e: any, i: number) => (
+                      <tr key={i}>
+                        <td className="text-text-700">{new Date(e.postingDate).toLocaleDateString()}</td>
+                        <td className="font-mono text-[11px] text-text-700">{e.journalNumber}</td>
+                        <td className="text-text-900">{e.description}</td>
+                        <td className="text-text-700">{e.debit ? `GHS ${e.debit.toLocaleString()}` : ""}</td>
+                        <td className="text-text-700">{e.credit ? `GHS ${e.credit.toLocaleString()}` : ""}</td>
+                        <td className="text-text-900 font-medium">GHS {e.balance.toLocaleString()}</td>
+                      </tr>
+                    ))}
+                    {activityData.entries.length === 0 && <tr><td colSpan={6} className="text-center text-text-muted text-sm py-6">No activity in this period.</td></tr>}
+                  </tbody>
+                </table>
+                <div className="p-3 text-[12.5px] text-text-900 font-medium border-t border-paper-100">Closing balance: GHS {activityData.closingBalance.toLocaleString()}</div>
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 dt:grid-cols-2 gap-4">
+              <div>
+                <h2 className="font-display font-semibold text-lg text-ink-900 mb-3">By Branch (this year)</h2>
+                <div className="card overflow-x-auto">
+                  <table className="w-full text-sm table-modern">
+                    <thead><tr><th>Branch</th><th>Accounts</th><th>Balance</th></tr></thead>
+                    <tbody>
+                      {(byBranch?.branches || []).map((b: any) => (<tr key={b.branchId || "u"}><td className="text-text-900">{b.branchName}</td><td className="text-text-700">{b.accountCount}</td><td className="text-text-700">GHS {b.totalBalance.toLocaleString()}</td></tr>))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+              <div>
+                <h2 className="font-display font-semibold text-lg text-ink-900 mb-3">By Period</h2>
+                <div className="card overflow-x-auto">
+                  <table className="w-full text-sm table-modern">
+                    <thead><tr><th>Period</th><th>Journals</th><th>Posted</th></tr></thead>
+                    <tbody>
+                      {(byPeriod?.periods || []).map((p: any) => (<tr key={p.periodId}><td className="text-text-900">{p.periodName}</td><td className="text-text-700">{p.journalCount}</td><td className="text-text-700">GHS {p.totalPosted.toLocaleString()}</td></tr>))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
           </>
         )}
       </div>

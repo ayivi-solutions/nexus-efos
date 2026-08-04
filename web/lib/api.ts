@@ -370,6 +370,11 @@ export const api = {
   getIncomeStatement: (range: string, from?: string, to?: string) => request(`/general-ledger/reports/income-statement?range=${range}${from ? `&from=${from}&to=${to}` : ""}`),
   getChangesInEquity: (range: string, from?: string, to?: string) => request(`/general-ledger/reports/changes-in-equity?range=${range}${from ? `&from=${from}&to=${to}` : ""}`),
 
+  getAccountActivity: (accountId: string, range: string, from?: string, to?: string) => request(`/general-ledger/reports/account-activity/${accountId}?range=${range}${from ? `&from=${from}&to=${to}` : ""}`),
+  getGLByBranch: (range: string, from?: string, to?: string) => request(`/general-ledger/reports/by-branch?range=${range}${from ? `&from=${from}&to=${to}` : ""}`),
+  getGLByPeriod: () => request("/general-ledger/reports/by-period"),
+  getGLDashboard: () => request("/general-ledger/reports/dashboard"),
+
   listFiscalYears: () => request("/general-ledger/fiscal-years"),
   createFiscalYear: (data: any) => request("/general-ledger/fiscal-years", { method: "POST", body: JSON.stringify(data) }),
   createFinancialPeriod: (data: any) => request("/general-ledger/financial-periods", { method: "POST", body: JSON.stringify(data) }),

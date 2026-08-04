@@ -3,7 +3,7 @@ import { z } from "zod";
 import { prisma } from "../lib/prisma";
 import { requireAuth, AuthedRequest } from "../middleware/auth";
 import { requirePermission } from "../middleware/rbac";
-import { isBalanced, generateJournalNumber, findPostablePeriod, aggregateBalancesAsOf, aggregateBalancesForPeriod } from "../lib/generalLedger";
+import { isBalanced, generateJournalNumber, findPostablePeriod, aggregateBalancesAsOf, aggregateBalancesForPeriod, balanceEffect, round2 } from "../lib/generalLedger";
 import { resolveReportRange, ReportRangeId } from "../lib/reportRanges";
 import { runRecurringJournals } from "../lib/scheduler";
 
@@ -289,7 +289,7 @@ generalLedgerRouter.post("/recurring-journals/run-now", requirePermission("insti
 async function getPostedLinesUpTo(prisma: any, institutionId: string, asOf: Date) {
   return prisma.journalLine.findMany({
     where: { journal: { institutionId, status: "POSTED", postingDate: { lte: asOf } } },
-    include: { account: { select: { id: true, code: true, name: true, category: true } } },
+    include: { account: { select: { id: true, code: true, name: true, category: true, branchId: true } } },
   });
 }
 
@@ -316,7 +316,7 @@ generalLedgerRouter.get("/reports/trial-balance", requirePermission("reports.vie
   const lines = await getPostedLinesUpTo(prisma, req.auth!.institutionId, asOfDate);
   const balances = aggregateBalancesAsOf(lines.map((l: any) => ({ accountId: l.accountId, category: l.account.category, debit: Number(l.debit), credit: Number(l.credit) })));
 
-  const accountsInvolved = new Map(lines.map((l: any) => [l.accountId, l.account]));
+  const accountsInvolved = new Map<string, { id: string; code: string; name: string; category: string }>(lines.map((l: any) => [l.accountId, l.account]));
   // Traced through all 4 cases by hand rather than relying on tsc this
   // pass (see the build log for why): a debit-normal account (ASSET/
   // EXPENSE) with a positive balance shows in the debit column, as
@@ -349,7 +349,7 @@ generalLedgerRouter.get("/reports/balance-sheet", requirePermission("reports.vie
   const { to: asOfDate } = parseRangeQuery(req);
   const lines = await getPostedLinesUpTo(prisma, req.auth!.institutionId, asOfDate);
   const balances = aggregateBalancesAsOf(lines.map((l: any) => ({ accountId: l.accountId, category: l.account.category, debit: Number(l.debit), credit: Number(l.credit) })));
-  const accountsInvolved = new Map(lines.map((l: any) => [l.accountId, l.account]));
+  const accountsInvolved = new Map<string, { id: string; code: string; name: string; category: string }>(lines.map((l: any) => [l.accountId, l.account]));
 
   const byCategory = (cat: string) => Array.from(accountsInvolved.values()).filter((a: any) => a.category === cat).map((a: any) => ({ code: a.code, name: a.name, balance: balances.get(a.id) || 0 })).sort((a: any, b: any) => a.code.localeCompare(b.code));
 
@@ -386,7 +386,7 @@ generalLedgerRouter.get("/reports/income-statement", requirePermission("reports.
   const lines = await getPostedLinesForPeriod(prisma, req.auth!.institutionId, from, to);
   const ieLines = lines.filter((l: any) => l.account.category === "INCOME" || l.account.category === "EXPENSE");
   const balances = aggregateBalancesForPeriod(ieLines.map((l: any) => ({ accountId: l.accountId, category: l.account.category, debit: Number(l.debit), credit: Number(l.credit) })));
-  const accountsInvolved = new Map(ieLines.map((l: any) => [l.accountId, l.account]));
+  const accountsInvolved = new Map<string, { id: string; code: string; name: string; category: string }>(ieLines.map((l: any) => [l.accountId, l.account]));
 
   const byCategory = (cat: string) => Array.from(accountsInvolved.values()).filter((a: any) => a.category === cat).map((a: any) => ({ code: a.code, name: a.name, amount: balances.get(a.id) || 0 })).sort((a: any, b: any) => a.code.localeCompare(b.code));
 
@@ -437,5 +437,130 @@ generalLedgerRouter.get("/reports/changes-in-equity", requirePermission("reports
     periodStart: from, periodEnd: to, openingEquity, netIncomeForPeriod, equityMovement,
     closingEquity: closingEquityComputed,
     reconciles: Math.abs(closingEquityComputed - closingEquityExpected) < 0.01,
+  });
+});
+
+// -------------------------------------------------------------------------
+// §124 General Ledger Reporting. Trial Balance already exists (§123) — not
+// duplicated here. A full "Audit Report" would duplicate the existing,
+// comprehensive Audit Log (immutable, covers every module) rather than
+// add anything real — the GL-specific view here filters that same log
+// rather than rebuilding it. §124.3 "Report generation is auditable" —
+// genuinely logged on every report below, not just data mutations, which
+// (worth naming honestly) no report anywhere else in this project has
+// done up to now either.
+// -------------------------------------------------------------------------
+
+async function logReportGeneration(institutionId: string, userId: string, reportName: string, params: any) {
+  await prisma.auditLog.create({ data: { institutionId, userId, action: "gl_report.generated", resource: "gl_report", resourceId: reportName, metadata: params } });
+}
+
+// §124.2 "Account Activity Reports" / "General Ledger Reports" — every
+// posted line for one account over a period, opening balance, running
+// balance per line, closing balance — a bank-statement equivalent for a
+// GL account, built on the same tested balanceEffect logic as everything
+// else.
+generalLedgerRouter.get("/reports/account-activity/:accountId", requirePermission("reports.view"), async (req: AuthedRequest, res) => {
+  const { from, to } = parseRangeQuery(req);
+  const account = await prisma.gLAccount.findFirst({ where: { id: req.params.accountId, institutionId: req.auth!.institutionId } });
+  if (!account) return res.status(404).json({ error: "Account not found" });
+
+  const linesBefore = await prisma.journalLine.findMany({
+    where: { accountId: account.id, journal: { institutionId: req.auth!.institutionId, status: "POSTED", postingDate: { lt: from } } },
+  });
+  const openingBalances = aggregateBalancesAsOf(linesBefore.map((l: any) => ({ accountId: account.id, category: account.category, debit: Number(l.debit), credit: Number(l.credit) })));
+  const openingBalance = openingBalances.get(account.id) || 0;
+
+  const periodLines = await prisma.journalLine.findMany({
+    where: { accountId: account.id, journal: { institutionId: req.auth!.institutionId, status: "POSTED", postingDate: { gte: from, lte: to } } },
+    include: { journal: { select: { journalNumber: true, description: true, postingDate: true } } },
+    orderBy: { journal: { postingDate: "asc" } },
+  });
+
+  let runningBalance = openingBalance;
+  const entries = periodLines.map((l: any) => {
+    const effect = balanceEffect(account.category as any, Number(l.debit), Number(l.credit));
+    runningBalance = round2(runningBalance + effect);
+    return { journalNumber: l.journal.journalNumber, description: l.journal.description, postingDate: l.journal.postingDate, debit: Number(l.debit), credit: Number(l.credit), balance: runningBalance };
+  });
+
+  await logReportGeneration(req.auth!.institutionId, req.auth!.userId, "account-activity", { accountId: account.id, from, to });
+
+  res.json({ account: { code: account.code, name: account.name, category: account.category }, periodStart: from, periodEnd: to, openingBalance, entries, closingBalance: runningBalance });
+});
+
+// §124.2 "Branch Accounting Reports" — GL activity broken down by the
+// branch a branch-tagged account belongs to. Institution-wide accounts
+// (branchId null) genuinely have no branch breakdown — that's correct,
+// not a gap, since they were never scoped to one branch in the first
+// place.
+generalLedgerRouter.get("/reports/by-branch", requirePermission("reports.view"), async (req: AuthedRequest, res) => {
+  const { to: asOfDate } = parseRangeQuery(req);
+  const lines = await getPostedLinesUpTo(prisma, req.auth!.institutionId, asOfDate);
+  const branches = await prisma.branch.findMany({ where: { institutionId: req.auth!.institutionId }, select: { id: true, name: true } });
+  const branchName = new Map(branches.map((b: any) => [b.id, b.name]));
+
+  const byBranch = new Map<string, any[]>();
+  for (const l of lines) {
+    const key = l.account.branchId || "unassigned";
+    if (!byBranch.has(key)) byBranch.set(key, []);
+    byBranch.get(key)!.push(l);
+  }
+
+  const result = Array.from(byBranch.entries()).map(([branchId, branchLines]) => {
+    const balances = aggregateBalancesAsOf(branchLines.map((l: any) => ({ accountId: l.accountId, category: l.account.category, debit: Number(l.debit), credit: Number(l.credit) })));
+    const total = Array.from(balances.values()).reduce((s, v) => s + v, 0);
+    return { branchId: branchId === "unassigned" ? null : branchId, branchName: branchId === "unassigned" ? "Unassigned (institution-wide)" : branchName.get(branchId) || branchId, accountCount: balances.size, totalBalance: total };
+  });
+
+  await logReportGeneration(req.auth!.institutionId, req.auth!.userId, "by-branch", { asOfDate });
+  res.json({ asOfDate, branches: result });
+});
+
+// §124.2 "Period Reports" — journal activity summarized by financial
+// period, tying Period Management (§120) and Journal Posting (§119)
+// together into one real report.
+generalLedgerRouter.get("/reports/by-period", requirePermission("reports.view"), async (req: AuthedRequest, res) => {
+  const periods = await prisma.financialPeriod.findMany({ where: { institutionId: req.auth!.institutionId }, orderBy: { startDate: "desc" } });
+  const result = [];
+  for (const p of periods) {
+    const journals = await prisma.journal.findMany({ where: { institutionId: req.auth!.institutionId, status: "POSTED", postingDate: { gte: p.startDate, lte: p.endDate } }, include: { lines: true } });
+    const totalDebit = journals.reduce((s: number, j: any) => s + j.lines.reduce((ls: number, l: any) => ls + Number(l.debit), 0), 0);
+    result.push({ periodId: p.id, periodName: p.name, status: p.status, journalCount: journals.length, totalPosted: round2(totalDebit) });
+  }
+  await logReportGeneration(req.auth!.institutionId, req.auth!.userId, "by-period", {});
+  res.json({ periods: result });
+});
+
+// §124.2 "Executive Dashboards" — a single-glance summary combining
+// numbers already computed by the Balance Sheet and Income Statement
+// endpoints, not a fifth reimplementation of the same aggregation.
+generalLedgerRouter.get("/reports/dashboard", requirePermission("reports.view"), async (req: AuthedRequest, res) => {
+  const today = new Date();
+  const lines = await getPostedLinesUpTo(prisma, req.auth!.institutionId, today);
+  const balances = aggregateBalancesAsOf(lines.map((l: any) => ({ accountId: l.accountId, category: l.account.category, debit: Number(l.debit), credit: Number(l.credit) })));
+  const accountsInvolved = new Map<string, { id: string; code: string; name: string; category: string }>(lines.map((l: any) => [l.accountId, l.account]));
+
+  let totalAssets = 0, totalLiabilities = 0, totalEquity = 0, totalIncome = 0, totalExpenses = 0;
+  for (const [accountId, bal] of balances) {
+    const cat = accountsInvolved.get(accountId)?.category;
+    if (cat === "ASSET") totalAssets += bal;
+    else if (cat === "LIABILITY") totalLiabilities += bal;
+    else if (cat === "EQUITY") totalEquity += bal;
+    else if (cat === "INCOME") totalIncome += bal;
+    else if (cat === "EXPENSE") totalExpenses += bal;
+  }
+
+  const [pendingJournals, activeAccounts, openPeriods] = await Promise.all([
+    prisma.journal.count({ where: { institutionId: req.auth!.institutionId, status: "PENDING_APPROVAL" } }),
+    prisma.gLAccount.count({ where: { institutionId: req.auth!.institutionId, status: "ACTIVE" } }),
+    prisma.financialPeriod.count({ where: { institutionId: req.auth!.institutionId, status: "OPEN" } }),
+  ]);
+
+  await logReportGeneration(req.auth!.institutionId, req.auth!.userId, "dashboard", {});
+  res.json({
+    asOfDate: today, totalAssets: round2(totalAssets), totalLiabilities: round2(totalLiabilities),
+    totalEquity: round2(totalEquity + totalIncome - totalExpenses), netIncomeSinceInception: round2(totalIncome - totalExpenses),
+    pendingJournals, activeAccounts, openPeriods,
   });
 });
