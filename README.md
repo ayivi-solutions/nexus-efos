@@ -166,7 +166,7 @@ real customer data.
   Vault data is fully captured (ledger entries, transfers, balancings)
   but doesn't have its own dedicated report page yet.
 
-**General Ledger** (in progress)
+**General Ledger**
 - Chart of Accounts, Journal Management, and Ledger Posting: a real
   double-entry engine. Debit=credit and standard balance-effect logic
   (which side of which account category a debit vs. credit increases)
@@ -204,9 +204,16 @@ real customer data.
   reconciliation invariant — every branch's settlement balance, summed
   across the institution, must net to exactly zero — surfaced directly
   on the Outstanding Balances report.
+- Financial Analytics: Revenue/Expense/Profitability trends over time,
+  Branch Performance with a real profitability angle, and a Net Income
+  forecast using a disclosed simple linear trend — labeled exactly as
+  that, not dressed up as anything more sophisticated.
 - Not yet wired: automatic posting from Savings, Loans, or Cash & Vault
-  into the GL (a real, separate integration effort) — and Financial
-  Analytics (§125) is still ahead.
+  into the GL (a real, separate integration effort). Product
+  Profitability, Cost Centre Analysis, and Budget Variance Analysis all
+  need a data dimension (product/cost-centre tagging, a real budget-entry
+  feature) that doesn't exist yet — named honestly rather than faked.
+  AI-Based Financial Insights waits on the AI spec.
 
 **Accessibility**
 - WCAG AA color contrast (verified programmatically, not eyeballed),
@@ -311,14 +318,14 @@ book as named EFS sub-concepts are covered by the same Vault ledger
 mechanism rather than separate models — a petty cash fund is a vault with
 a smaller balance, not a structurally different thing.
 
-**Phase 5 (General Ledger, EFS §116-125) is in progress, 7 of 8 sections
-live** — Chart of Accounts, Journal Management, Ledger Posting, Financial
-Period Management, Recurring Journal Management, Financial Statement
-Management, GL Reporting, and Inter-Branch Accounting all real and
-described above. Remaining: Financial Analytics (§125, AI portions
-pending the AI spec), and wiring automatic posting from every
-other module into the GL (§116.4's full integration — a genuinely
-separate, later effort).
+**Phase 5 (General Ledger, EFS §116-125) is complete, all 8 sections** —
+Chart of Accounts, Journal Management, Ledger Posting, Financial Period
+Management, Recurring Journal Management, Financial Statement
+Management, GL Reporting, Inter-Branch Accounting, and Financial
+Analytics all real and described above. Not yet wired: automatic posting
+from every other module into the GL (§116.4's full integration — a
+genuinely separate, later effort), and AI-Based Financial Insights within
+§125 specifically, pending the AI spec.
 
 **Remaining phases:**
 - **Phase 6 — Payroll** (EFS §206-215) — salaries, GRA, SSNIT, Tier 2.
