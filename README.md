@@ -429,6 +429,14 @@ Insights (pending the AI spec).
   (customer merge workflow, consent management, advanced search, etc.).
 
 **Also open, outside the 9-phase roadmap:**
+- **GitHub Dependabot: 36 vulnerabilities (20 high, 14 moderate, 2
+  low)** on the default branch — flagged consistently on every push
+  throughout this build and deliberately not investigated yet, per
+  standing instruction to ignore these in the moment and revisit later.
+  The count hasn't moved through the entire build. Worth a real pass —
+  pulling the actual advisory list to separate meaningful issues in the
+  request path from noisy dev-only tooling flags — before this goes
+  anywhere near production.
 - Optimistic-locking conflict rejection has a fully working backend
   (Customer/Employee/Role reject a stale update with a 409), wired into
   those same three edit forms on the frontend.
