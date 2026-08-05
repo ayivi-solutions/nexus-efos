@@ -215,13 +215,18 @@ real customer data.
   feature) that doesn't exist yet — named honestly rather than faked.
   AI-Based Financial Insights waits on the AI spec.
 
-**Payroll** (in progress)
+**Payroll** — complete, all 10 sections
 - Payroll Configuration: calendars, periods (with real overlap
   prevention), salary grades, pay groups, earning/deduction codes,
   overtime rules.
 - Salary Structure Management: employee compensation via the Approval
   Workflow, a new active structure genuinely supersedes the old one
-  rather than editing it — compensation history for free.
+  rather than editing it — compensation history for free. Real frontend
+  form for creating structures with allowances and deductions.
+- Allowance and Deduction Management: EmployeeDeduction genuinely
+  reduces net pay in the processing engine. Loan Deductions are a real,
+  working manual recurring deduction — not an automatic link to a
+  tracked staff-loan system, since none exists in this schema.
 - The real calculation engine: PAYE and SSNIT/Tier 2, tested exactly
   against the GRA's own published cumulative-tax figures at every band
   boundary, not just internally consistent. Confirmed 2026 rates: 7-band
@@ -233,12 +238,33 @@ real customer data.
   the processing engine's exact-name matching) — since these figures
   genuinely change annually, this is a form submission each year, not a
   script or a code change.
+- Payroll Approval and Disbursement: a run genuinely requires a separate
+  approver before payment (Processed → Pending Approval → Approved →
+  Paid). Employee bank account fields, a generic disclosed bank file CSV
+  export, honest manual payment confirmation, run reversal. Mobile Money
+  Payments deliberately not built — no payment provider integration
+  exists, same disclosed gap as SMS/Email.
+- Payslip and Employee Self-Service: real PDF payslips, visually
+  verified before shipping. Employee identity always derived from the
+  authenticated user's own linked record — a genuinely different,
+  self-scoped access model, not an admin permission gate. Annual tax
+  certificate and contribution statement summaries.
+- Payroll Accounting — the first real GL auto-posting integration in the
+  whole platform. Two genuine journals per run: an accrual journal at
+  approval (real expense against real liabilities), a settlement journal
+  at payment (liability settled against cash). GL account mapping is
+  configurable per institution, not hardcoded. Reconciliation compares
+  the posted journal's actual totals against the run's own entries.
+- Reporting and Analytics: summary totals, department and branch cost
+  breakdowns (using each employee's real department/branch), 6-month
+  trends.
 - Duplicate payroll processing for the same period blocked by a real
   database constraint. Exactly one tax table and one of each named
   statutory rate can be active at a time.
-- Not yet built: Allowance/Deduction wiring to real employee loans,
-  Approval/Disbursement, Payslip/Self-Service, Payroll Accounting (the
-  first real GL auto-posting integration), Reporting/Analytics.
+- Not built, named honestly: Cost Centre Analysis and per-department GL
+  posting splits (need a schema dimension that doesn't exist), Mobile
+  Money Payments (no provider integration), AI-Based Payroll Insights
+  (pending the AI spec).
 
 **Accessibility**
 - WCAG AA color contrast (verified programmatically, not eyeballed),
@@ -352,12 +378,15 @@ from every other module into the GL (§116.4's full integration — a
 genuinely separate, later effort), and AI-Based Financial Insights within
 §125 specifically, pending the AI spec.
 
-**Phase 6 (Payroll, EFS §206-215) is in progress** — Payroll
-Configuration (§207), Salary Structure Management (§208), and the
-Processing engine (§210/§212, PAYE and SSNIT/Tier 2) all real and
-described above. Remaining: Allowance/Deduction wiring to real employee
-loans (§209), Approval/Disbursement (§211), Payslip/Self-Service (§213),
-Payroll Accounting (§214), Reporting/Analytics (§215).
+**Phase 6 (Payroll, EFS §206-215) is complete, all 10 sections** —
+Payroll Configuration (§207), Salary Structure Management (§208),
+Allowance and Deduction Management (§209), the Processing engine
+(§210/§212, PAYE and SSNIT/Tier 2), Approval and Disbursement (§211),
+Payslip/Self-Service (§213), Payroll Accounting (§214, the first real
+GL auto-posting integration), and Reporting/Analytics (§215) all real
+and described above. Not built within it: Cost Centre Analysis (needs a
+schema dimension that doesn't exist), Mobile Money Payments (no provider
+integration), AI-Based Payroll Insights (pending the AI spec).
 
 **Remaining phases:**
 - **Phase 7 — Asset Management** (EFS §186-195) — fixed asset register.
