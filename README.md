@@ -290,6 +290,30 @@ real customer data.
   standalone Procurement module exists — acquisitions record directly),
   AI-Based Asset Insights (pending the AI spec).
 
+**Customer Data Quality** — complete
+- Search: multi-field (customer number, name, phone, email, ID number),
+  plus QR/barcode lookup reusing the exact camera scanner built for
+  Asset Management. "Fuzzy" matching is honest, disclosed ILIKE partial
+  matching — `pg_trgm` isn't confirmed enabled on the database, so true
+  trigram similarity isn't claimed.
+- KYC Risk Scoring: a real, disclosed default methodology built on the
+  institution's existing compliance fields (PEP status, watchlist flag,
+  CDD level, KYC status), with a visible component breakdown per
+  customer, the same "show the reasoning" pattern as the loan credit
+  score. The specific weights are a sensible starting default, not a
+  confirmed regulatory figure — flagged for review against the
+  institution's actual risk policy.
+- Customer Merge: the highest-stakes feature in this build. Detects
+  likely duplicates via real, deterministic similarity scoring (ID
+  number, phone, email, name), then merges via the Approval Workflow —
+  atomically reassigning every one of the 10 models that genuinely
+  reference a customer (Loan, SavingsAccount, Document,
+  CollectionTransaction, and more) inside a single database transaction.
+  Either everything reassigns correctly or nothing does. Rollback
+  reverses the exact captured list of what moved, not a guess.
+- Consent Management: real capture, withdrawal, and permanent history —
+  no delete route exists for consent records at all.
+
 **Accessibility**
 - WCAG AA color contrast (verified programmatically, not eyeballed),
   screen-reader-announced notifications, keyboard focus indicators,
@@ -420,13 +444,22 @@ integrations, all described above. Not built within it: Cost Centre
 allocation splits, full Procurement-workflow integration, AI-Based Asset
 Insights (pending the AI spec).
 
+**Phase 9 (cross-cutting Customer gaps) is complete** — Customer Search
+(§25, multi-field, QR/barcode reusing the Asset scanner, honest ILIKE
+fuzzy matching), KYC Risk Scoring (§29, a real disclosed default
+methodology built on existing compliance fields, tested, explicitly
+flagged as needing review against the institution's actual risk
+policy), Customer Merge (§35, atomic reassignment across all 10
+customer-referencing models inside a real database transaction, with
+exact rollback — the highest-stakes piece in this entire build),
+Consent Management (§43, immutable records, real withdrawal).
+
 **Remaining phases:**
 - **Phase 8 — Ghana regulatory reporting** (BOG, GDPC, GAMC, TMA) —
   deliberately blocked on the pilot partner furnishing the real official
   templates; building against a guessed format would create false
-  confidence in compliance that isn't real.
-- **Phase 9 — remaining Customer/cross-cutting gaps** from the audit
-  (customer merge workflow, consent management, advanced search, etc.).
+  confidence in compliance that isn't real. The only phase of the
+  original 9-phase roadmap not yet started.
 
 **Also open, outside the 9-phase roadmap:**
 - **GitHub Dependabot: 36 vulnerabilities (20 high, 14 moderate, 2
