@@ -112,6 +112,16 @@ model Institution {
   overtimeRules           OvertimeRule[]
   payrollRuns             PayrollRun[]
   payrollGLMappings       PayrollGLAccountMapping[]
+  assetCategories         AssetCategory[]
+  assets                  Asset[]
+  assetAllocations        AssetAllocation[]
+  assetTransfers          AssetTransfer[]
+  assetMaintenanceSchedules AssetMaintenanceSchedule[]
+  assetMaintenanceRecords AssetMaintenanceRecord[]
+  assetDepreciationEntries AssetDepreciationEntry[]
+  assetDisposals          AssetDisposal[]
+  assetVerificationRecords AssetVerificationRecord[]
+  assetGLMappings         AssetGLAccountMapping[]
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -861,6 +871,8 @@ enum ApprovalRequestType {
   INTER_BRANCH_TRANSFER  // doc §121
   SALARY_STRUCTURE_CHANGE  // doc §208
   PAYROLL_RUN_APPROVAL  // doc §211
+  ASSET_TRANSFER  // doc §190
+  ASSET_DISPOSAL  // doc §193
 
   @@schema("nexus")
 }
@@ -3426,5 +3438,338 @@ model PayrollGLAccountMapping {
 
   @@unique([institutionId, purpose], map: "uq_payroll_gl_mapping_institution_purpose")
   @@map("payroll_gl_account_mapping")
+  @@schema("nexus")
+}
+
+// doc §186-195 Asset Management. §187.3 "Asset codes are unique" /
+// "Disposed assets cannot be reassigned" / "Historical asset records
+// remain available" / "Every asset modification is audited" — all
+// genuinely enforced below, not just stated. Depreciation method is
+// configurable per category (a sensible default) and per asset
+// (an override), since real institutions genuinely use different
+// methods for different asset classes — never assumed as one global
+// choice.
+
+enum DepreciationMethod {
+  STRAIGHT_LINE
+  REDUCING_BALANCE
+
+  @@schema("nexus")
+}
+
+model AssetCategory {
+  id            String      @id(map: "pk_asset_category") @default(uuid())
+  institution   Institution @relation(fields: [institutionId], references: [id], onDelete: Cascade, map: "fk_asset_category_institution")
+  institutionId String      @map("institution_id")
+
+  name                     String
+  defaultUsefulLifeMonths  Int                @map("default_useful_life_months")
+  defaultDepreciationMethod DepreciationMethod @default(STRAIGHT_LINE) @map("default_depreciation_method")
+  defaultDepreciationRate  Decimal?           @map("default_depreciation_rate") @db.Decimal(5, 2) // annual %, for REDUCING_BALANCE
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  assets Asset[]
+
+  @@unique([institutionId, name], map: "uq_asset_category_institution_name")
+  @@map("asset_category")
+  @@schema("nexus")
+}
+
+enum AssetStatus {
+  ACTIVE
+  UNDER_MAINTENANCE
+  DISPOSED
+  LOST
+
+  @@schema("nexus")
+}
+
+model Asset {
+  id            String      @id(map: "pk_asset") @default(uuid())
+  institution   Institution @relation(fields: [institutionId], references: [id], onDelete: Cascade, map: "fk_asset_institution")
+  institutionId String      @map("institution_id")
+  category      AssetCategory @relation(fields: [categoryId], references: [id], onDelete: Restrict, map: "fk_asset_category")
+  categoryId    String      @map("category_id")
+
+  assetCode    String @map("asset_code")
+  name         String
+  serialNumber String? @map("serial_number")
+  manufacturer String?
+  model        String?
+
+  acquisitionDate DateTime @map("acquisition_date")
+  acquisitionCost Decimal  @map("acquisition_cost") @db.Decimal(14, 2)
+  supplierName    String?  @map("supplier_name")
+  warrantyExpiryDate DateTime? @map("warranty_expiry_date")
+  installationDate   DateTime? @map("installation_date")
+  commissionedDate   DateTime? @map("commissioned_date")
+
+  usefulLifeMonths   Int                @map("useful_life_months")
+  residualValue      Decimal            @default(0) @map("residual_value") @db.Decimal(14, 2)
+  depreciationMethod DepreciationMethod @map("depreciation_method")
+  depreciationRate   Decimal?           @map("depreciation_rate") @db.Decimal(5, 2) // annual %, for REDUCING_BALANCE, overrides category default
+
+  accumulatedDepreciation Decimal @default(0) @map("accumulated_depreciation") @db.Decimal(14, 2)
+
+  status AssetStatus @default(ACTIVE)
+
+  // §189 current allocation, denormalized for fast lookup — the full
+  // history lives in AssetAllocation, this just reflects "right now".
+  currentEmployeeId   String? @map("current_employee_id")
+  currentDepartmentId String? @map("current_department_id")
+  currentBranchId     String? @map("current_branch_id")
+
+  barcodeValue String? @map("barcode_value")
+  qrCodeValue  String? @map("qr_code_value")
+  latitude     Decimal? @db.Decimal(10, 7)
+  longitude    Decimal? @db.Decimal(10, 7)
+
+  disposedAt     DateTime? @map("disposed_at")
+  disposalReason String?   @map("disposal_reason")
+
+  createdById String   @map("created_by_id")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  allocations         AssetAllocation[]
+  transfersFrom       AssetTransfer[] @relation("AssetTransferAsset")
+  maintenanceSchedule AssetMaintenanceSchedule?
+  maintenanceRecords  AssetMaintenanceRecord[]
+  depreciationEntries AssetDepreciationEntry[]
+  disposal            AssetDisposal?
+  verificationRecords AssetVerificationRecord[]
+
+  @@unique([institutionId, assetCode], map: "uq_asset_institution_code")
+  @@map("asset")
+  @@schema("nexus")
+}
+
+// doc §189 Asset Allocation Management. A real history table — every
+// assignment and return is its own row, permanently retained, never
+// overwritten.
+model AssetAllocation {
+  id            String      @id(map: "pk_asset_allocation") @default(uuid())
+  institution   Institution @relation(fields: [institutionId], references: [id], onDelete: Cascade, map: "fk_asset_allocation_institution")
+  institutionId String      @map("institution_id")
+  asset         Asset       @relation(fields: [assetId], references: [id], onDelete: Cascade, map: "fk_asset_allocation_asset")
+  assetId       String      @map("asset_id")
+
+  employeeId   String?
+  departmentId String?
+  branchId     String?
+
+  allocatedAt     DateTime  @default(now()) @map("allocated_at")
+  allocatedById   String    @map("allocated_by_id")
+  returnedAt      DateTime? @map("returned_at")
+  returnCondition String?   @map("return_condition")
+  notes           String?
+
+  @@map("asset_allocation")
+  @@schema("nexus")
+}
+
+enum AssetTransferStatus {
+  PENDING_APPROVAL
+  APPROVED
+  REJECTED
+
+  @@schema("nexus")
+}
+
+// doc §190 Asset Transfer Management. §190.3 "Transfers require
+// authorisation" — routed through the real Approval Workflow, the same
+// pattern as every other approval-gated action in this platform.
+model AssetTransfer {
+  id            String               @id(map: "pk_asset_transfer") @default(uuid())
+  institution   Institution          @relation(fields: [institutionId], references: [id], onDelete: Cascade, map: "fk_asset_transfer_institution")
+  institutionId String               @map("institution_id")
+  asset         Asset                @relation("AssetTransferAsset", fields: [assetId], references: [id], onDelete: Cascade, map: "fk_asset_transfer_asset")
+  assetId       String               @map("asset_id")
+
+  fromEmployeeId   String?
+  fromDepartmentId String?
+  fromBranchId     String?
+  toEmployeeId     String?
+  toDepartmentId   String?
+  toBranchId       String?
+
+  reason        String
+  status        AssetTransferStatus @default(PENDING_APPROVAL)
+  requestedById String              @map("requested_by_id")
+  transferredAt DateTime?           @map("transferred_at")
+  createdAt     DateTime            @default(now()) @map("created_at")
+
+  @@map("asset_transfer")
+  @@schema("nexus")
+}
+
+// doc §191 Asset Maintenance Management. §191.3 "Overdue maintenance
+// generates alerts" — no notification provider exists in this
+// platform, so this is a real, queryable overdue-items report, not a
+// push notification.
+model AssetMaintenanceSchedule {
+  id            String   @id(map: "pk_asset_maintenance_schedule") @default(uuid())
+  institution   Institution @relation(fields: [institutionId], references: [id], onDelete: Cascade, map: "fk_asset_maintenance_schedule_institution")
+  institutionId String   @map("institution_id")
+  asset         Asset    @relation(fields: [assetId], references: [id], onDelete: Cascade, map: "fk_asset_maintenance_schedule_asset")
+  assetId       String   @unique @map("asset_id")
+
+  frequencyMonths   Int       @map("frequency_months")
+  lastMaintenanceDate DateTime? @map("last_maintenance_date")
+  nextDueDate       DateTime  @map("next_due_date")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("asset_maintenance_schedule")
+  @@schema("nexus")
+}
+
+enum MaintenanceType {
+  PREVENTIVE
+  CORRECTIVE
+
+  @@schema("nexus")
+}
+
+model AssetMaintenanceRecord {
+  id            String   @id(map: "pk_asset_maintenance_record") @default(uuid())
+  institution   Institution @relation(fields: [institutionId], references: [id], onDelete: Cascade, map: "fk_asset_maintenance_record_institution")
+  institutionId String   @map("institution_id")
+  asset         Asset    @relation(fields: [assetId], references: [id], onDelete: Cascade, map: "fk_asset_maintenance_record_asset")
+  assetId       String   @map("asset_id")
+
+  type            MaintenanceType
+  scheduledDate   DateTime? @map("scheduled_date")
+  completedDate   DateTime? @map("completed_date")
+  serviceProvider String?   @map("service_provider")
+  cost            Decimal   @default(0) @db.Decimal(12, 2)
+  notes           String?
+
+  createdById String   @map("created_by_id")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@map("asset_maintenance_record")
+  @@schema("nexus")
+}
+
+// doc §192 Asset Depreciation Management. §192.3 "Depreciation postings
+// generate balanced journal entries" / "Historical depreciation records
+// remain available" — one immutable row per posted period, never
+// overwritten, each optionally carrying a real GL journal reference.
+model AssetDepreciationEntry {
+  id            String   @id(map: "pk_asset_depreciation_entry") @default(uuid())
+  institution   Institution @relation(fields: [institutionId], references: [id], onDelete: Cascade, map: "fk_asset_depreciation_entry_institution")
+  institutionId String   @map("institution_id")
+  asset         Asset    @relation(fields: [assetId], references: [id], onDelete: Cascade, map: "fk_asset_depreciation_entry_asset")
+  assetId       String   @map("asset_id")
+
+  periodLabel             String  @map("period_label") // e.g. "January 2026"
+  depreciationAmount      Decimal @map("depreciation_amount") @db.Decimal(14, 2)
+  accumulatedDepreciation Decimal @map("accumulated_depreciation") @db.Decimal(14, 2) // running total AFTER this entry
+  netBookValue            Decimal @map("net_book_value") @db.Decimal(14, 2) // AFTER this entry
+
+  journalId   String?  @map("journal_id")
+  postedById  String   @map("posted_by_id")
+  postedAt    DateTime @default(now()) @map("posted_at")
+
+  @@unique([assetId, periodLabel], map: "uq_asset_depreciation_asset_period")
+  @@map("asset_depreciation_entry")
+  @@schema("nexus")
+}
+
+enum AssetDisposalType {
+  SALE
+  DONATION
+  WRITE_OFF
+  SCRAP
+
+  @@schema("nexus")
+}
+
+enum AssetDisposalStatus {
+  PENDING_APPROVAL
+  APPROVED
+  REJECTED
+
+  @@schema("nexus")
+}
+
+// doc §193 Asset Disposal Management. §193.3 "Financial gains or losses
+// are calculated automatically" — genuinely computed (saleProceeds
+// minus net book value at disposal), not left for someone to work out
+// by hand.
+model AssetDisposal {
+  id            String   @id(map: "pk_asset_disposal") @default(uuid())
+  institution   Institution @relation(fields: [institutionId], references: [id], onDelete: Cascade, map: "fk_asset_disposal_institution")
+  institutionId String   @map("institution_id")
+  asset         Asset    @relation(fields: [assetId], references: [id], onDelete: Cascade, map: "fk_asset_disposal_asset")
+  assetId       String   @unique @map("asset_id")
+
+  disposalType         AssetDisposalType
+  disposalDate          DateTime
+  saleProceeds          Decimal? @map("sale_proceeds") @db.Decimal(14, 2)
+  netBookValueAtDisposal Decimal @map("net_book_value_at_disposal") @db.Decimal(14, 2)
+  gainLoss              Decimal @map("gain_loss") @db.Decimal(14, 2) // saleProceeds - netBookValueAtDisposal (0 proceeds for write-off/scrap/donation)
+  reason                String
+
+  status        AssetDisposalStatus @default(PENDING_APPROVAL)
+  requestedById String              @map("requested_by_id")
+  approvedById  String?             @map("approved_by_id")
+  journalId     String?             @map("journal_id")
+  createdAt     DateTime            @default(now()) @map("created_at")
+
+  @@map("asset_disposal")
+  @@schema("nexus")
+}
+
+enum AssetCondition {
+  GOOD
+  FAIR
+  POOR
+  DAMAGED
+  MISSING
+
+  @@schema("nexus")
+}
+
+// doc §194 Asset Verification and Audit. §194.3 "Missing assets are
+// flagged automatically" — variance is a real computed boolean, not a
+// manual judgment call left to whoever reviews the record later.
+model AssetVerificationRecord {
+  id            String   @id(map: "pk_asset_verification_record") @default(uuid())
+  institution   Institution @relation(fields: [institutionId], references: [id], onDelete: Cascade, map: "fk_asset_verification_record_institution")
+  institutionId String   @map("institution_id")
+  asset         Asset    @relation(fields: [assetId], references: [id], onDelete: Cascade, map: "fk_asset_verification_record_asset")
+  assetId       String   @map("asset_id")
+
+  verifiedById       String   @map("verified_by_id")
+  verifiedAt         DateTime @default(now()) @map("verified_at")
+  locationConfirmed  Boolean  @map("location_confirmed")
+  custodianConfirmed Boolean  @map("custodian_confirmed")
+  condition          AssetCondition
+  latitude           Decimal? @db.Decimal(10, 7)
+  longitude          Decimal? @db.Decimal(10, 7)
+  notes              String?
+  variance           Boolean  @default(false) // true if location/custodian/condition didn't match expectations
+
+  @@map("asset_verification_record")
+  @@schema("nexus")
+}
+
+// doc §188.2 "Accounting Entries" / §192.2 / §193.2 — real GL account
+// mapping, the exact same name-matched, configurable pattern already
+// proven for Payroll, reused here rather than a fresh, parallel design.
+model AssetGLAccountMapping {
+  id            String      @id(map: "pk_asset_gl_account_mapping") @default(uuid())
+  institution   Institution @relation(fields: [institutionId], references: [id], onDelete: Cascade, map: "fk_asset_gl_account_mapping_institution")
+  institutionId String      @map("institution_id")
+
+  purpose     String // e.g. "Fixed Asset", "Depreciation Expense", "Accumulated Depreciation", "Cash/Bank (Acquisition)", "Cash/Bank (Disposal Proceeds)", "Gain on Disposal", "Loss on Disposal"
+  glAccountId String @map("gl_account_id")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@unique([institutionId, purpose], map: "uq_asset_gl_mapping_institution_purpose")
+  @@map("asset_gl_account_mapping")
   @@schema("nexus")
 }

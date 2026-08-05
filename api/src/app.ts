@@ -24,6 +24,7 @@ import { generalLedgerRouter } from "./routes/generalLedger.routes";
 import { interBranchRouter } from "./routes/interBranch.routes";
 import { analyticsRouter } from "./routes/analytics.routes";
 import { payrollRouter } from "./routes/payroll.routes";
+import { assetRouter } from "./routes/asset.routes";
 
 export const app = express();
 
@@ -69,6 +70,7 @@ app.use("/v1/general-ledger", generalLedgerRouter);
 app.use("/v1/inter-branch", interBranchRouter);
 app.use("/v1/analytics", analyticsRouter);
 app.use("/v1/payroll", payrollRouter);
+app.use("/v1/assets", assetRouter);
 
 app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   console.error(err);

@@ -5,6 +5,7 @@ import { requirePermission } from "../middleware/rbac";
 import { generateSchedule, round2 } from "../lib/loanSchedule";
 import { isBalanced, balanceEffect, findPostablePeriod, generateJournalNumber } from "../lib/generalLedger";
 import { buildPayrollAccrualLines, REQUIRED_ACCRUAL_PURPOSES } from "../lib/payrollAccounting";
+import { buildAssetDisposalLines } from "../lib/assetAccounting";
 
 export const approvalsRouter = Router();
 approvalsRouter.use(requireAuth);
@@ -327,6 +328,61 @@ async function applyApproval(request: { id: string; type: string; targetId: stri
       break;
     }
 
+    // doc §190.3 "Transfers require authorisation" / "Asset custody is
+    // continuously maintained" — the asset's current custodian fields
+    // only actually move once approved, not at request time.
+    case "ASSET_TRANSFER": {
+      const transfer = await prisma.assetTransfer.findUniqueOrThrow({ where: { id: request.targetId } });
+      await prisma.asset.update({ where: { id: transfer.assetId }, data: { currentEmployeeId: transfer.toEmployeeId, currentDepartmentId: transfer.toDepartmentId, currentBranchId: transfer.toBranchId } });
+      await prisma.assetTransfer.update({ where: { id: transfer.id }, data: { status: "APPROVED", transferredAt: new Date() } });
+      break;
+    }
+
+    // doc §193.3 "Disposals require authorisation" / "Disposed assets
+    // are removed from active service" / "Financial gains or losses are
+    // calculated automatically" — the real GL posting happens here, at
+    // approval, using the exact same configurable-mapping,
+    // visible-gap-not-silent-failure pattern as Payroll and asset
+    // depreciation.
+    case "ASSET_DISPOSAL": {
+      const disposal = await prisma.assetDisposal.findUniqueOrThrow({ where: { id: request.targetId } });
+      const asset = await prisma.asset.findUniqueOrThrow({ where: { id: disposal.assetId } });
+
+      let journalId: string | null = null;
+      const mappings = await prisma.assetGLAccountMapping.findMany({ where: { institutionId: disposal.institutionId, purpose: { in: ["Fixed Asset", "Accumulated Depreciation", "Cash/Bank (Disposal Proceeds)", "Gain on Disposal", "Loss on Disposal"] } } });
+      const accountIdByPurpose: Record<string, string> = Object.fromEntries(mappings.map((m: any) => [m.purpose, m.glAccountId]));
+      const hasRequired = accountIdByPurpose["Fixed Asset"] && accountIdByPurpose["Accumulated Depreciation"];
+
+      if (hasRequired) {
+        const glPeriod = await findPostablePeriod(prisma, disposal.institutionId, new Date());
+        if (glPeriod && glPeriod.status === "OPEN") {
+          const lines = buildAssetDisposalLines(Number(asset.acquisitionCost), Number(asset.accumulatedDepreciation), Number(disposal.saleProceeds || 0), accountIdByPurpose);
+          if (isBalanced(lines)) {
+            const accountRecords = await prisma.gLAccount.findMany({ where: { id: { in: lines.map((l) => l.accountId) } } });
+            const accountById = new Map(accountRecords.map((a: any) => [a.id, a]));
+
+            const journal = await prisma.journal.create({
+              data: {
+                institutionId: disposal.institutionId, journalNumber: generateJournalNumber(), type: "AUTOMATIC",
+                description: `Asset disposal — ${asset.assetCode} — ${disposal.disposalType}`, status: "POSTED", postingDate: new Date(), postedAt: new Date(), postedById: approvedById, createdById: approvedById,
+                lines: { create: lines.map((l) => ({ accountId: l.accountId, debit: l.debit, credit: l.credit })) },
+              },
+            });
+            for (const line of lines) {
+              const account = accountById.get(line.accountId);
+              const effect = balanceEffect(account!.category as any, line.debit, line.credit);
+              await prisma.gLAccount.update({ where: { id: line.accountId }, data: { balance: { increment: effect } } });
+            }
+            journalId = journal.id;
+          }
+        }
+      }
+
+      await prisma.assetDisposal.update({ where: { id: disposal.id }, data: { status: "APPROVED", approvedById, journalId } });
+      await prisma.asset.update({ where: { id: asset.id }, data: { status: "DISPOSED", disposedAt: disposal.disposalDate, disposalReason: disposal.reason } });
+      break;
+    }
+
     case "SAVINGS_RESTRICTION_CREATE": {
       await prisma.savingsRestriction.update({ where: { id: request.targetId }, data: { status: "ACTIVE", approvedById, activatedAt: new Date() } });
       break;
@@ -429,6 +485,12 @@ approvalsRouter.post("/:id/reject", requirePermission("institution.configure"), 
   }
   if (request.type === "PAYROLL_RUN_APPROVAL") {
     await prisma.payrollRun.update({ where: { id: request.targetId }, data: { status: "PROCESSED" } });
+  }
+  if (request.type === "ASSET_TRANSFER") {
+    await prisma.assetTransfer.update({ where: { id: request.targetId }, data: { status: "REJECTED" } });
+  }
+  if (request.type === "ASSET_DISPOSAL") {
+    await prisma.assetDisposal.update({ where: { id: request.targetId }, data: { status: "REJECTED" } });
   }
   if (request.type === "INTER_BRANCH_TRANSFER") {
     await prisma.interBranchTransfer.update({ where: { id: request.targetId }, data: { status: "REJECTED" } });

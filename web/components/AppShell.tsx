@@ -26,6 +26,7 @@ const NAV_FULL: { label: string; icon: string; href: string; perm: string | null
   { label: "Inter-Branch", icon: "🔁", href: "/inter-branch", perm: "institution.configure" },
   { label: "Financial Analytics", icon: "📈", href: "/analytics", perm: "reports.view" },
   { label: "Payroll", icon: "💰", href: "/payroll", perm: "institution.configure" },
+  { label: "Assets", icon: "💻", href: "/assets", perm: "institution.configure" },
 ];
 
 export function AppShell({ active, children }: { active: string; children: React.ReactNode }) {

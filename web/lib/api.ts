@@ -428,6 +428,30 @@ export const api = {
   getPayrollByBranch: () => request("/payroll/reports/by-branch"),
   getPayrollTrends: (months?: number) => request(`/payroll/reports/trends${months ? `?months=${months}` : ""}`),
 
+  listAssetCategories: () => request("/assets/categories"),
+  createAssetCategory: (data: any) => request("/assets/categories", { method: "POST", body: JSON.stringify(data) }),
+  listAssets: (status?: string) => request(`/assets/assets${status ? `?status=${status}` : ""}`),
+  getAsset: (id: string) => request(`/assets/assets/${id}`),
+  createAsset: (data: any) => request("/assets/assets", { method: "POST", body: JSON.stringify(data) }),
+  lookupAssetByCode: (code: string) => request(`/assets/assets/lookup?code=${encodeURIComponent(code)}`),
+  createAssetAllocation: (data: any) => request("/assets/allocations", { method: "POST", body: JSON.stringify(data) }),
+  returnAssetAllocation: (id: string, returnCondition: string) => request(`/assets/allocations/${id}/return`, { method: "POST", body: JSON.stringify({ returnCondition }) }),
+  createAssetTransfer: (data: any) => request("/assets/transfers", { method: "POST", body: JSON.stringify(data) }),
+  listAssetTransfers: () => request("/assets/transfers"),
+  createMaintenanceSchedule: (data: any) => request("/assets/maintenance-schedules", { method: "POST", body: JSON.stringify(data) }),
+  createMaintenanceRecord: (data: any) => request("/assets/maintenance-records", { method: "POST", body: JSON.stringify(data) }),
+  processAssetDepreciation: (assetId: string, periodLabel: string) => request(`/assets/assets/${assetId}/process-depreciation`, { method: "POST", body: JSON.stringify({ periodLabel }) }),
+  createAssetDisposal: (data: any) => request("/assets/disposals", { method: "POST", body: JSON.stringify(data) }),
+  listAssetDisposals: () => request("/assets/disposals"),
+  createAssetVerification: (data: any) => request("/assets/verifications", { method: "POST", body: JSON.stringify(data) }),
+  listAssetGLMappings: () => request("/assets/gl-mappings"),
+  setAssetGLMapping: (purpose: string, glAccountId: string) => request("/assets/gl-mappings", { method: "POST", body: JSON.stringify({ purpose, glAccountId }) }),
+  getAssetRegisterReport: () => request("/assets/reports/register"),
+  getAssetValuationReport: () => request("/assets/reports/valuation"),
+  getAssetLifecycleReport: () => request("/assets/reports/lifecycle"),
+  getOverdueMaintenanceReport: () => request("/assets/reports/overdue-maintenance"),
+  getAssetsByBranchReport: () => request("/assets/reports/by-branch"),
+
   downloadMyPayslip: async (entryId: string) => {
     const accessToken = typeof window !== "undefined" ? sessionStorage.getItem("nexus_access_token") : null;
     const res = await fetch(`${API_BASE}/payroll/my-payslips/${entryId}/download`, { headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : {} });
