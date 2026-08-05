@@ -6,6 +6,7 @@ import { generateSchedule, round2 } from "../lib/loanSchedule";
 import { isBalanced, balanceEffect, findPostablePeriod, generateJournalNumber } from "../lib/generalLedger";
 import { buildPayrollAccrualLines, REQUIRED_ACCRUAL_PURPOSES } from "../lib/payrollAccounting";
 import { buildAssetDisposalLines } from "../lib/assetAccounting";
+import { executeCustomerMerge } from "../lib/customerMerge";
 
 export const approvalsRouter = Router();
 approvalsRouter.use(requireAuth);
@@ -383,6 +384,18 @@ async function applyApproval(request: { id: string; type: string; targetId: stri
       break;
     }
 
+    // doc §35.4 "Merge operations require authorised approval" — the
+    // real, atomic reassignment across all 10 customer-referencing
+    // models happens here, only now, inside a single transaction.
+    case "CUSTOMER_MERGE": {
+      const mergeRecord = await prisma.customerMergeRecord.findUniqueOrThrow({ where: { id: request.targetId } });
+      const reassignedRecords = await prisma.$transaction(async (tx: any) => {
+        return executeCustomerMerge(tx, mergeRecord.primaryCustomerId, mergeRecord.mergedCustomerId);
+      });
+      await prisma.customerMergeRecord.update({ where: { id: mergeRecord.id }, data: { status: "APPROVED", approvedById, mergedAt: new Date(), reassignedRecords: reassignedRecords as any } });
+      break;
+    }
+
     case "SAVINGS_RESTRICTION_CREATE": {
       await prisma.savingsRestriction.update({ where: { id: request.targetId }, data: { status: "ACTIVE", approvedById, activatedAt: new Date() } });
       break;
@@ -491,6 +504,9 @@ approvalsRouter.post("/:id/reject", requirePermission("institution.configure"), 
   }
   if (request.type === "ASSET_DISPOSAL") {
     await prisma.assetDisposal.update({ where: { id: request.targetId }, data: { status: "REJECTED" } });
+  }
+  if (request.type === "CUSTOMER_MERGE") {
+    await prisma.customerMergeRecord.update({ where: { id: request.targetId }, data: { status: "REJECTED" } });
   }
   if (request.type === "INTER_BRANCH_TRANSFER") {
     await prisma.interBranchTransfer.update({ where: { id: request.targetId }, data: { status: "REJECTED" } });

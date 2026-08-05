@@ -122,6 +122,9 @@ model Institution {
   assetDisposals          AssetDisposal[]
   assetVerificationRecords AssetVerificationRecord[]
   assetGLMappings         AssetGLAccountMapping[]
+  customerConsents        CustomerConsent[]
+  customerMergeRecords    CustomerMergeRecord[]
+  savedSearches           SavedSearch[]
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -658,6 +661,21 @@ model Customer {
   beneficialOwners   BeneficialOwner[]
   accountHolderRoles AccountHolder[]
   documents          Document[]
+  consents           CustomerConsent[]
+  mergedInto         CustomerMergeRecord[] @relation("MergedCustomer")
+  mergesReceived     CustomerMergeRecord[] @relation("PrimaryCustomer")
+
+  // doc §35 — the merge target this customer was consolidated into, if
+  // any. Never deleted, only pointed elsewhere and marked MERGED —
+  // "Primary customer records remain uniquely identifiable" holds
+  // because the merged record itself is preserved, not erased.
+  mergedIntoCustomerId String?            @map("merged_into_customer_id")
+  mergeStatus          CustomerMergeStatus @default(ACTIVE) @map("merge_status")
+
+  // doc §29.3 Risk Scoring — stored with its breakdown, mirroring the
+  // loan credit score's "visible reasoning" pattern (§64).
+  kycRiskScore          Int?  @map("kyc_risk_score")
+  kycRiskScoreBreakdown Json? @map("kyc_risk_score_breakdown")
 
   // PDDS §13.4 Phase 3 — mandatory audit/version/lifecycle columns.
   // created_by/updated_by/version_no auto-populated by Prisma middleware
@@ -873,6 +891,7 @@ enum ApprovalRequestType {
   PAYROLL_RUN_APPROVAL  // doc §211
   ASSET_TRANSFER  // doc §190
   ASSET_DISPOSAL  // doc §193
+  CUSTOMER_MERGE  // doc §35
 
   @@schema("nexus")
 }
@@ -3771,5 +3790,117 @@ model AssetGLAccountMapping {
 
   @@unique([institutionId, purpose], map: "uq_asset_gl_mapping_institution_purpose")
   @@map("asset_gl_account_mapping")
+  @@schema("nexus")
+}
+
+// doc §43 Customer Consent Management. §43.5 "Consent records cannot be
+// deleted" — genuinely enforced: no delete route exists anywhere for
+// this model. §43.5 "Consent withdrawals take immediate effect where
+// applicable" — withdrawal is recorded on the SAME row (withdrawnAt),
+// not a separate row, so there's exactly one current state per consent
+// to check, not a history to reconstruct at read time.
+enum ConsentType {
+  DATA_PROCESSING
+  MARKETING
+  SMS
+  EMAIL
+  PUSH_NOTIFICATION
+  BIOMETRIC
+  CREDIT_BUREAU
+  INFORMATION_SHARING
+  DIGITAL_SIGNATURE
+  OTHER
+
+  @@schema("nexus")
+}
+
+model CustomerConsent {
+  id            String      @id(map: "pk_customer_consent") @default(uuid())
+  institution   Institution @relation(fields: [institutionId], references: [id], onDelete: Cascade, map: "fk_customer_consent_institution")
+  institutionId String      @map("institution_id")
+  customer      Customer    @relation(fields: [customerId], references: [id], onDelete: Cascade, map: "fk_customer_consent_customer")
+  customerId    String      @map("customer_id")
+
+  consentType      ConsentType @map("consent_type")
+  otherTypeLabel   String?     @map("other_type_label") // for OTHER / institution-defined consents
+  granted          Boolean
+  grantedAt        DateTime    @default(now()) @map("granted_at")
+  expiresAt        DateTime?   @map("expires_at")
+  withdrawnAt      DateTime?   @map("withdrawn_at")
+  withdrawnById    String?     @map("withdrawn_by_id")
+  documentId       String?     @map("document_id") // links to the existing Document model, if a signed consent form was attached
+  capturedById     String      @map("captured_by_id")
+  notes            String?
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("customer_consent")
+  @@schema("nexus")
+}
+
+enum CustomerMergeStatus {
+  ACTIVE
+  MERGED
+
+  @@schema("nexus")
+}
+
+enum CustomerMergeRecordStatus {
+  PENDING_APPROVAL
+  APPROVED
+  REJECTED
+  ROLLED_BACK
+
+  @@schema("nexus")
+}
+
+// doc §35 Customer Merge and Duplicate Management. §35.4 "Merge
+// operations require authorised approval" via the real Approval
+// Workflow. §35.4 "Merged records preserve transaction history" —
+// reassignedRecords is the real, exact list of what moved, by model and
+// ID, making a genuine rollback possible rather than an approximation.
+model CustomerMergeRecord {
+  id            String      @id(map: "pk_customer_merge_record") @default(uuid())
+  institution   Institution @relation(fields: [institutionId], references: [id], onDelete: Cascade, map: "fk_customer_merge_record_institution")
+  institutionId String      @map("institution_id")
+
+  primaryCustomer   Customer @relation("PrimaryCustomer", fields: [primaryCustomerId], references: [id], onDelete: Cascade, map: "fk_customer_merge_primary")
+  primaryCustomerId String   @map("primary_customer_id")
+  mergedCustomer    Customer @relation("MergedCustomer", fields: [mergedCustomerId], references: [id], onDelete: Cascade, map: "fk_customer_merge_merged")
+  mergedCustomerId  String   @map("merged_customer_id")
+
+  similarityScore Int      @map("similarity_score")
+  matchedFields   Json     @map("matched_fields") // string[]
+  status          CustomerMergeRecordStatus @default(PENDING_APPROVAL)
+
+  // Exactly which records moved, captured at merge execution time — the
+  // real basis for rollback: [{ model: "Loan", id: "..." }, ...]
+  reassignedRecords Json? @map("reassigned_records")
+
+  requestedById  String    @map("requested_by_id")
+  approvedById   String?   @map("approved_by_id")
+  mergedAt       DateTime? @map("merged_at")
+  rolledBackById String?   @map("rolled_back_by_id")
+  rolledBackAt   DateTime? @map("rolled_back_at")
+  rollbackReason String?   @map("rollback_reason")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("customer_merge_record")
+  @@schema("nexus")
+}
+
+// doc §25.3 "Saved Searches"
+model SavedSearch {
+  id            String      @id(map: "pk_saved_search") @default(uuid())
+  institution   Institution @relation(fields: [institutionId], references: [id], onDelete: Cascade, map: "fk_saved_search_institution")
+  institutionId String      @map("institution_id")
+
+  userId    String
+  name      String
+  criteria  Json // the saved search parameters
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("saved_search")
   @@schema("nexus")
 }

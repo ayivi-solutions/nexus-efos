@@ -6,6 +6,8 @@ import { requirePermission } from "../middleware/rbac";
 import { matchRules, executeMatchedRules } from "../lib/businessRules";
 import { checkVersion, VersionConflictError } from "../lib/optimisticLock";
 import { generateCustomerNumber } from "../lib/customerNumber";
+import { calculateCustomerRiskScore, calculateCustomerSimilarity } from "../lib/customerRiskScoring";
+import { rollbackCustomerMerge } from "../lib/customerMerge";
 
 export const customerRouter = Router();
 customerRouter.use(requireAuth);
@@ -611,4 +613,224 @@ customerRouter.delete("/:id/beneficial-owners/:ownerId", requirePermission("cust
   // PDDS Phase 3 — soft-delete, not a real delete
   await prisma.beneficialOwner.updateMany({ where: { id: req.params.ownerId, customerId: customer.id }, data: { deletedAt: new Date() } });
   res.status(204).send();
+});
+
+// -------------------------------------------------------------------------
+// §25 Customer Search and Retrieval. §25.5 "Restrict search results based
+// on user permissions" — the existing customers.view permission gate
+// already does this; nothing here bypasses it. "Fuzzy Search" here is
+// honest, disclosed partial/case-insensitive matching (ILIKE) — real
+// trigram similarity (pg_trgm) isn't confirmed enabled on this database,
+// and claiming it without checking would overstate what this actually
+// does.
+// -------------------------------------------------------------------------
+
+customerRouter.get("/search", requirePermission("customers.view"), async (req: AuthedRequest, res) => {
+  const q = (req.query as any).q as string | undefined;
+  const branchId = (req.query as any).branchId as string | undefined;
+  const status = (req.query as any).status as string | undefined;
+  const kycStatus = (req.query as any).kycStatus as string | undefined;
+
+  if (!q && !branchId && !status && !kycStatus) return res.status(400).json({ error: "At least one search parameter is required" });
+
+  const where: any = { institutionId: req.auth!.institutionId, mergeStatus: "ACTIVE" };
+  if (branchId) where.branchId = branchId;
+  if (status) where.status = status;
+  if (kycStatus) where.kycStatus = kycStatus;
+  if (q) {
+    where.OR = [
+      { customerNumber: { equals: q } },
+      { fullName: { contains: q, mode: "insensitive" } },
+      { phone: { contains: q } },
+      { email: { contains: q, mode: "insensitive" } },
+      { idNumber: { equals: q } },
+    ];
+  }
+
+  const customers = await prisma.customer.findMany({
+    where, take: 50,
+    select: { id: true, customerNumber: true, fullName: true, phone: true, email: true, branchId: true, status: true, riskRating: true, segment: true, createdAt: true },
+  });
+
+  await prisma.auditLog.create({ data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "customer.searched", resource: "customer_search", resourceId: "search", metadata: { q, resultCount: customers.length } } });
+  res.json({ customers });
+});
+
+// §25 "QR Code" / "Barcode" search — reuses the same lookup pattern
+// already built for Assets, extended to customers.
+customerRouter.get("/search/by-code", requirePermission("customers.view"), async (req: AuthedRequest, res) => {
+  const code = (req.query as any).code as string | undefined;
+  if (!code) return res.status(400).json({ error: "code query parameter is required" });
+  const customer = await prisma.customer.findFirst({ where: { institutionId: req.auth!.institutionId, OR: [{ customerNumber: code }, { idNumber: code }] } });
+  if (!customer) return res.status(404).json({ error: "No customer found matching that code" });
+  res.json({ customer });
+});
+
+const savedSearchSchema = z.object({ name: z.string().min(1), criteria: z.record(z.any()) });
+
+customerRouter.post("/saved-searches", requirePermission("customers.view"), async (req: AuthedRequest, res) => {
+  const parsed = savedSearchSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+  const saved = await prisma.savedSearch.create({ data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, name: parsed.data.name, criteria: parsed.data.criteria } });
+  res.status(201).json({ saved });
+});
+
+customerRouter.get("/saved-searches", requirePermission("customers.view"), async (req: AuthedRequest, res) => {
+  const searches = await prisma.savedSearch.findMany({ where: { institutionId: req.auth!.institutionId, userId: req.auth!.userId }, orderBy: { createdAt: "desc" } });
+  res.json({ searches });
+});
+
+// -------------------------------------------------------------------------
+// §29 KYC — Risk Scoring. §29.5 "Every KYC action is audited". Recomputes
+// on demand from the customer's real current state, rather than expecting
+// a scheduler to keep it fresh — periodic re-screening would need a job
+// scheduler this app doesn't have, the same disclosed boundary already
+// documented for KYC expiry monitoring.
+// -------------------------------------------------------------------------
+
+customerRouter.post("/:id/recompute-risk-score", requirePermission("customers.view"), async (req: AuthedRequest, res) => {
+  const customer = await prisma.customer.findFirst({ where: { id: req.params.id, institutionId: req.auth!.institutionId } });
+  if (!customer) return res.status(404).json({ error: "Customer not found" });
+
+  const result = calculateCustomerRiskScore({
+    watchlistFlag: customer.watchlistFlag, pepStatus: customer.pepStatus as any, kycStatus: customer.kycStatus as any,
+    possibleDuplicate: customer.possibleDuplicate, cddLevel: customer.cddLevel as any,
+  });
+
+  const updated = await prisma.customer.update({
+    where: { id: customer.id },
+    data: { kycRiskScore: result.score, kycRiskScoreBreakdown: result.breakdown as any, riskRating: result.rating },
+  });
+
+  await prisma.auditLog.create({ data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "customer.risk_score_recomputed", resource: "customer", resourceId: customer.id, metadata: { score: result.score, rating: result.rating } } });
+  res.json({ customer: updated, breakdown: result.breakdown });
+});
+
+// -------------------------------------------------------------------------
+// §43 Customer Consent Management. §43.5 "Consent records cannot be
+// deleted" — no delete route exists here, deliberately. Withdrawal is a
+// real update to the SAME row (withdrawnAt), and "immediate effect" means
+// any consuming code (e.g. a future SMS/Email send) should check
+// granted && !withdrawnAt && (!expiresAt || expiresAt > now) — the
+// consent record itself is the single source of truth, not a derived
+// cache that could drift.
+// -------------------------------------------------------------------------
+
+const consentSchema = z.object({
+  customerId: z.string(), consentType: z.enum(["DATA_PROCESSING", "MARKETING", "SMS", "EMAIL", "PUSH_NOTIFICATION", "BIOMETRIC", "CREDIT_BUREAU", "INFORMATION_SHARING", "DIGITAL_SIGNATURE", "OTHER"]),
+  otherTypeLabel: z.string().optional(), granted: z.boolean(), expiresAt: z.string().optional(), documentId: z.string().optional(), notes: z.string().optional(),
+});
+
+customerRouter.post("/consents", requirePermission("customers.view"), async (req: AuthedRequest, res) => {
+  const parsed = consentSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+  if (parsed.data.consentType === "OTHER" && !parsed.data.otherTypeLabel) return res.status(400).json({ error: "otherTypeLabel is required when consentType is OTHER" });
+
+  const customer = await prisma.customer.findFirst({ where: { id: parsed.data.customerId, institutionId: req.auth!.institutionId } });
+  if (!customer) return res.status(404).json({ error: "Customer not found" });
+
+  const consent = await prisma.customerConsent.create({
+    data: {
+      institutionId: req.auth!.institutionId, customerId: parsed.data.customerId, consentType: parsed.data.consentType, otherTypeLabel: parsed.data.otherTypeLabel,
+      granted: parsed.data.granted, expiresAt: parsed.data.expiresAt ? new Date(parsed.data.expiresAt) : undefined, documentId: parsed.data.documentId,
+      capturedById: req.auth!.userId, notes: parsed.data.notes,
+    },
+  });
+  await prisma.auditLog.create({ data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "customer_consent.captured", resource: "customer_consent", resourceId: consent.id, metadata: { consentType: parsed.data.consentType, granted: parsed.data.granted } } });
+  res.status(201).json({ consent });
+});
+
+customerRouter.get("/:id/consents", requirePermission("customers.view"), async (req: AuthedRequest, res) => {
+  const consents = await prisma.customerConsent.findMany({ where: { customerId: req.params.id, institutionId: req.auth!.institutionId }, orderBy: { createdAt: "desc" } });
+  res.json({ consents });
+});
+
+customerRouter.post("/consents/:id/withdraw", requirePermission("customers.view"), async (req: AuthedRequest, res) => {
+  const consent = await prisma.customerConsent.findFirst({ where: { id: req.params.id, institutionId: req.auth!.institutionId } });
+  if (!consent) return res.status(404).json({ error: "Consent record not found" });
+  if (consent.withdrawnAt) return res.status(400).json({ error: "This consent has already been withdrawn" });
+
+  const updated = await prisma.customerConsent.update({ where: { id: consent.id }, data: { withdrawnAt: new Date(), withdrawnById: req.auth!.userId } });
+  await prisma.auditLog.create({ data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "customer_consent.withdrawn", resource: "customer_consent", resourceId: consent.id } });
+  res.json({ consent: updated });
+});
+
+// -------------------------------------------------------------------------
+// §35 Customer Merge and Duplicate Management. §35.4 "Merge operations
+// require authorised approval" — via the real Approval Workflow, the
+// actual reassignment only happens once approved, not at request time.
+// -------------------------------------------------------------------------
+
+customerRouter.get("/duplicates/detect", requirePermission("customers.view"), async (req: AuthedRequest, res) => {
+  const customers = await prisma.customer.findMany({
+    where: { institutionId: req.auth!.institutionId, mergeStatus: "ACTIVE" },
+    select: { id: true, fullName: true, phone: true, email: true, idNumber: true, customerNumber: true },
+  });
+
+  // Genuinely O(n²) — fine for the scale a single MFI institution's
+  // customer base runs at in this context, not built for a
+  // multi-million-record search.
+  const candidates: { customerA: any; customerB: any; score: number; matchedFields: string[] }[] = [];
+  for (let i = 0; i < customers.length; i++) {
+    for (let j = i + 1; j < customers.length; j++) {
+      const result = calculateCustomerSimilarity(customers[i], customers[j]);
+      if (result.score >= 30) candidates.push({ customerA: customers[i], customerB: customers[j], score: result.score, matchedFields: result.matchedFields });
+    }
+  }
+  candidates.sort((a, b) => b.score - a.score);
+
+  res.json({ candidates: candidates.slice(0, 100) });
+});
+
+const mergeRequestSchema = z.object({ primaryCustomerId: z.string(), mergedCustomerId: z.string() });
+
+customerRouter.post("/merge-requests", requirePermission("customers.view"), async (req: AuthedRequest, res) => {
+  const parsed = mergeRequestSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+  if (parsed.data.primaryCustomerId === parsed.data.mergedCustomerId) return res.status(400).json({ error: "primaryCustomerId and mergedCustomerId must differ" });
+
+  const [primary, merged] = await Promise.all([
+    prisma.customer.findFirst({ where: { id: parsed.data.primaryCustomerId, institutionId: req.auth!.institutionId, mergeStatus: "ACTIVE" } }),
+    prisma.customer.findFirst({ where: { id: parsed.data.mergedCustomerId, institutionId: req.auth!.institutionId, mergeStatus: "ACTIVE" } }),
+  ]);
+  if (!primary || !merged) return res.status(404).json({ error: "Both customers must exist and not already be merged" });
+
+  const similarity = calculateCustomerSimilarity(primary, merged);
+
+  const mergeRecord = await prisma.customerMergeRecord.create({
+    data: { institutionId: req.auth!.institutionId, primaryCustomerId: primary.id, mergedCustomerId: merged.id, similarityScore: similarity.score, matchedFields: similarity.matchedFields, requestedById: req.auth!.userId },
+  });
+  await prisma.approvalRequest.create({
+    data: { institutionId: req.auth!.institutionId, type: "CUSTOMER_MERGE", targetType: "CustomerMergeRecord", targetId: mergeRecord.id, payload: {}, reason: `Merge ${merged.fullName} into ${primary.fullName} — similarity ${similarity.score}`, requestedById: req.auth!.userId },
+  });
+  await prisma.auditLog.create({ data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "customer_merge.requested", resource: "customer_merge_record", resourceId: mergeRecord.id } });
+  res.status(202).json({ pendingApproval: true, mergeRecord });
+});
+
+customerRouter.get("/merge-requests", requirePermission("customers.view"), async (req: AuthedRequest, res) => {
+  const records = await prisma.customerMergeRecord.findMany({ where: { institutionId: req.auth!.institutionId }, orderBy: { createdAt: "desc" } });
+  res.json({ records });
+});
+
+// §35.4 "Merge Rollback where authorised" — reverses the exact captured
+// list of reassigned records, atomically.
+customerRouter.post("/merge-requests/:id/rollback", requirePermission("customers.view"), async (req: AuthedRequest, res) => {
+  const { reason } = req.body as { reason?: string };
+  if (!reason) return res.status(400).json({ error: "A reason is required to roll back a merge" });
+
+  const record = await prisma.customerMergeRecord.findFirst({ where: { id: req.params.id, institutionId: req.auth!.institutionId, status: "APPROVED" } });
+  if (!record) return res.status(404).json({ error: "Approved merge record not found" });
+  if (!record.reassignedRecords) return res.status(400).json({ error: "No reassignment record found to roll back" });
+
+  try {
+    await prisma.$transaction(async (tx: any) => {
+      await rollbackCustomerMerge(tx, record.mergedCustomerId, record.reassignedRecords as any);
+      await tx.customerMergeRecord.update({ where: { id: record.id }, data: { status: "ROLLED_BACK", rolledBackById: req.auth!.userId, rolledBackAt: new Date(), rollbackReason: reason } });
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: `Rollback failed, nothing was changed: ${err.message}` });
+  }
+
+  await prisma.auditLog.create({ data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "customer_merge.rolled_back", resource: "customer_merge_record", resourceId: record.id, metadata: { reason } } });
+  res.json({ success: true });
 });

@@ -46,6 +46,9 @@ export default function CustomerDetailPage() {
   const [documents, setDocuments] = useState<any[]>([]);
   const [kycChecklist, setKycChecklist] = useState<any>(null);
   const [cddForm, setCddForm] = useState({ pepStatus: "NOT_PEP", cddNotes: "" });
+  const [riskBreakdown, setRiskBreakdown] = useState<any[] | null>(null);
+  const [consents, setConsents] = useState<any[]>([]);
+  const [consentForm, setConsentForm] = useState({ consentType: "DATA_PROCESSING", granted: true, expiresAt: "", notes: "" });
   const [docFile, setDocFile] = useState<File | null>(null);
   const [docType, setDocType] = useState("NATIONAL_ID");
   const [docExpiry, setDocExpiry] = useState("");
@@ -80,10 +83,33 @@ export default function CustomerDetailPage() {
     loadDocuments();
     api.getKycChecklist(id).then(setKycChecklist).catch(() => {});
     api.listBranches().then((res) => setBranches(res.branches)).catch(() => {});
+    api.listCustomerConsents(id).then((res) => setConsents(res.consents)).catch(() => {});
   }
 
   function loadDocuments() {
     api.listDocuments(id).then((res) => setDocuments(res.documents)).catch(() => {});
+  }
+
+  async function handleRecomputeRisk() {
+    setBusy(true); setError(null);
+    try { const res = await api.recomputeCustomerRiskScore(id); setRiskBreakdown(res.breakdown); load(); }
+    catch (err: any) { setError(err.message || "Could not recompute risk score"); } finally { setBusy(false); }
+  }
+
+  async function handleCaptureConsent(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy(true); setError(null);
+    try {
+      await api.captureCustomerConsent({ customerId: id, ...consentForm, expiresAt: consentForm.expiresAt || undefined });
+      setConsentForm({ consentType: "DATA_PROCESSING", granted: true, expiresAt: "", notes: "" });
+      const res = await api.listCustomerConsents(id); setConsents(res.consents);
+    } catch (err: any) { setError(err.message || "Could not capture consent"); } finally { setBusy(false); }
+  }
+
+  async function handleWithdrawConsent(consentId: string) {
+    setBusy(true); setError(null);
+    try { await api.withdrawCustomerConsent(consentId); const res = await api.listCustomerConsents(id); setConsents(res.consents); }
+    catch (err: any) { setError(err.message || "Could not withdraw consent"); } finally { setBusy(false); }
   }
 
   async function handleUpdateCdd(e: React.FormEvent) {
@@ -529,6 +555,57 @@ export default function CustomerDetailPage() {
               {customer.cddCompletedAt && <p className="text-text-muted text-xs mb-3">Last updated {new Date(customer.cddCompletedAt).toLocaleString()}</p>}
               <button type="submit" disabled={busy} className="btn-text text-gold-600">Save CDD</button>
             </form>
+
+            {/* doc §29.3 KYC Risk Scoring — a real, disclosed default
+                methodology (see the build log), recomputed on demand
+                since no scheduler exists to keep it continuously fresh. */}
+            <h2 className="font-display font-semibold text-lg text-ink-900 mb-3">KYC Risk Score</h2>
+            <div className="card p-5 mb-8">
+              <div className="flex items-center justify-between mb-3">
+                <div>
+                  <span className={`badge ${customer.riskRating === "HIGH" ? "bg-rose-100 text-rose-600" : customer.riskRating === "MEDIUM" ? "bg-gold-500/15 text-gold-600" : "bg-green-100 text-green-600"}`}>{customer.riskRating || "Not yet scored"}</span>
+                  {customer.kycRiskScore !== null && customer.kycRiskScore !== undefined && <span className="ml-2 text-text-700 text-[13px]">Score: {customer.kycRiskScore}/100</span>}
+                </div>
+                <button onClick={handleRecomputeRisk} disabled={busy} className="btn-text text-gold-600">Recompute</button>
+              </div>
+              {(riskBreakdown || customer.kycRiskScoreBreakdown) && (
+                <div className="text-[12.5px] text-text-700 space-y-1">
+                  {(riskBreakdown || customer.kycRiskScoreBreakdown).map((b: any, i: number) => (<div key={i} className="flex justify-between"><span>{b.factor}</span><span>+{b.points}</span></div>))}
+                  {(riskBreakdown || customer.kycRiskScoreBreakdown).length === 0 && <p className="text-text-muted">No risk factors present.</p>}
+                </div>
+              )}
+            </div>
+
+            {/* doc §43 Customer Consent Management — records are never
+                deleted; withdrawal is the only way to change a consent's
+                effect, and it stays visible in the history. */}
+            <h2 className="font-display font-semibold text-lg text-ink-900 mb-3">Consent Records</h2>
+            <form onSubmit={handleCaptureConsent} className="card p-4 mb-4 flex flex-wrap items-end gap-3">
+              <select className="input" value={consentForm.consentType} onChange={(e) => setConsentForm((f) => ({ ...f, consentType: e.target.value }))}>
+                {["DATA_PROCESSING", "MARKETING", "SMS", "EMAIL", "PUSH_NOTIFICATION", "BIOMETRIC", "CREDIT_BUREAU", "INFORMATION_SHARING", "DIGITAL_SIGNATURE", "OTHER"].map((t) => (<option key={t} value={t}>{t.replaceAll("_", " ")}</option>))}
+              </select>
+              <label className="flex items-center gap-1 text-[12.5px] text-text-700"><input type="checkbox" checked={consentForm.granted} onChange={(e) => setConsentForm((f) => ({ ...f, granted: e.target.checked }))} /> Granted</label>
+              <input type="date" placeholder="Expires (optional)" className="input" value={consentForm.expiresAt} onChange={(e) => setConsentForm((f) => ({ ...f, expiresAt: e.target.value }))} />
+              <input placeholder="Notes" className="input flex-1 min-w-[160px]" value={consentForm.notes} onChange={(e) => setConsentForm((f) => ({ ...f, notes: e.target.value }))} />
+              <button type="submit" disabled={busy} className="btn-text text-gold-600">Capture</button>
+            </form>
+            <div className="card overflow-x-auto mb-8">
+              <table className="w-full text-sm table-modern">
+                <thead><tr><th>Type</th><th>Granted</th><th>Captured</th><th>Status</th><th></th></tr></thead>
+                <tbody>
+                  {consents.map((c: any) => (
+                    <tr key={c.id}>
+                      <td className="text-text-900">{c.otherTypeLabel || c.consentType.replaceAll("_", " ")}</td>
+                      <td className="text-text-700">{c.granted ? "Yes" : "No"}</td>
+                      <td className="text-text-700">{new Date(c.grantedAt).toLocaleDateString()}</td>
+                      <td>{c.withdrawnAt ? <span className="text-rose-600">Withdrawn {new Date(c.withdrawnAt).toLocaleDateString()}</span> : c.expiresAt && new Date(c.expiresAt) < new Date() ? <span className="text-text-muted">Expired</span> : <span className="text-green-600">Active</span>}</td>
+                      <td>{!c.withdrawnAt && <button onClick={() => handleWithdrawConsent(c.id)} className="btn-text text-rose-600">Withdraw</button>}</td>
+                    </tr>
+                  ))}
+                  {consents.length === 0 && <tr><td colSpan={5} className="text-center text-text-muted text-sm py-6">No consent records yet.</td></tr>}
+                </tbody>
+              </table>
+            </div>
 
             {/* Documents — doc §30/§69. Files live in Supabase Storage (private
                 bucket); only metadata + checksum are stored here. */}

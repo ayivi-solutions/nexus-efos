@@ -452,6 +452,22 @@ export const api = {
   getOverdueMaintenanceReport: () => request("/assets/reports/overdue-maintenance"),
   getAssetsByBranchReport: () => request("/assets/reports/by-branch"),
 
+  searchCustomers: (params: { q?: string; branchId?: string; status?: string; kycStatus?: string }) => {
+    const qs = new URLSearchParams(Object.entries(params).filter(([, v]) => v) as any).toString();
+    return request(`/customers/search?${qs}`);
+  },
+  lookupCustomerByCode: (code: string) => request(`/customers/search/by-code?code=${encodeURIComponent(code)}`),
+  createSavedSearch: (name: string, criteria: any) => request("/customers/saved-searches", { method: "POST", body: JSON.stringify({ name, criteria }) }),
+  listSavedSearches: () => request("/customers/saved-searches"),
+  recomputeCustomerRiskScore: (id: string) => request(`/customers/${id}/recompute-risk-score`, { method: "POST" }),
+  captureCustomerConsent: (data: any) => request("/customers/consents", { method: "POST", body: JSON.stringify(data) }),
+  listCustomerConsents: (customerId: string) => request(`/customers/${customerId}/consents`),
+  withdrawCustomerConsent: (id: string) => request(`/customers/consents/${id}/withdraw`, { method: "POST" }),
+  detectDuplicateCustomers: () => request("/customers/duplicates/detect"),
+  requestCustomerMerge: (primaryCustomerId: string, mergedCustomerId: string) => request("/customers/merge-requests", { method: "POST", body: JSON.stringify({ primaryCustomerId, mergedCustomerId }) }),
+  listCustomerMergeRequests: () => request("/customers/merge-requests"),
+  rollbackCustomerMerge: (id: string, reason: string) => request(`/customers/merge-requests/${id}/rollback`, { method: "POST", body: JSON.stringify({ reason }) }),
+
   downloadMyPayslip: async (entryId: string) => {
     const accessToken = typeof window !== "undefined" ? sessionStorage.getItem("nexus_access_token") : null;
     const res = await fetch(`${API_BASE}/payroll/my-payslips/${entryId}/download`, { headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : {} });

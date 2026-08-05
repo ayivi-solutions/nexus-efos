@@ -8,6 +8,7 @@ const NAV_FULL: { label: string; icon: string; href: string; perm: string | null
   { label: "Dashboard", icon: "◆", href: "/dashboard", perm: null },
   { label: "My Payslips", icon: "📄", href: "/my-payslips", perm: null },
   { label: "Customers", icon: "○", href: "/customers", perm: "customers.view" },
+  { label: "Data Quality", icon: "🔍", href: "/customer-data-quality", perm: "customers.view" },
   { label: "Loans", icon: "▢", href: "/loans", perm: "reports.view" },
   { label: "Savings", icon: "▣", href: "/savings", perm: "reports.view" },
   { label: "Branches", icon: "▤", href: "/branches", perm: "branches.administer" },
