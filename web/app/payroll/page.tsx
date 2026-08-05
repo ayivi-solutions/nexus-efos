@@ -5,7 +5,7 @@ import { api } from "@/lib/api";
 import { useErrorToast, useToast } from "@/components/Toast";
 import { AppShell } from "@/components/AppShell";
 
-type Tab = "calendars" | "periods" | "grades" | "groups" | "earnings" | "deductions" | "overtime" | "tax" | "statutory" | "structures" | "process";
+type Tab = "calendars" | "periods" | "grades" | "groups" | "earnings" | "deductions" | "overtime" | "tax" | "statutory" | "structures" | "process" | "accounting" | "reports";
 
 export default function PayrollPage() {
   const toast = useToast();
@@ -29,6 +29,13 @@ export default function PayrollPage() {
   const [statutoryRateForm, setStatutoryRateForm] = useState({ name: "SSNIT Employee", rate: "", ceiling: "", minimum: "", effectiveDate: "" });
   const [employees, setEmployees] = useState<any[]>([]);
   const [employeeStructures, setEmployeeStructures] = useState<any[]>([]);
+  const [glMappings, setGlMappings] = useState<any>({ mappings: [], purposes: [], accounts: [] });
+  const [mappingForm, setMappingForm] = useState({ purpose: "", glAccountId: "" });
+  const [reconciliation, setReconciliation] = useState<Record<string, any>>({});
+  const [reportSummary, setReportSummary] = useState<any>(null);
+  const [byDepartment, setByDepartment] = useState<any[]>([]);
+  const [byBranchReport, setByBranchReport] = useState<any[]>([]);
+  const [trends, setTrends] = useState<any[]>([]);
   const [structureForm, setStructureForm] = useState({
     employeeId: "", payGroupId: "", salaryGradeId: "", basicSalary: "", effectiveDate: "",
     allowances: [] as { earningCodeId: string; amount: string; isPercentageOfBasic: boolean }[],
@@ -91,6 +98,28 @@ export default function PayrollPage() {
       if (missing) toast.info(`Bank file downloaded. Missing bank details, excluded: ${missing}`);
       else toast.success("Bank file downloaded.");
     } catch (err: any) { setError(err.message || "Could not generate bank file"); } finally { setBusy(false); }
+  }
+
+  function loadGLMappings() {
+    api.listPayrollGLMappings().then(setGlMappings).catch(() => {});
+  }
+
+  async function handleSetMapping(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy(true); setError(null);
+    try { await api.setPayrollGLMapping(mappingForm.purpose, mappingForm.glAccountId); toast.success("Mapping saved."); setMappingForm({ purpose: "", glAccountId: "" }); loadGLMappings(); }
+    catch (err: any) { setError(err.message || "Could not save mapping"); } finally { setBusy(false); }
+  }
+
+  async function loadReconciliation(runId: string) {
+    try { const r = await api.getPayrollRunReconciliation(runId); setReconciliation((prev) => ({ ...prev, [runId]: r })); } catch { /* leave unset */ }
+  }
+
+  function loadPayrollReports() {
+    api.getPayrollReportSummary().then(setReportSummary).catch(() => {});
+    api.getPayrollByDepartment().then((r) => setByDepartment(r.departments)).catch(() => {});
+    api.getPayrollByBranch().then((r) => setByBranchReport(r.branches)).catch(() => {});
+    api.getPayrollTrends(6).then((r) => setTrends(r.months)).catch(() => {});
   }
 
   async function viewRun(id: string) {
@@ -194,6 +223,8 @@ export default function PayrollPage() {
   }
 
   useEffect(() => { load(); api.listEmployees().then((r: any) => setEmployees(r.employees)).catch(() => {}); }, []);
+  useEffect(() => { if (tab === "accounting") loadGLMappings(); if (tab === "reports") loadPayrollReports(); }, [tab]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (tab === "process") runs.forEach((r: any) => { if ((r.status === "APPROVED" || r.status === "PAID") && !reconciliation[r.id]) loadReconciliation(r.id); }); }, [tab, runs]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function submit(fn: () => Promise<any>, resetFn: () => void, successMsg: string) {
     setBusy(true); setError(null);
@@ -206,6 +237,7 @@ export default function PayrollPage() {
     { id: "groups", label: "Pay Groups" }, { id: "earnings", label: "Earning Codes" }, { id: "deductions", label: "Deduction Codes" },
     { id: "overtime", label: "Overtime Rules" }, { id: "tax", label: "Tax Tables" },
     { id: "statutory", label: "Statutory Rates" }, { id: "structures", label: "Salary Structures" }, { id: "process", label: "Process Payroll" },
+    { id: "accounting", label: "GL Mapping" }, { id: "reports", label: "Payroll Reports" },
   ];
 
   return (
@@ -490,7 +522,7 @@ export default function PayrollPage() {
             <h2 className="font-display font-semibold text-lg text-ink-900 mb-3">Payroll Runs</h2>
             <div className="card overflow-x-auto mb-6">
               <table className="w-full text-sm table-modern">
-                <thead><tr><th>Processed</th><th>Employees</th><th>Net</th><th>Status</th><th></th></tr></thead>
+                <thead><tr><th>Processed</th><th>Employees</th><th>Net</th><th>Status</th><th>GL</th><th></th></tr></thead>
                 <tbody>
                   {runs.map((r: any) => (
                     <tr key={r.id}>
@@ -498,6 +530,11 @@ export default function PayrollPage() {
                       <td className="text-text-700">{r.entries?.length ?? "—"}</td>
                       <td className="text-text-900 font-medium">GHS {Number(r.totalNet).toLocaleString()}</td>
                       <td><span className={`badge ${r.status === "PAID" ? "bg-green-100 text-green-600" : r.status === "REVERSED" ? "bg-rose-100 text-rose-600" : r.status === "APPROVED" ? "bg-gold-500/15 text-gold-600" : "bg-paper-100 text-text-muted"}`}>{r.status.replaceAll("_", " ")}</span></td>
+                      <td className="text-[11px]">
+                        {reconciliation[r.id]?.hasAccrualJournal
+                          ? <span className={reconciliation[r.id]?.reconciles ? "text-green-600" : "text-rose-600"}>{reconciliation[r.id]?.reconciles ? "✓ Reconciles" : "✗ Mismatch"}</span>
+                          : (r.status === "APPROVED" || r.status === "PAID") ? <span className="text-text-muted">Not posted — check GL mapping</span> : <span className="text-text-muted">—</span>}
+                      </td>
                       <td className="whitespace-nowrap space-x-2">
                         <button onClick={() => viewRun(r.id)} className="btn-text text-gold-600">View</button>
                         {r.status === "PROCESSED" && <button onClick={() => handleRunAction(r.id, "approve")} className="btn-text text-gold-600">Request approval</button>}
@@ -507,7 +544,7 @@ export default function PayrollPage() {
                       </td>
                     </tr>
                   ))}
-                  {runs.length === 0 && <tr><td colSpan={5} className="text-center text-text-muted text-sm py-8">No payroll runs yet.</td></tr>}
+                  {runs.length === 0 && <tr><td colSpan={6} className="text-center text-text-muted text-sm py-8">No payroll runs yet.</td></tr>}
                 </tbody>
               </table>
             </div>
@@ -531,6 +568,81 @@ export default function PayrollPage() {
                 </table>
               </div>
             )}
+          </>
+        )}
+
+        {tab === "accounting" && (
+          <>
+            <p className="text-[12.5px] text-text-muted mb-4">doc §214 — map each purpose to a real GL account before approving payroll, or the accrual journal simply won't post (a visible, checkable gap, not a silent failure). Exact purpose names matter — they're how the posting logic finds the right account.</p>
+            <form onSubmit={handleSetMapping} className="card p-4 mb-6 flex flex-wrap items-end gap-3">
+              <select required className="input" value={mappingForm.purpose} onChange={(e) => setMappingForm((f) => ({ ...f, purpose: e.target.value }))}>
+                <option value="">Purpose…</option>
+                {glMappings.purposes.map((p: string) => (<option key={p} value={p}>{p}</option>))}
+              </select>
+              <select required className="input" value={mappingForm.glAccountId} onChange={(e) => setMappingForm((f) => ({ ...f, glAccountId: e.target.value }))}>
+                <option value="">GL Account…</option>
+                {glMappings.accounts.map((a: any) => (<option key={a.id} value={a.id}>{a.code} — {a.name}</option>))}
+              </select>
+              <button type="submit" disabled={busy} className="btn-primary">Save Mapping</button>
+            </form>
+            <div className="card overflow-x-auto">
+              <table className="w-full text-sm table-modern">
+                <thead><tr><th>Purpose</th><th>Mapped Account</th></tr></thead>
+                <tbody>
+                  {glMappings.purposes.map((p: string) => {
+                    const m = glMappings.mappings.find((x: any) => x.purpose === p);
+                    return (<tr key={p}><td className="text-text-900">{p}</td><td className="text-text-700">{m?.account ? `${m.account.code} — ${m.account.name}` : <span className="text-rose-600">Not mapped</span>}</td></tr>);
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
+
+        {tab === "reports" && (
+          <>
+            {reportSummary && (
+              <div className="grid grid-cols-2 dt:grid-cols-4 gap-3 mb-8">
+                <div className="card p-3.5"><div className="font-display font-semibold text-lg text-gold-600">GHS {reportSummary.totalGross.toLocaleString()}</div><div className="text-[10.5px] text-text-muted uppercase">Total Gross</div></div>
+                <div className="card p-3.5"><div className="font-display font-semibold text-lg text-gold-600">GHS {reportSummary.totalPaye.toLocaleString()}</div><div className="text-[10.5px] text-text-muted uppercase">Total PAYE</div></div>
+                <div className="card p-3.5"><div className="font-display font-semibold text-lg text-gold-600">GHS {reportSummary.totalSsnit.toLocaleString()}</div><div className="text-[10.5px] text-text-muted uppercase">Total SSNIT</div></div>
+                <div className="card p-3.5"><div className="font-display font-semibold text-lg text-text-900">{reportSummary.employeeCount}</div><div className="text-[10.5px] text-text-muted uppercase">Employees Paid</div></div>
+              </div>
+            )}
+
+            <h2 className="font-display font-semibold text-lg text-ink-900 mb-3">Trend (last 6 months)</h2>
+            <div className="card p-5 mb-8">
+              <div className="space-y-2">
+                {trends.map((m: any) => (
+                  <div key={m.label} className="flex justify-between text-[12px] text-text-700">
+                    <span className="font-medium">{m.label}</span>
+                    <span>Gross GHS {m.totalGross.toLocaleString()} · PAYE GHS {m.totalPaye.toLocaleString()} · SSNIT GHS {m.totalSsnit.toLocaleString()} · Net GHS {m.totalNet.toLocaleString()}</span>
+                  </div>
+                ))}
+                {trends.length === 0 && <p className="text-text-muted text-sm text-center py-4">No trend data yet.</p>}
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 dt:grid-cols-2 gap-4">
+              <div>
+                <h2 className="font-display font-semibold text-lg text-ink-900 mb-3">By Department</h2>
+                <div className="card overflow-x-auto">
+                  <table className="w-full text-sm table-modern">
+                    <thead><tr><th>Department</th><th>Employees</th><th>Gross</th></tr></thead>
+                    <tbody>{byDepartment.map((d: any) => (<tr key={d.name}><td className="text-text-900">{d.name}</td><td className="text-text-700">{d.employeeCount}</td><td className="text-text-700">GHS {d.totalGross.toLocaleString()}</td></tr>))}</tbody>
+                  </table>
+                </div>
+              </div>
+              <div>
+                <h2 className="font-display font-semibold text-lg text-ink-900 mb-3">By Branch</h2>
+                <div className="card overflow-x-auto">
+                  <table className="w-full text-sm table-modern">
+                    <thead><tr><th>Branch</th><th>Employees</th><th>Gross</th></tr></thead>
+                    <tbody>{byBranchReport.map((b: any) => (<tr key={b.name}><td className="text-text-900">{b.name}</td><td className="text-text-700">{b.employeeCount}</td><td className="text-text-700">GHS {b.totalGross.toLocaleString()}</td></tr>))}</tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
           </>
         )}
       </div>

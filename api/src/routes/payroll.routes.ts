@@ -5,6 +5,8 @@ import { requireAuth, AuthedRequest } from "../middleware/auth";
 import { requirePermission } from "../middleware/rbac";
 import { calculatePAYE, calculateStatutoryContribution, round2 } from "../lib/payrollCalc";
 import { generatePayslipPdf } from "../lib/payslipPdf";
+import { buildPayrollSettlementLines, ALL_PAYROLL_GL_PURPOSES } from "../lib/payrollAccounting";
+import { balanceEffect, findPostablePeriod, generateJournalNumber } from "../lib/generalLedger";
 
 // doc §206-208 Payroll Management: Overview, Configuration, Salary
 // Structure. Tax tables and statutory rates get real infrastructure here
@@ -412,13 +414,52 @@ payrollRouter.post("/runs/:id/request-approval", requirePermission("institution.
 // platform, so this is a genuine, audited manual confirmation that the
 // actual transfer was executed OUTSIDE the system, not a fabricated
 // claim that Nexus EFOS itself moved the money.
+// §214 "Ledger Integration" — the settlement journal, posted the moment
+// payment is confirmed: Dr Salaries Payable (settling the liability
+// recognized at approval) / Cr Cash. Only posts if the accrual journal
+// itself actually posted (accrualJournalId is set) and both required
+// accounts are mapped and active — same disclosed, visible-gap
+// philosophy as the accrual side, not a silent failure.
 payrollRouter.post("/runs/:id/mark-paid", requirePermission("institution.configure"), async (req: AuthedRequest, res) => {
   const run = await prisma.payrollRun.findFirst({ where: { id: req.params.id, institutionId: req.auth!.institutionId } });
   if (!run) return res.status(404).json({ error: "Payroll run not found" });
   if (run.status !== "APPROVED") return res.status(400).json({ error: `Only an APPROVED run can be marked paid (currently ${run.status})` });
 
-  const updated = await prisma.payrollRun.update({ where: { id: run.id }, data: { status: "PAID", paidById: req.auth!.userId, paidAt: new Date() } });
-  await prisma.auditLog.create({ data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "payroll_run.mark_paid", resource: "payroll_run", resourceId: run.id, metadata: { totalNet: run.totalNet } } });
+  let settlementJournalId: string | null = null;
+
+  if (run.accrualJournalId) {
+    const mappings = await prisma.payrollGLAccountMapping.findMany({ where: { institutionId: req.auth!.institutionId, purpose: { in: ["Salaries Payable", "Cash/Bank Disbursement"] } } });
+    const salariesPayableId = mappings.find((m) => m.purpose === "Salaries Payable")?.glAccountId;
+    const cashId = mappings.find((m) => m.purpose === "Cash/Bank Disbursement")?.glAccountId;
+
+    if (salariesPayableId && cashId) {
+      const lines = buildPayrollSettlementLines(Number(run.totalNet), salariesPayableId, cashId);
+      const accountRecords = await prisma.gLAccount.findMany({ where: { id: { in: [salariesPayableId, cashId] } } });
+      const accountById = new Map(accountRecords.map((a: any) => [a.id, a]));
+
+      const period = await prisma.payrollPeriod.findUnique({ where: { id: run.payrollPeriodId } });
+      const glPeriod = await findPostablePeriod(prisma, req.auth!.institutionId, new Date());
+
+      if (glPeriod && glPeriod.status === "OPEN") {
+        const journal = await prisma.journal.create({
+          data: {
+            institutionId: req.auth!.institutionId, journalNumber: generateJournalNumber(), type: "AUTOMATIC",
+            description: `Payroll settlement — ${period?.name || "period"}`, status: "POSTED", postingDate: new Date(), postedAt: new Date(), postedById: req.auth!.userId, createdById: req.auth!.userId,
+            lines: { create: lines.map((l) => ({ accountId: l.accountId, debit: l.debit, credit: l.credit })) },
+          },
+        });
+        for (const line of lines) {
+          const account = accountById.get(line.accountId);
+          const effect = balanceEffect(account!.category as any, line.debit, line.credit);
+          await prisma.gLAccount.update({ where: { id: line.accountId }, data: { balance: { increment: effect } } });
+        }
+        settlementJournalId = journal.id;
+      }
+    }
+  }
+
+  const updated = await prisma.payrollRun.update({ where: { id: run.id }, data: { status: "PAID", paidById: req.auth!.userId, paidAt: new Date(), settlementJournalId } });
+  await prisma.auditLog.create({ data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "payroll_run.mark_paid", resource: "payroll_run", resourceId: run.id, metadata: { totalNet: run.totalNet, settlementJournalId } } });
   res.json({ run: updated });
 });
 
@@ -578,4 +619,148 @@ payrollRouter.get("/my-contribution-statement", async (req: AuthedRequest, res) 
   await prisma.auditLog.create({ data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "contribution_statement.viewed", resource: "employee", resourceId: employee.id, metadata: { year } } });
 
   res.json({ year, employeeName: employee.fullName, payslipCount: entries.length, totalSsnitEmployee: Math.round(totalSsnitEmployee * 100) / 100, totalSsnitEmployerTier1: Math.round(totalSsnitEmployerTier1 * 100) / 100, totalTier2Employer: Math.round(totalTier2Employer * 100) / 100 });
+});
+
+// -------------------------------------------------------------------------
+// GL Account Mapping configuration
+// -------------------------------------------------------------------------
+
+payrollRouter.get("/gl-mappings", requirePermission("institution.configure"), async (req: AuthedRequest, res) => {
+  const mappings = await prisma.payrollGLAccountMapping.findMany({ where: { institutionId: req.auth!.institutionId } });
+  const glAccounts = await prisma.gLAccount.findMany({ where: { institutionId: req.auth!.institutionId, status: "ACTIVE" }, select: { id: true, code: true, name: true } });
+  const accountById = new Map(glAccounts.map((a) => [a.id, a]));
+  res.json({ mappings: mappings.map((m: any) => ({ ...m, account: accountById.get(m.glAccountId) || null })), purposes: ALL_PAYROLL_GL_PURPOSES, accounts: glAccounts });
+});
+
+payrollRouter.post("/gl-mappings", requirePermission("institution.configure"), async (req: AuthedRequest, res) => {
+  const { purpose, glAccountId } = req.body as { purpose?: string; glAccountId?: string };
+  if (!purpose || !glAccountId) return res.status(400).json({ error: "purpose and glAccountId are required" });
+
+  const account = await prisma.gLAccount.findFirst({ where: { id: glAccountId, institutionId: req.auth!.institutionId } });
+  if (!account) return res.status(404).json({ error: "GL account not found" });
+
+  const mapping = await prisma.payrollGLAccountMapping.upsert({
+    where: { institutionId_purpose: { institutionId: req.auth!.institutionId, purpose } },
+    create: { institutionId: req.auth!.institutionId, purpose, glAccountId },
+    update: { glAccountId },
+  });
+  await prisma.auditLog.create({ data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "payroll_gl_mapping.set", resource: "payroll_gl_account_mapping", resourceId: mapping.id, metadata: { purpose, glAccountId } } });
+  res.status(201).json({ mapping });
+});
+
+// -------------------------------------------------------------------------
+// §214.2 "Payroll Reconciliation" — a real, checkable comparison: the
+// posted accrual journal's own total debits should equal the run's gross
+// pay plus employer contributions, not assumed to match just because the
+// posting succeeded.
+// -------------------------------------------------------------------------
+
+payrollRouter.get("/runs/:id/reconciliation", requirePermission("reports.view"), async (req: AuthedRequest, res) => {
+  const run = await prisma.payrollRun.findFirst({ where: { id: req.params.id, institutionId: req.auth!.institutionId } });
+  if (!run) return res.status(404).json({ error: "Payroll run not found" });
+
+  const result: any = { runId: run.id, hasAccrualJournal: !!run.accrualJournalId, hasSettlementJournal: !!run.settlementJournalId };
+
+  if (run.accrualJournalId) {
+    const journal = await prisma.journal.findUnique({ where: { id: run.accrualJournalId }, include: { lines: true } });
+    const journalTotalDebit = (journal?.lines || []).reduce((s: number, l: any) => s + Number(l.debit), 0);
+    const entries = await prisma.payrollEntry.findMany({ where: { payrollRunId: run.id } });
+    const expectedTotalDebit = entries.reduce((s, e) => s + Number(e.grossPay) + Number(e.ssnitEmployerTier1) + Number(e.tier2Employer), 0);
+    result.journalTotalDebit = Math.round(journalTotalDebit * 100) / 100;
+    result.expectedTotalDebit = Math.round(expectedTotalDebit * 100) / 100;
+    result.reconciles = Math.abs(journalTotalDebit - expectedTotalDebit) < 0.01;
+  }
+
+  res.json(result);
+});
+
+// -------------------------------------------------------------------------
+// §215 Payroll Reporting and Analytics. AI-Based Payroll Insights waits
+// on the AI spec, same as every other AI item across this whole build.
+// -------------------------------------------------------------------------
+
+payrollRouter.get("/reports/summary", requirePermission("reports.view"), async (req: AuthedRequest, res) => {
+  const runs = await prisma.payrollRun.findMany({ where: { institutionId: req.auth!.institutionId, status: { in: ["APPROVED", "PAID"] } }, include: { entries: true } });
+  const allEntries = runs.flatMap((r) => r.entries);
+
+  res.json({
+    totalRuns: runs.length,
+    totalGross: round2(allEntries.reduce((s, e) => s + Number(e.grossPay), 0)),
+    totalPaye: round2(allEntries.reduce((s, e) => s + Number(e.paye), 0)),
+    totalSsnit: round2(allEntries.reduce((s, e) => s + Number(e.ssnitEmployee) + Number(e.ssnitEmployerTier1), 0)),
+    totalTier2: round2(allEntries.reduce((s, e) => s + Number(e.tier2Employer), 0)),
+    totalOtherDeductions: round2(allEntries.reduce((s, e) => s + Number(e.otherDeductions), 0)),
+    totalNet: round2(allEntries.reduce((s, e) => s + Number(e.netPay), 0)),
+    employeeCount: new Set(allEntries.map((e) => e.employeeId)).size,
+  });
+});
+
+// §215.2 "Department Cost Reports" / §215.3 "Departmental Cost Analysis"
+// — real breakdown using each employee's actual departmentId, not
+// fabricated.
+payrollRouter.get("/reports/by-department", requirePermission("reports.view"), async (req: AuthedRequest, res) => {
+  const runs = await prisma.payrollRun.findMany({ where: { institutionId: req.auth!.institutionId, status: { in: ["APPROVED", "PAID"] } }, include: { entries: true } });
+  const allEntries = runs.flatMap((r) => r.entries);
+  const employeeIds = [...new Set(allEntries.map((e) => e.employeeId))];
+  const employees = await prisma.employee.findMany({ where: { id: { in: employeeIds } }, include: { department: { select: { name: true } } } });
+  const empById = new Map(employees.map((e: any) => [e.id, e]));
+
+  const byDept = new Map<string, { name: string; totalGross: number; totalNet: number; employeeCount: Set<string> }>();
+  for (const entry of allEntries) {
+    const emp = empById.get(entry.employeeId);
+    const key = emp?.departmentId || "unassigned";
+    const name = emp?.department?.name || "Unassigned";
+    if (!byDept.has(key)) byDept.set(key, { name, totalGross: 0, totalNet: 0, employeeCount: new Set() });
+    const d = byDept.get(key)!;
+    d.totalGross += Number(entry.grossPay);
+    d.totalNet += Number(entry.netPay);
+    d.employeeCount.add(entry.employeeId);
+  }
+
+  res.json({ departments: Array.from(byDept.values()).map((d) => ({ name: d.name, totalGross: round2(d.totalGross), totalNet: round2(d.totalNet), employeeCount: d.employeeCount.size })) });
+});
+
+payrollRouter.get("/reports/by-branch", requirePermission("reports.view"), async (req: AuthedRequest, res) => {
+  const runs = await prisma.payrollRun.findMany({ where: { institutionId: req.auth!.institutionId, status: { in: ["APPROVED", "PAID"] } }, include: { entries: true } });
+  const allEntries = runs.flatMap((r) => r.entries);
+  const employeeIds = [...new Set(allEntries.map((e) => e.employeeId))];
+  const employees = await prisma.employee.findMany({ where: { id: { in: employeeIds } }, include: { branch: { select: { name: true } } } });
+  const empById = new Map(employees.map((e: any) => [e.id, e]));
+
+  const byBranch = new Map<string, { name: string; totalGross: number; totalNet: number; employeeCount: Set<string> }>();
+  for (const entry of allEntries) {
+    const emp = empById.get(entry.employeeId);
+    const key = emp?.branchId || "unassigned";
+    const name = emp?.branch?.name || "Unassigned";
+    if (!byBranch.has(key)) byBranch.set(key, { name, totalGross: 0, totalNet: 0, employeeCount: new Set() });
+    const b = byBranch.get(key)!;
+    b.totalGross += Number(entry.grossPay);
+    b.totalNet += Number(entry.netPay);
+    b.employeeCount.add(entry.employeeId);
+  }
+
+  res.json({ branches: Array.from(byBranch.values()).map((b) => ({ name: b.name, totalGross: round2(b.totalGross), totalNet: round2(b.totalNet), employeeCount: b.employeeCount.size })) });
+});
+
+// §215.3 "Salary Trend Analysis" / "Statutory Contribution Trends" —
+// month-by-month, same trend pattern already used for Financial
+// Analytics, applied here to payroll-specific figures.
+payrollRouter.get("/reports/trends", requirePermission("reports.view"), async (req: AuthedRequest, res) => {
+  const months = Math.min(Math.max(Number((req.query as any).months) || 6, 2), 24);
+  const now = new Date();
+  const results = [];
+  for (let m = months - 1; m >= 0; m--) {
+    const start = new Date(now.getFullYear(), now.getMonth() - m, 1);
+    const end = new Date(now.getFullYear(), now.getMonth() - m + 1, 0, 23, 59, 59, 999);
+    const label = start.toLocaleDateString("en-GB", { month: "short", year: "numeric" });
+    const entries = await prisma.payrollEntry.findMany({ where: { payrollRun: { institutionId: req.auth!.institutionId, status: { in: ["APPROVED", "PAID"] } }, createdAt: { gte: start, lte: end } } });
+    results.push({
+      label,
+      totalGross: round2(entries.reduce((s, e) => s + Number(e.grossPay), 0)),
+      totalPaye: round2(entries.reduce((s, e) => s + Number(e.paye), 0)),
+      totalSsnit: round2(entries.reduce((s, e) => s + Number(e.ssnitEmployee) + Number(e.ssnitEmployerTier1), 0)),
+      totalNet: round2(entries.reduce((s, e) => s + Number(e.netPay), 0)),
+    });
+  }
+  res.json({ months: results });
 });

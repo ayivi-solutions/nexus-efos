@@ -420,6 +420,14 @@ export const api = {
   listMyPayslips: () => request("/payroll/my-payslips"),
   getMyTaxCertificate: (year?: number) => request(`/payroll/my-tax-certificate${year ? `?year=${year}` : ""}`),
   getMyContributionStatement: (year?: number) => request(`/payroll/my-contribution-statement${year ? `?year=${year}` : ""}`),
+  listPayrollGLMappings: () => request("/payroll/gl-mappings"),
+  setPayrollGLMapping: (purpose: string, glAccountId: string) => request("/payroll/gl-mappings", { method: "POST", body: JSON.stringify({ purpose, glAccountId }) }),
+  getPayrollRunReconciliation: (id: string) => request(`/payroll/runs/${id}/reconciliation`),
+  getPayrollReportSummary: () => request("/payroll/reports/summary"),
+  getPayrollByDepartment: () => request("/payroll/reports/by-department"),
+  getPayrollByBranch: () => request("/payroll/reports/by-branch"),
+  getPayrollTrends: (months?: number) => request(`/payroll/reports/trends${months ? `?months=${months}` : ""}`),
+
   downloadMyPayslip: async (entryId: string) => {
     const accessToken = typeof window !== "undefined" ? sessionStorage.getItem("nexus_access_token") : null;
     const res = await fetch(`${API_BASE}/payroll/my-payslips/${entryId}/download`, { headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : {} });

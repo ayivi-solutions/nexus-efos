@@ -4,6 +4,7 @@ import { requireAuth, AuthedRequest } from "../middleware/auth";
 import { requirePermission } from "../middleware/rbac";
 import { generateSchedule, round2 } from "../lib/loanSchedule";
 import { isBalanced, balanceEffect, findPostablePeriod, generateJournalNumber } from "../lib/generalLedger";
+import { buildPayrollAccrualLines, REQUIRED_ACCRUAL_PURPOSES } from "../lib/payrollAccounting";
 
 export const approvalsRouter = Router();
 approvalsRouter.use(requireAuth);
@@ -262,8 +263,67 @@ async function applyApproval(request: { id: string; type: string; targetId: stri
       break;
     }
 
+    // doc §214.3 "Ledger postings occur automatically after approval" —
+    // the payroll run's own approval IS the authorization for this
+    // journal; it does not go through a second, separate approval cycle
+    // of its own, the same reasoning already applied to Recurring
+    // Journals. If no GL mapping is configured, or the mapping is
+    // incomplete, or the covering financial period isn't open, the run
+    // still becomes APPROVED (payroll itself isn't blocked by an
+    // accounting configuration gap) but accrualJournalId stays null —
+    // a real, visible, checkable state rather than a silent failure.
     case "PAYROLL_RUN_APPROVAL": {
-      await prisma.payrollRun.update({ where: { id: request.targetId }, data: { status: "APPROVED", approvedById, approvedAt: new Date() } });
+      const run = await prisma.payrollRun.findUniqueOrThrow({ where: { id: request.targetId } });
+
+      const mappings = await prisma.payrollGLAccountMapping.findMany({ where: { institutionId: run.institutionId } });
+      const accountIdByPurpose: Record<string, string> = Object.fromEntries(mappings.map((m: any) => [m.purpose, m.glAccountId]));
+      const hasAllMappings = REQUIRED_ACCRUAL_PURPOSES.every((p) => accountIdByPurpose[p]);
+
+      let accrualJournalId: string | null = null;
+
+      if (hasAllMappings) {
+        const period = await prisma.payrollPeriod.findUnique({ where: { id: run.payrollPeriodId } });
+        const postingDate = period?.endDate || new Date();
+        const glPeriod = await findPostablePeriod(prisma, run.institutionId, postingDate);
+
+        if (glPeriod && glPeriod.status === "OPEN") {
+          // Real per-entry totals, not the run-level aggregate alone —
+          // PAYE/SSNIT/Tier2/other-deductions must come from the actual
+          // entries to be correct, the run only stores gross/net/total-deductions combined.
+          const entries = await prisma.payrollEntry.findMany({ where: { payrollRunId: run.id } });
+          const totalPaye = entries.reduce((s: number, e: any) => s + Number(e.paye), 0);
+          const totalSsnitEmployee = entries.reduce((s: number, e: any) => s + Number(e.ssnitEmployee), 0);
+          const totalSsnitEmployerTier1 = entries.reduce((s: number, e: any) => s + Number(e.ssnitEmployerTier1), 0);
+          const totalTier2Employer = entries.reduce((s: number, e: any) => s + Number(e.tier2Employer), 0);
+          const totalOtherDeductions = entries.reduce((s: number, e: any) => s + Number(e.otherDeductions), 0);
+
+          const realLines = buildPayrollAccrualLines(
+            { totalGross: Number(run.totalGross), totalPaye, totalSsnitEmployee, totalSsnitEmployerTier1, totalTier2Employer, totalOtherDeductions, totalNet: Number(run.totalNet) },
+            accountIdByPurpose,
+          );
+
+          if (isBalanced(realLines)) {
+            const accountRecords = await prisma.gLAccount.findMany({ where: { id: { in: realLines.map((l) => l.accountId) } } });
+            const accountById = new Map(accountRecords.map((a: any) => [a.id, a]));
+
+            const journal = await prisma.journal.create({
+              data: {
+                institutionId: run.institutionId, journalNumber: generateJournalNumber(), type: "AUTOMATIC",
+                description: `Payroll accrual — ${period?.name || "period"}`, status: "POSTED", postingDate, postedAt: new Date(), postedById: approvedById, createdById: approvedById,
+                lines: { create: realLines.map((l) => ({ accountId: l.accountId, debit: l.debit, credit: l.credit })) },
+              },
+            });
+            for (const line of realLines) {
+              const account = accountById.get(line.accountId);
+              const effect = balanceEffect(account!.category as any, line.debit, line.credit);
+              await prisma.gLAccount.update({ where: { id: line.accountId }, data: { balance: { increment: effect } } });
+            }
+            accrualJournalId = journal.id;
+          }
+        }
+      }
+
+      await prisma.payrollRun.update({ where: { id: run.id }, data: { status: "APPROVED", approvedById, approvedAt: new Date(), accrualJournalId } });
       break;
     }
 

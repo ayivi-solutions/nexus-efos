@@ -111,6 +111,7 @@ model Institution {
   employeeSalaryStructures EmployeeSalaryStructure[]
   overtimeRules           OvertimeRule[]
   payrollRuns             PayrollRun[]
+  payrollGLMappings       PayrollGLAccountMapping[]
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -3340,6 +3341,13 @@ model PayrollRun {
   reversedAt       DateTime? @map("reversed_at")
   reversalReason   String?   @map("reversal_reason")
 
+  // doc §214 — set the moment each real journal actually posts, not
+  // before. accrualJournalId is set at APPROVAL, settlementJournalId at
+  // PAID. Both null means neither has posted yet (e.g. no GL mapping
+  // configured), which is itself a real, visible, checkable state.
+  accrualJournalId    String? @map("accrual_journal_id")
+  settlementJournalId String? @map("settlement_journal_id")
+
   createdAt DateTime @default(now()) @map("created_at")
 
   entries PayrollEntry[]
@@ -3393,5 +3401,30 @@ model EmployeeDeduction {
   active              Boolean @default(true) // a deduction can be paused (e.g. a loan fully repaid) without losing its history
 
   @@map("employee_deduction")
+  @@schema("nexus")
+}
+
+// doc §214 Payroll Accounting. §214.3 "Payroll journals remain balanced"
+// / "Ledger postings occur automatically after approval" / "Every
+// accounting entry is audited". Genuine accrual accounting: an accrual
+// journal is posted the moment a run is APPROVED (expense + liabilities
+// recognized), and a separate settlement journal is posted when the run
+// is marked PAID (the salaries-payable liability settled against cash) —
+// not one combined journal, since that would conflate two genuinely
+// different accounting events. Each GL "purpose" here is matched by
+// name, the same pattern already proven for Statutory Contribution
+// Rates, rather than a rigid one-to-one schema mapping.
+model PayrollGLAccountMapping {
+  id            String      @id(map: "pk_payroll_gl_account_mapping") @default(uuid())
+  institution   Institution @relation(fields: [institutionId], references: [id], onDelete: Cascade, map: "fk_payroll_gl_account_mapping_institution")
+  institutionId String      @map("institution_id")
+
+  purpose     String // e.g. "Salary Expense", "PAYE Payable", "SSNIT Payable", "Tier 2 Payable", "Employer SSNIT Expense", "Employer Tier 2 Expense", "Other Deductions Payable", "Salaries Payable"
+  glAccountId String @map("gl_account_id")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@unique([institutionId, purpose], map: "uq_payroll_gl_mapping_institution_purpose")
+  @@map("payroll_gl_account_mapping")
   @@schema("nexus")
 }
