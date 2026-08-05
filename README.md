@@ -266,6 +266,30 @@ real customer data.
   Money Payments (no provider integration), AI-Based Payroll Insights
   (pending the AI spec).
 
+**Asset Management** — complete, all 10 sections
+- Full lifecycle: registration (with real GPS capture at intake),
+  category-configurable depreciation defaults, allocation to employees/
+  departments/branches with a permanent history, transfer via the
+  Approval Workflow, maintenance scheduling with an overdue-items
+  report, disposal via the Approval Workflow with automatic gain/loss
+  calculation, physical verification with automatic variance flagging.
+- Depreciation: straight-line and reducing-balance, both configurable
+  per category or per asset. Both methods genuinely reach exact
+  residual value by end of useful life via a proper final-period
+  true-up — reducing-balance alone asymptotically approaches but never
+  exactly reaches residual value within a finite life, a real
+  accounting characteristic caught and fixed during testing.
+- Real camera-based QR/barcode scanning (`getUserMedia` + `jsQR`) and
+  real GPS capture (`navigator.geolocation`) — genuine browser APIs,
+  not a stored-value-only shortcut.
+- Three GL auto-posting integrations (acquisition, depreciation,
+  disposal), bringing the platform's total to five, all using the same
+  configurable, name-matched mapping pattern proven for Payroll.
+- Not built, named honestly: Cost Centre allocation splits (same schema
+  gap as Payroll's), full Procurement-workflow integration (no
+  standalone Procurement module exists — acquisitions record directly),
+  AI-Based Asset Insights (pending the AI spec).
+
 **Accessibility**
 - WCAG AA color contrast (verified programmatically, not eyeballed),
   screen-reader-announced notifications, keyboard focus indicators,
@@ -388,8 +412,15 @@ and described above. Not built within it: Cost Centre Analysis (needs a
 schema dimension that doesn't exist), Mobile Money Payments (no provider
 integration), AI-Based Payroll Insights (pending the AI spec).
 
+**Phase 7 (Asset Management, EFS §186-195) is complete, all 10
+sections** — full lifecycle, depreciation (both methods, tested
+including a genuine final-period true-up fix), disposal with real
+gain/loss calculation, real camera/GPS capture, and three more GL
+integrations, all described above. Not built within it: Cost Centre
+allocation splits, full Procurement-workflow integration, AI-Based Asset
+Insights (pending the AI spec).
+
 **Remaining phases:**
-- **Phase 7 — Asset Management** (EFS §186-195) — fixed asset register.
 - **Phase 8 — Ghana regulatory reporting** (BOG, GDPC, GAMC, TMA) —
   deliberately blocked on the pilot partner furnishing the real official
   templates; building against a guessed format would create false
