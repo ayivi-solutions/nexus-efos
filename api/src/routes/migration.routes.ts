@@ -213,6 +213,20 @@ async function validateAll(parsed: ReturnType<typeof parseWorkbook>, institution
   const seenPhones = new Set<string>();
   const customerResults = [];
 
+  // §Performance fix — the original version awaited one findFirst() PER
+  // ROW inside this loop: for a real migration file (1,000+ rows, the
+  // exact scale this feature exists for), that's 1,000+ sequential
+  // database round-trips before any response is sent, easily exceeding
+  // a proxy/browser timeout and surfacing as a generic "Failed to fetch"
+  // with no useful error — genuinely indistinguishable from a network
+  // outage from the browser's side. Fixed to one single query up front.
+  const allPhones = parsed.customers.map((r) => r.phone).filter(Boolean);
+  const existingCustomers = await prisma.customer.findMany({
+    where: { institutionId, phone: { in: allPhones } },
+    select: { id: true, phone: true },
+  });
+  const existingByPhone = new Map(existingCustomers.map((c) => [c.phone, c.id]));
+
   for (const row of parsed.customers) {
     const errors: string[] = [];
     if (!row.fullName) errors.push("Full Name is required");
@@ -234,9 +248,9 @@ async function validateAll(parsed: ReturnType<typeof parseWorkbook>, institution
       customerResults.push({ rowNumber: row.rowNumber, sheet: "Customers", data: row, status: "error" as const, errors });
       continue;
     }
-    const existing = await prisma.customer.findFirst({ where: { institutionId, phone: row.phone } });
-    if (existing) {
-      customerResults.push({ rowNumber: row.rowNumber, sheet: "Customers", data: row, status: "duplicate" as const, errors: [], existingCustomerId: existing.id });
+    const existingId = existingByPhone.get(row.phone);
+    if (existingId) {
+      customerResults.push({ rowNumber: row.rowNumber, sheet: "Customers", data: row, status: "duplicate" as const, errors: [], existingCustomerId: existingId });
     } else {
       customerResults.push({ rowNumber: row.rowNumber, sheet: "Customers", data: row, status: "valid" as const, errors: [] });
     }
