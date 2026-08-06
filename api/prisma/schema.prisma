@@ -2770,6 +2770,14 @@ enum GLAccountStatus {
   @@schema("nexus")
 }
 
+enum CashFlowActivity {
+  OPERATING
+  INVESTING
+  FINANCING
+
+  @@schema("nexus")
+}
+
 model GLAccount {
   id            String            @id(map: "pk_gl_account") @default(uuid())
   institution   Institution       @relation(fields: [institutionId], references: [id], onDelete: Cascade, map: "fk_gl_account_institution")
@@ -2788,6 +2796,16 @@ model GLAccount {
   // ledger without one isn't genuinely useful — maintained on every
   // posting, same discipline as every other balance field in this app.
   balance  Decimal           @default(0) @db.Decimal(16, 2)
+
+  // doc §BOG Financial Publication Guide — closes the previously-named
+  // Cash Flow Statement gap: with each account tagged to a real
+  // activity, an indirect-method statement becomes genuinely buildable.
+  // Optional and defaults to null — untagged accounts are excluded from
+  // the investing/financing sections rather than guessed at, a visible
+  // gap rather than a silent misclassification.
+  cashFlowActivity CashFlowActivity? @map("cash_flow_activity")
+  isLiquidAsset       Boolean @default(false) @map("is_liquid_asset")
+  isVolatileLiability Boolean @default(false) @map("is_volatile_liability")
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")

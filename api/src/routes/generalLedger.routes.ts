@@ -6,6 +6,7 @@ import { requirePermission } from "../middleware/rbac";
 import { isBalanced, generateJournalNumber, findPostablePeriod, aggregateBalancesAsOf, aggregateBalancesForPeriod, balanceEffect, round2 } from "../lib/generalLedger";
 import { resolveReportRange, ReportRangeId } from "../lib/reportRanges";
 import { runRecurringJournals } from "../lib/scheduler";
+import { buildCashFlowStatement } from "../lib/cashFlowStatement";
 
 // doc §117 Chart of Accounts, §118 Journal Management, §119 Ledger
 // Posting — the foundational double-entry engine. Deliberately NOT yet
@@ -289,7 +290,7 @@ generalLedgerRouter.post("/recurring-journals/run-now", requirePermission("insti
 async function getPostedLinesUpTo(prisma: any, institutionId: string, asOf: Date) {
   return prisma.journalLine.findMany({
     where: { journal: { institutionId, status: "POSTED", postingDate: { lte: asOf } } },
-    include: { account: { select: { id: true, code: true, name: true, category: true, branchId: true } } },
+    include: { account: { select: { id: true, code: true, name: true, category: true, branchId: true, cashFlowActivity: true, isLiquidAsset: true, isVolatileLiability: true } } },
   });
 }
 
@@ -562,5 +563,112 @@ generalLedgerRouter.get("/reports/dashboard", requirePermission("reports.view"),
     asOfDate: today, totalAssets: round2(totalAssets), totalLiabilities: round2(totalLiabilities),
     totalEquity: round2(totalEquity + totalIncome - totalExpenses), netIncomeSinceInception: round2(totalIncome - totalExpenses),
     pendingJournals, activeAccounts, openPeriods,
+  });
+});
+
+// -------------------------------------------------------------------------
+// Phase 8: Ghana Regulatory Reporting. Built against the Bank of Ghana's
+// own official "Guide for Financial Publication for Banks & BOG Licensed
+// Financial Institutions" (2017, based on Act 930). The four core
+// statements (Balance Sheet, Income Statement, Changes in Equity, Trial
+// Balance) already existed from §123 — genuinely new here: Cash Flow
+// Statement (a previously-named gap) and the BOG-required NPL/Liquidity
+// ratios. IFRS 9 expected-credit-loss disclosure (Part D of the guide)
+// and Capital Adequacy Ratio are deliberately NOT built — both need real
+// methodology (PD/LGD/EAD statistical modeling for ECL; Basel-style
+// risk-weighting of assets for CAR) that would mean inventing a
+// methodology rather than following a confirmed one, the same boundary
+// already drawn for tax rates and KYC risk-scoring weights. GDPC filing
+// stays a named gap — the actual return format sits behind their member
+// portal, not publicly available.
+// -------------------------------------------------------------------------
+
+// GL account classification for cash flow / liquidity reporting purposes.
+generalLedgerRouter.post("/accounts/:id/classify", requirePermission("institution.configure"), async (req: AuthedRequest, res) => {
+  const { cashFlowActivity, isLiquidAsset, isVolatileLiability } = req.body as { cashFlowActivity?: string; isLiquidAsset?: boolean; isVolatileLiability?: boolean };
+  const account = await prisma.gLAccount.findFirst({ where: { id: req.params.id, institutionId: req.auth!.institutionId } });
+  if (!account) return res.status(404).json({ error: "Account not found" });
+
+  const updated = await prisma.gLAccount.update({
+    where: { id: account.id },
+    data: { cashFlowActivity: cashFlowActivity as any, isLiquidAsset, isVolatileLiability },
+  });
+  res.json({ account: updated });
+});
+
+// §BOG Cash Flow Statement — the indirect method, built on real posted
+// journal history, with the reconciliation invariant (operating +
+// investing + financing must equal the actual change in cash) surfaced
+// directly rather than assumed.
+generalLedgerRouter.get("/reports/cash-flow", requirePermission("reports.view"), async (req: AuthedRequest, res) => {
+  const { from, to } = parseRangeQuery(req);
+
+  const accounts = await prisma.gLAccount.findMany({ where: { institutionId: req.auth!.institutionId, status: "ACTIVE" } });
+  const linesBeforeStart = await getPostedLinesUpTo(prisma, req.auth!.institutionId, new Date(from.getTime() - 1));
+  const linesUpToEnd = await getPostedLinesUpTo(prisma, req.auth!.institutionId, to);
+
+  const openingBalances = aggregateBalancesAsOf(linesBeforeStart.map((l: any) => ({ accountId: l.accountId, category: l.account.category, debit: Number(l.debit), credit: Number(l.credit) })));
+  const closingBalances = aggregateBalancesAsOf(linesUpToEnd.map((l: any) => ({ accountId: l.accountId, category: l.account.category, debit: Number(l.debit), credit: Number(l.credit) })));
+
+  const movements = accounts.map((a: any) => ({
+    accountId: a.id, category: a.category, activity: a.cashFlowActivity, isLiquidAsset: a.isLiquidAsset,
+    openingBalance: openingBalances.get(a.id) || 0, closingBalance: closingBalances.get(a.id) || 0,
+  }));
+
+  const statement = buildCashFlowStatement(movements);
+  await prisma.auditLog.create({ data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "gl_report.generated", resource: "gl_report", resourceId: "cash-flow-statement", metadata: { from, to } } });
+
+  res.json({ periodStart: from, periodEnd: to, ...statement });
+});
+
+// §BOG "Non-performing loan (NPL) ratio [(Substandard to loss loans /
+// Total gross loans) * 100]" — computed using the BOG's own explicitly
+// documented default definition (loans past due more than 90 days),
+// disclosed here rather than silently assumed against an unconfirmed
+// bucket mapping.
+generalLedgerRouter.get("/reports/npl-ratio", requirePermission("reports.view"), async (req: AuthedRequest, res) => {
+  const loans = await prisma.loan.findMany({ where: { institutionId: req.auth!.institutionId, status: { in: ["DISBURSED", "ACTIVE"] } }, select: { principal: true, arrearsClassification: true } });
+  const totalGrossLoans = loans.reduce((s: number, l: any) => s + Number(l.principal), 0);
+  const nplLoans = loans.filter((l: any) => l.arrearsClassification === "ARREARS_90_PLUS").reduce((s: number, l: any) => s + Number(l.principal), 0);
+  const ratio = totalGrossLoans > 0 ? round2((nplLoans / totalGrossLoans) * 100) : 0;
+
+  res.json({
+    totalGrossLoans: round2(totalGrossLoans), nonPerformingLoans: round2(nplLoans), nplRatio: ratio,
+    definition: "Loans past due more than 90 days, per BOG's documented default definition — not a Substandard/Doubtful/Loss bucket mapping, which isn't confirmed against this platform's day-based classification.",
+  });
+});
+
+// §BOG "Liquid ratio [Liquid assets/volatile Liabilities]" — computed
+// from accounts explicitly tagged by the institution, not guessed at by
+// account name matching.
+generalLedgerRouter.get("/reports/liquidity-ratio", requirePermission("reports.view"), async (req: AuthedRequest, res) => {
+  const { to: asOfDate } = parseRangeQuery(req);
+  const lines = await getPostedLinesUpTo(prisma, req.auth!.institutionId, asOfDate);
+  const balances = aggregateBalancesAsOf(lines.map((l: any) => ({ accountId: l.accountId, category: l.account.category, debit: Number(l.debit), credit: Number(l.credit) })));
+  const accountsInvolved = new Map<string, { id: string; isLiquidAsset: boolean; isVolatileLiability: boolean }>(lines.map((l: any) => [l.accountId, l.account]));
+
+  let liquidAssets = 0, volatileLiabilities = 0;
+  for (const [accountId, bal] of balances) {
+    const account = accountsInvolved.get(accountId);
+    if (account?.isLiquidAsset) liquidAssets += bal;
+    if (account?.isVolatileLiability) volatileLiabilities += Math.abs(bal);
+  }
+
+  const ratio = volatileLiabilities > 0 ? round2((liquidAssets / volatileLiabilities) * 100) : null;
+  res.json({ asOfDate, liquidAssets: round2(liquidAssets), volatileLiabilities: round2(volatileLiabilities), liquidityRatio: ratio });
+});
+
+// A consolidated view pulling together everything genuinely built for
+// BOG publication — the pre-existing statements plus the new pieces —
+// in one place, with the deferred items named directly rather than
+// silently absent.
+generalLedgerRouter.get("/reports/bog-publication-summary", requirePermission("reports.view"), async (req: AuthedRequest, res) => {
+  res.json({
+    available: ["Trial Balance", "Statement of Financial Position (Balance Sheet)", "Statement of Comprehensive Income (Income Statement)", "Statement of Changes in Equity", "Statement of Cash Flows", "Non-Performing Loan Ratio", "Liquidity Ratio"],
+    deferred: [
+      { item: "Capital Adequacy Ratio (CAR)", reason: "Needs Basel-style risk-weighting of assets by class — a real methodology decision, not built to avoid inventing regulatory calculations unilaterally." },
+      { item: "IFRS 9 Expected Credit Loss disclosures (Part D of the BOG guide)", reason: "Needs PD/LGD/EAD statistical modeling and forward-looking macroeconomic scenario infrastructure that doesn't exist in this platform — a substantial, separate undertaking." },
+      { item: "GDPC premium/deposit returns", reason: "The actual return format sits behind GDPC's member-only portal, not publicly available to confirm against." },
+    ],
   });
 });

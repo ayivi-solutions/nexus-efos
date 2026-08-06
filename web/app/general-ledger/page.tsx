@@ -12,7 +12,7 @@ export default function GeneralLedgerPage() {
   const toast = useToast();
   const [error, setError] = useState<string | null>(null);
   useErrorToast(error);
-  const [tab, setTab] = useState<"accounts" | "journals" | "periods" | "recurring" | "statements" | "glreports">("accounts");
+  const [tab, setTab] = useState<"accounts" | "journals" | "periods" | "recurring" | "statements" | "glreports" | "regulatory">("accounts");
 
   const [accounts, setAccounts] = useState<any[]>([]);
   const [journals, setJournals] = useState<any[]>([]);
@@ -38,6 +38,17 @@ export default function GeneralLedgerPage() {
   const [byBranch, setByBranch] = useState<any>(null);
   const [byPeriod, setByPeriod] = useState<any>(null);
   const [busy, setBusy] = useState(false);
+  const [cashFlow, setCashFlow] = useState<any>(null);
+  const [nplRatio, setNplRatio] = useState<any>(null);
+  const [liquidityRatio, setLiquidityRatio] = useState<any>(null);
+  const [bogSummary, setBogSummary] = useState<any>(null);
+
+  function loadRegulatory() {
+    api.getCashFlowStatement("THIS_YEAR").then(setCashFlow).catch(() => {});
+    api.getNplRatio().then(setNplRatio).catch(() => {});
+    api.getLiquidityRatio().then(setLiquidityRatio).catch(() => {});
+    api.getBogPublicationSummary().then(setBogSummary).catch(() => {});
+  }
 
   async function loadGLReports() {
     api.getGLDashboard().then(setDashboard).catch(() => {});
@@ -55,6 +66,7 @@ export default function GeneralLedgerPage() {
   }
 
   useEffect(() => { if (tab === "glreports") loadGLReports(); }, [tab]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (tab === "regulatory") loadRegulatory(); }, [tab]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { loadAccountActivity(); }, [activityAccountId, activityRange, activityCustomFrom, activityCustomTo]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function loadStatement() {
@@ -185,6 +197,7 @@ export default function GeneralLedgerPage() {
           <button onClick={() => setTab("recurring")} className={`btn-text ${tab === "recurring" ? "text-gold-600 font-semibold" : "text-text-muted"}`}>Recurring Journals</button>
           <button onClick={() => setTab("statements")} className={`btn-text ${tab === "statements" ? "text-gold-600 font-semibold" : "text-text-muted"}`}>Financial Statements</button>
           <button onClick={() => setTab("glreports")} className={`btn-text ${tab === "glreports" ? "text-gold-600 font-semibold" : "text-text-muted"}`}>GL Reports</button>
+          <button onClick={() => setTab("regulatory")} className={`btn-text ${tab === "regulatory" ? "text-gold-600 font-semibold" : "text-text-muted"}`}>Regulatory Reporting</button>
         </div>
 
         {tab === "accounts" && (
@@ -198,8 +211,8 @@ export default function GeneralLedgerPage() {
               <button type="submit" disabled={busy} className="btn-primary">Create</button>
             </form>
             <div className="card overflow-x-auto">
-              <table className="w-full min-w-[560px] text-sm table-modern">
-                <thead><tr><th>Code</th><th>Name</th><th>Category</th><th>Balance</th><th>Status</th><th></th></tr></thead>
+              <table className="w-full min-w-[820px] text-sm table-modern">
+                <thead><tr><th>Code</th><th>Name</th><th>Category</th><th>Balance</th><th>Status</th><th>Cash Flow</th><th>Liquid?</th><th>Volatile Liab?</th><th></th></tr></thead>
                 <tbody>
                   {accounts.map((a: any) => (
                     <tr key={a.id}>
@@ -208,13 +221,21 @@ export default function GeneralLedgerPage() {
                       <td className="text-text-700">{a.category}</td>
                       <td className="text-text-700">GHS {Number(a.balance).toLocaleString()}</td>
                       <td><span className={`badge ${a.status === "ACTIVE" ? "bg-green-100 text-green-600" : "bg-paper-100 text-text-muted"}`}>{a.status}</span></td>
+                      <td>
+                        <select className="input !py-1 !text-[11px]" value={a.cashFlowActivity || ""} onChange={(e) => api.classifyGLAccount(a.id, { cashFlowActivity: e.target.value || undefined, isLiquidAsset: a.isLiquidAsset, isVolatileLiability: a.isVolatileLiability }).then(load)}>
+                          <option value="">—</option><option value="OPERATING">Operating</option><option value="INVESTING">Investing</option><option value="FINANCING">Financing</option>
+                        </select>
+                      </td>
+                      <td className="text-center"><input type="checkbox" checked={!!a.isLiquidAsset} onChange={(e) => api.classifyGLAccount(a.id, { cashFlowActivity: a.cashFlowActivity, isLiquidAsset: e.target.checked, isVolatileLiability: a.isVolatileLiability }).then(load)} /></td>
+                      <td className="text-center"><input type="checkbox" checked={!!a.isVolatileLiability} onChange={(e) => api.classifyGLAccount(a.id, { cashFlowActivity: a.cashFlowActivity, isLiquidAsset: a.isLiquidAsset, isVolatileLiability: e.target.checked }).then(load)} /></td>
                       <td><button onClick={() => handleToggleAccount(a.id, a.status)} className="btn-text text-gold-600">{a.status === "ACTIVE" ? "Deactivate" : "Activate"}</button></td>
                     </tr>
                   ))}
-                  {accounts.length === 0 && <tr><td colSpan={6} className="text-center text-text-muted text-sm py-8">No accounts created.</td></tr>}
+                  {accounts.length === 0 && <tr><td colSpan={9} className="text-center text-text-muted text-sm py-8">No accounts created.</td></tr>}
                 </tbody>
               </table>
             </div>
+            <p className="text-[11px] text-text-muted mt-2">Cash Flow / Liquid / Volatile Liability classification feeds the Regulatory Reporting tab — see there for the Cash Flow Statement and Liquidity Ratio.</p>
           </>
         )}
 
@@ -521,6 +542,71 @@ export default function GeneralLedgerPage() {
                 </div>
               </div>
             </div>
+          </>
+        )}
+
+        {tab === "regulatory" && (
+          <>
+            <p className="text-[12.5px] text-text-muted mb-4">Built against the Bank of Ghana's own official Guide for Financial Publication. The Balance Sheet, Income Statement, Changes in Equity, and Trial Balance under Financial Statements above are also part of this. Capital Adequacy Ratio, IFRS 9 credit-loss disclosures, and GDPC returns are named, deferred gaps — see below.</p>
+
+            <div className="grid grid-cols-1 dt:grid-cols-2 gap-4 mb-8">
+              <div className="card p-5">
+                <div className="text-[10.5px] text-text-muted uppercase mb-1">NPL Ratio</div>
+                {nplRatio && (
+                  <>
+                    <div className="font-display font-semibold text-2xl text-gold-600">{nplRatio.nplRatio}%</div>
+                    <div className="text-[11px] text-text-muted mt-1">{nplRatio.definition}</div>
+                  </>
+                )}
+              </div>
+              <div className="card p-5">
+                <div className="text-[10.5px] text-text-muted uppercase mb-1">Liquidity Ratio</div>
+                {liquidityRatio && (
+                  liquidityRatio.liquidityRatio !== null ? (
+                    <div className="font-display font-semibold text-2xl text-gold-600">{liquidityRatio.liquidityRatio}%</div>
+                  ) : (
+                    <div className="text-[12px] text-text-muted">No accounts tagged as liquid assets / volatile liabilities yet — classify accounts in Chart of Accounts.</div>
+                  )
+                )}
+              </div>
+            </div>
+
+            <h2 className="font-display font-semibold text-lg text-ink-900 mb-3">Cash Flow Statement (this year)</h2>
+            {cashFlow && (
+              <div className="card p-5 mb-8">
+                <div className="grid grid-cols-2 dt:grid-cols-4 gap-3 mb-3">
+                  <div><div className="text-[10.5px] text-text-muted uppercase">Operating</div><div className="text-text-900 font-medium">GHS {cashFlow.operating.toLocaleString()}</div></div>
+                  <div><div className="text-[10.5px] text-text-muted uppercase">Investing</div><div className="text-text-900 font-medium">GHS {cashFlow.investing.toLocaleString()}</div></div>
+                  <div><div className="text-[10.5px] text-text-muted uppercase">Financing</div><div className="text-text-900 font-medium">GHS {cashFlow.financing.toLocaleString()}</div></div>
+                  <div><div className="text-[10.5px] text-text-muted uppercase">Net Change</div><div className="text-text-900 font-medium">GHS {cashFlow.netChange.toLocaleString()}</div></div>
+                </div>
+                <div className="text-[12px] text-text-700">Cash: GHS {cashFlow.cashOpening.toLocaleString()} → GHS {cashFlow.cashClosing.toLocaleString()}</div>
+                <div className={`text-[12px] mt-1 ${cashFlow.reconciles ? "text-green-600" : "text-rose-600"}`}>{cashFlow.reconciles ? "✓ Reconciles" : "✗ Does not reconcile — check account classification"}</div>
+              </div>
+            )}
+
+            {bogSummary && (
+              <>
+                <h2 className="font-display font-semibold text-lg text-ink-900 mb-3">What's Available vs. Deferred</h2>
+                <div className="card p-5 mb-4">
+                  <div className="font-medium text-[12.5px] text-green-600 mb-2">Available</div>
+                  <ul className="text-[12.5px] text-text-700 list-disc list-inside space-y-0.5">
+                    {bogSummary.available.map((a: string, i: number) => (<li key={i}>{a}</li>))}
+                  </ul>
+                </div>
+                <div className="card p-5 bg-gold-500/10">
+                  <div className="font-medium text-[12.5px] text-ink-900 mb-2">Deferred, named honestly</div>
+                  <div className="space-y-2">
+                    {bogSummary.deferred.map((d: any, i: number) => (
+                      <div key={i}>
+                        <div className="text-[12.5px] font-medium text-text-900">{d.item}</div>
+                        <div className="text-[11.5px] text-text-muted">{d.reason}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </>
+            )}
           </>
         )}
       </div>

@@ -370,6 +370,12 @@ export const api = {
   getIncomeStatement: (range: string, from?: string, to?: string) => request(`/general-ledger/reports/income-statement?range=${range}${from ? `&from=${from}&to=${to}` : ""}`),
   getChangesInEquity: (range: string, from?: string, to?: string) => request(`/general-ledger/reports/changes-in-equity?range=${range}${from ? `&from=${from}&to=${to}` : ""}`),
 
+  classifyGLAccount: (id: string, data: any) => request(`/general-ledger/accounts/${id}/classify`, { method: "POST", body: JSON.stringify(data) }),
+  getCashFlowStatement: (range: string, from?: string, to?: string) => request(`/general-ledger/reports/cash-flow?range=${range}${from ? `&from=${from}&to=${to}` : ""}`),
+  getNplRatio: () => request("/general-ledger/reports/npl-ratio"),
+  getLiquidityRatio: () => request("/general-ledger/reports/liquidity-ratio"),
+  getBogPublicationSummary: () => request("/general-ledger/reports/bog-publication-summary"),
+
   getAccountActivity: (accountId: string, range: string, from?: string, to?: string) => request(`/general-ledger/reports/account-activity/${accountId}?range=${range}${from ? `&from=${from}&to=${to}` : ""}`),
   getGLByBranch: (range: string, from?: string, to?: string) => request(`/general-ledger/reports/by-branch?range=${range}${from ? `&from=${from}&to=${to}` : ""}`),
   getGLByPeriod: () => request("/general-ledger/reports/by-period"),
