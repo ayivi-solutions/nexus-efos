@@ -5,6 +5,7 @@ import { prisma } from "../lib/prisma";
 import { requireAuth, AuthedRequest } from "../middleware/auth";
 import { requirePermission } from "../middleware/rbac";
 import { generateAccountNumber } from "../lib/accountNumber";
+import { generateCustomerNumber } from "../lib/customerNumber";
 import { round2, generateSchedule, generateRemainingSchedule, allocateRepayment } from "../lib/loanSchedule";
 
 // Data Migration — bulk onboarding of an existing company's data. §35
@@ -45,6 +46,10 @@ const ID_TYPES = ["NATIONAL_ID", "PASSPORT", "DRIVERS_LICENCE", "VOTER_ID"];
 const RISK_RATINGS = ["LOW", "MEDIUM", "HIGH"];
 const PREFERRED_CHANNELS = ["SMS", "EMAIL", "WHATSAPP", "CALL"];
 const PEP_STATUSES = ["NOT_PEP", "DOMESTIC_PEP", "FOREIGN_PEP", "PEP_ASSOCIATE"];
+// Kept in exact sync with the ConsentType enum in schema.prisma — there is
+// no single shared source between Prisma's generated enum and this route
+// file, so if that enum ever changes, this list needs updating by hand.
+const CONSENT_TYPES = ["DATA_PROCESSING", "MARKETING", "SMS", "EMAIL", "PUSH_NOTIFICATION", "BIOMETRIC", "CREDIT_BUREAU", "INFORMATION_SHARING", "DIGITAL_SIGNATURE", "OTHER"];
 
 // ---------------------------------------------------------------------
 // Template generation — 5 sheets
@@ -56,12 +61,13 @@ function buildCustomerTemplate(): XLSX.WorkBook {
   const instructions = XLSX.utils.aoa_to_sheet([
     ["Nexus EFOS — Customer Data Migration: Instructions"],
     [""],
-    ["This workbook has 4 data sheets. Fill in the ones that apply — Next of Kin, Beneficiaries, and Beneficial Owners are optional and can be left empty."],
+    ["This workbook has 6 data sheets. Fill in the ones that apply — Next of Kin, Beneficiaries, Beneficial Owners, and Consent Records are optional and can be left empty."],
     [""],
     ["1. Customers — one row per customer. Required for every row."],
     ["2. Next of Kin — optional, one row per next-of-kin record. Link each row to its customer using the exact Phone number from the Customers sheet."],
     ["3. Beneficiaries — optional, one row per beneficiary. Same linking rule. The Allocation % across all beneficiaries for one customer must not exceed 100."],
     ["4. Beneficial Owners — optional, one row per owner (Business/Corporate customers only). Same linking rule."],
+    ["5. Consent Records — optional, one row per consent record (e.g. data processing consent captured at legacy onboarding). Same linking rule."],
     [""],
     ["How matching works:"],
     ["Phone number is what the system uses to detect whether a customer already exists. It must be unique within the Customers sheet."],
@@ -75,6 +81,8 @@ function buildCustomerTemplate(): XLSX.WorkBook {
     ["Phone — required, must be unique in this file"],
     ["Email — optional"],
     ["Segment — required. One of: " + SEGMENTS.join(", ")],
+    ["Branch — required. Must exactly match an existing branch name (see the Branches page). There is no valid \"unassigned\" state for a real customer — every row needs a branch or it will be rejected."],
+    ["Address — optional, free text (digital address or landmark description)."],
     ["ID Type — optional. One of: " + ID_TYPES.join(", ")],
     ["ID Number — optional"],
     ["Risk Rating — optional. One of: " + RISK_RATINGS.join(", ")],
@@ -84,14 +92,23 @@ function buildCustomerTemplate(): XLSX.WorkBook {
     ["CDD Notes — optional, free text"],
     ["SMS / Email / WhatsApp / Marketing / Transaction Alerts / Statement Delivery Enabled — optional, Y or N, all default to their normal on/off setting if left blank"],
     [""],
+    ["Field reference — Consent Records sheet:"],
+    ["Consent Type — required. One of: " + CONSENT_TYPES.join(", ")],
+    ["Granted — required, Y or N"],
+    ["Granted Date — optional. If left blank, defaults to the moment this batch is committed, not a historical date — set it explicitly if the consent was actually captured earlier."],
+    ["Notes — optional, free text"],
+    [""],
+    ["DOCUMENTS — NOT PART OF THIS TEMPLATE"],
+    ["Identity documents, proof of address, and photographs are file uploads, not spreadsheet data — they cannot be included in this workbook. Migrated customers will show 0% document checklist complete until each one is uploaded individually on the customer's page, or until a separate bulk-document upload tool is built."],
+    [""],
     ["What happens automatically for every migrated customer:"],
-    ["Status is set to ACTIVE and KYC Status to VERIFIED — migration assumes these customers are already known to your business. Lifecycle Stage, Watchlist screening, and CDD Level are system-managed and cannot be set from this file."],
+    ["A unique Customer Number is generated. Status is set to ACTIVE and KYC Status to VERIFIED — migration assumes these customers are already known to your business. Lifecycle Stage, Watchlist screening, and CDD Level are system-managed and cannot be set from this file."],
   ]);
   instructions["!cols"] = [{ wch: 100 }];
   XLSX.utils.book_append_sheet(wb, instructions, "Instructions");
 
-  const customerHeaders = ["Full Name", "Phone", "Email", "Segment", "ID Type", "ID Number", "Risk Rating", "Preferred Channel", "Preferred Language", "PEP Status", "CDD Notes", "SMS Enabled", "Email Enabled", "WhatsApp Enabled", "Marketing Enabled", "Transaction Alerts Enabled", "Statement Delivery Enabled"];
-  const customerExample = ["Ama Serwaa", "0244111222", "ama@example.com", "INDIVIDUAL", "NATIONAL_ID", "GHA-123456789-0", "LOW", "SMS", "English", "NOT_PEP", "", "Y", "Y", "Y", "N", "Y", "Y"];
+  const customerHeaders = ["Full Name", "Phone", "Email", "Segment", "Branch", "Address", "ID Type", "ID Number", "Risk Rating", "Preferred Channel", "Preferred Language", "PEP Status", "CDD Notes", "SMS Enabled", "Email Enabled", "WhatsApp Enabled", "Marketing Enabled", "Transaction Alerts Enabled", "Statement Delivery Enabled"];
+  const customerExample = ["Ama Serwaa", "0244111222", "ama@example.com", "INDIVIDUAL", "Head Office", "12 Ring Road, Accra", "NATIONAL_ID", "GHA-123456789-0", "LOW", "SMS", "English", "NOT_PEP", "", "Y", "Y", "Y", "N", "Y", "Y"];
   const customersSheet = XLSX.utils.aoa_to_sheet([customerHeaders, customerExample]);
   customersSheet["!cols"] = customerHeaders.map(() => ({ wch: 20 }));
   XLSX.utils.book_append_sheet(wb, customersSheet, "Customers");
@@ -114,6 +131,12 @@ function buildCustomerTemplate(): XLSX.WorkBook {
   boSheet["!cols"] = boHeaders.map(() => ({ wch: 20 }));
   XLSX.utils.book_append_sheet(wb, boSheet, "Beneficial Owners");
 
+  const consentHeaders = ["Customer Phone", "Consent Type", "Granted", "Granted Date", "Notes"];
+  const consentExample = ["0244111222", "DATA_PROCESSING", "Y", "2024-01-15", "Migrated from legacy onboarding form"];
+  const consentSheet = XLSX.utils.aoa_to_sheet([consentHeaders, consentExample]);
+  consentSheet["!cols"] = consentHeaders.map(() => ({ wch: 20 }));
+  XLSX.utils.book_append_sheet(wb, consentSheet, "Consent Records");
+
   return wb;
 }
 
@@ -131,7 +154,8 @@ migrationRouter.get("/customers/template", (_req, res) => {
 
 interface CustomerRow {
   rowNumber: number;
-  fullName: string; phone: string; email: string; segment: string; idType: string; idNumber: string;
+  fullName: string; phone: string; email: string; segment: string; branch: string; address: string;
+  idType: string; idNumber: string;
   riskRating: string; preferredChannel: string; preferredLanguage: string; pepStatus: string; cddNotes: string;
   smsEnabled: string; emailEnabled: string; whatsappEnabled: string; marketingEnabled: string;
   transactionAlertsEnabled: string; statementDeliveryEnabled: string;
@@ -139,6 +163,7 @@ interface CustomerRow {
 interface NokRow { rowNumber: number; customerPhone: string; fullName: string; relationship: string; phone: string; email: string; address: string; }
 interface BeneRow { rowNumber: number; customerPhone: string; fullName: string; relationship: string; allocationPct: string; phone: string; }
 interface BoRow { rowNumber: number; customerPhone: string; fullName: string; ownershipPct: string; idType: string; idNumber: string; }
+interface ConsentRow { rowNumber: number; customerPhone: string; consentType: string; granted: string; grantedDate: string; notes: string; }
 
 function sheetToRows(wb: XLSX.WorkBook, sheetName: string): any[][] {
   const sheet = wb.Sheets[sheetName];
@@ -158,11 +183,12 @@ function parseWorkbook(buffer: Buffer) {
     .map((r, i) => ({
       rowNumber: i + 2,
       fullName: str(r[0]), phone: str(r[1]), email: str(r[2]), segment: str(r[3]).toUpperCase(),
-      idType: str(r[4]).toUpperCase(), idNumber: str(r[5]), riskRating: str(r[6]).toUpperCase(),
-      preferredChannel: str(r[7]).toUpperCase(), preferredLanguage: str(r[8]), pepStatus: str(r[9]).toUpperCase() || "NOT_PEP",
-      cddNotes: str(r[10]), smsEnabled: str(r[11]).toUpperCase(), emailEnabled: str(r[12]).toUpperCase(),
-      whatsappEnabled: str(r[13]).toUpperCase(), marketingEnabled: str(r[14]).toUpperCase(),
-      transactionAlertsEnabled: str(r[15]).toUpperCase(), statementDeliveryEnabled: str(r[16]).toUpperCase(),
+      branch: str(r[4]), address: str(r[5]),
+      idType: str(r[6]).toUpperCase(), idNumber: str(r[7]), riskRating: str(r[8]).toUpperCase(),
+      preferredChannel: str(r[9]).toUpperCase(), preferredLanguage: str(r[10]), pepStatus: str(r[11]).toUpperCase() || "NOT_PEP",
+      cddNotes: str(r[12]), smsEnabled: str(r[13]).toUpperCase(), emailEnabled: str(r[14]).toUpperCase(),
+      whatsappEnabled: str(r[15]).toUpperCase(), marketingEnabled: str(r[16]).toUpperCase(),
+      transactionAlertsEnabled: str(r[17]).toUpperCase(), statementDeliveryEnabled: str(r[18]).toUpperCase(),
     }))
     .filter((r) => r.fullName || r.phone);
 
@@ -178,7 +204,11 @@ function parseWorkbook(buffer: Buffer) {
     .map((r, i) => ({ rowNumber: i + 2, customerPhone: str(r[0]), fullName: str(r[1]), ownershipPct: str(r[2]), idType: str(r[3]).toUpperCase(), idNumber: str(r[4]) }))
     .filter((r) => r.customerPhone || r.fullName);
 
-  return { customers, nextOfKin, beneficiaries, beneficialOwners };
+  const consentRecords: ConsentRow[] = sheetToRows(wb, "Consent Records")
+    .map((r, i) => ({ rowNumber: i + 2, customerPhone: str(r[0]), consentType: str(r[1]).toUpperCase(), granted: str(r[2]).toUpperCase(), grantedDate: str(r[3]), notes: str(r[4]) }))
+    .filter((r) => r.customerPhone || r.consentType);
+
+  return { customers, nextOfKin, beneficiaries, beneficialOwners, consentRecords };
 }
 
 // ---------------------------------------------------------------------
@@ -227,6 +257,14 @@ async function validateAll(parsed: ReturnType<typeof parseWorkbook>, institution
   });
   const existingByPhone = new Map(existingCustomers.map((c) => [c.phone, c.id]));
 
+  // Branch is a hard requirement (doc §23.4 — same rule the manual "Create
+  // customer" form enforces server-side) — migration cannot leave a
+  // customer "Unassigned" the way the earlier version of this route did.
+  // Matched by name, case-insensitively, against this institution's real
+  // branches — a single query up front, same batching reasoning as phones.
+  const branches: { id: string; name: string }[] = await prisma.branch.findMany({ where: { institutionId }, select: { id: true, name: true } });
+  const branchIdByName = new Map<string, string>(branches.map((b) => [b.name.trim().toLowerCase(), b.id]));
+
   for (const row of parsed.customers) {
     const errors: string[] = [];
     if (!row.fullName) errors.push("Full Name is required");
@@ -235,6 +273,13 @@ async function validateAll(parsed: ReturnType<typeof parseWorkbook>, institution
     if (row.phone && seenPhones.has(row.phone)) errors.push("Duplicate phone number within the Customers sheet");
     if (row.phone) seenPhones.add(row.phone);
     if (!SEGMENTS.includes(row.segment)) errors.push(`Segment must be one of: ${SEGMENTS.join(", ")}`);
+    let branchId: string | undefined;
+    if (!row.branch) {
+      errors.push("Branch is required — there is no valid \"unassigned\" state for a customer");
+    } else {
+      branchId = branchIdByName.get(row.branch.trim().toLowerCase());
+      if (!branchId) errors.push(`Branch "${row.branch}" does not match any existing branch name — check the Branches page for exact spelling`);
+    }
     if (row.idType && !ID_TYPES.includes(row.idType)) errors.push(`ID Type must be one of: ${ID_TYPES.join(", ")}`);
     if (row.riskRating && !RISK_RATINGS.includes(row.riskRating)) errors.push(`Risk Rating must be one of: ${RISK_RATINGS.join(", ")}`);
     if (row.preferredChannel && !PREFERRED_CHANNELS.includes(row.preferredChannel)) errors.push(`Preferred Channel must be one of: ${PREFERRED_CHANNELS.join(", ")}`);
@@ -245,14 +290,14 @@ async function validateAll(parsed: ReturnType<typeof parseWorkbook>, institution
     }
 
     if (errors.length > 0) {
-      customerResults.push({ rowNumber: row.rowNumber, sheet: "Customers", data: row, status: "error" as const, errors });
+      customerResults.push({ rowNumber: row.rowNumber, sheet: "Customers", data: row, status: "error" as const, errors, branchId: undefined as string | undefined });
       continue;
     }
     const existingId = existingByPhone.get(row.phone);
     if (existingId) {
-      customerResults.push({ rowNumber: row.rowNumber, sheet: "Customers", data: row, status: "duplicate" as const, errors: [], existingCustomerId: existingId });
+      customerResults.push({ rowNumber: row.rowNumber, sheet: "Customers", data: row, status: "duplicate" as const, errors: [], existingCustomerId: existingId, branchId });
     } else {
-      customerResults.push({ rowNumber: row.rowNumber, sheet: "Customers", data: row, status: "valid" as const, errors: [] });
+      customerResults.push({ rowNumber: row.rowNumber, sheet: "Customers", data: row, status: "valid" as const, errors: [], branchId });
     }
   }
 
@@ -297,7 +342,17 @@ async function validateAll(parsed: ReturnType<typeof parseWorkbook>, institution
     return { rowNumber: row.rowNumber, sheet: "Beneficial Owners", data: row, status: (errors.length ? "error" : "valid") as "error" | "valid", errors };
   });
 
-  return { customerResults, nokResults, beneResults, boResults };
+  const consentResults = parsed.consentRecords.map((row) => {
+    const errors: string[] = [];
+    if (!row.customerPhone) errors.push("Customer Phone is required");
+    else if (!knownPhones.has(row.customerPhone)) { const pe = phoneError(row.customerPhone); errors.push(pe ? `Customer Phone: ${pe}` : `Customer Phone "${row.customerPhone}" does not match any row in the Customers sheet`); }
+    if (!CONSENT_TYPES.includes(row.consentType)) errors.push(`Consent Type must be one of: ${CONSENT_TYPES.join(", ")}`);
+    if (row.granted !== "Y" && row.granted !== "N") errors.push("Granted must be Y or N");
+    if (row.grantedDate && !parseDate(row.grantedDate)) errors.push(`Granted Date "${row.grantedDate}" is not a recognizable date`);
+    return { rowNumber: row.rowNumber, sheet: "Consent Records", data: row, status: (errors.length ? "error" : "valid") as "error" | "valid", errors };
+  });
+
+  return { customerResults, nokResults, beneResults, boResults, consentResults };
 }
 
 // ---------------------------------------------------------------------
@@ -315,20 +370,21 @@ migrationRouter.post("/customers/dry-run", upload.single("file"), async (req: Au
   }
   if (parsed.customers.length === 0) return res.status(400).json({ error: "No data rows found in the Customers sheet" });
 
-  const { customerResults, nokResults, beneResults, boResults } = await validateAll(parsed, req.auth!.institutionId);
+  const { customerResults, nokResults, beneResults, boResults, consentResults } = await validateAll(parsed, req.auth!.institutionId);
 
   const summary = {
     customers: { total: customerResults.length, valid: customerResults.filter((r) => r.status === "valid").length, duplicate: customerResults.filter((r) => r.status === "duplicate").length, error: customerResults.filter((r) => r.status === "error").length },
     nextOfKin: { total: nokResults.length, valid: nokResults.filter((r) => r.status === "valid").length, error: nokResults.filter((r) => r.status === "error").length },
     beneficiaries: { total: beneResults.length, valid: beneResults.filter((r) => r.status === "valid").length, error: beneResults.filter((r) => r.status === "error").length },
     beneficialOwners: { total: boResults.length, valid: boResults.filter((r) => r.status === "valid").length, error: boResults.filter((r) => r.status === "error").length },
+    consentRecords: { total: consentResults.length, valid: consentResults.filter((r) => r.status === "valid").length, error: consentResults.filter((r) => r.status === "error").length },
   };
 
   await prisma.auditLog.create({
     data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "migration.customers_dry_run", resource: "import_batch", metadata: { fileName: req.file.originalname, summary } },
   });
 
-  res.json({ summary, customerResults, nokResults, beneResults, boResults });
+  res.json({ summary, customerResults, nokResults, beneResults, boResults, consentResults });
 });
 
 // ---------------------------------------------------------------------
@@ -352,8 +408,8 @@ migrationRouter.post("/customers/commit", upload.single("file"), async (req: Aut
     return res.status(400).json({ error: "Could not read this file" });
   }
 
-  const { customerResults, nokResults, beneResults, boResults } = await validateAll(parsed, req.auth!.institutionId);
-  const allErrors = [...customerResults, ...nokResults, ...beneResults, ...boResults].filter((r) => r.status === "error");
+  const { customerResults, nokResults, beneResults, boResults, consentResults } = await validateAll(parsed, req.auth!.institutionId);
+  const allErrors = [...customerResults, ...nokResults, ...beneResults, ...boResults, ...consentResults].filter((r) => r.status === "error");
   if (allErrors.length > 0) {
     return res.status(400).json({ error: "This file still has unresolved errors — fix them and re-run a dry-run before committing", errors: allErrors });
   }
@@ -375,6 +431,7 @@ migrationRouter.post("/customers/commit", upload.single("file"), async (req: Aut
     try {
       const commonData = {
         fullName: r.data.fullName, email: r.data.email || null, segment: r.data.segment as any,
+        branchId: r.branchId as string, address: r.data.address || null,
         idType: r.data.idType || null, idNumber: r.data.idNumber || null, riskRating: (r.data.riskRating || null) as any,
         preferredChannel: r.data.preferredChannel || null, preferredLanguage: r.data.preferredLanguage || null,
         pepStatus: r.data.pepStatus as any, cddNotes: r.data.cddNotes || null,
@@ -388,13 +445,39 @@ migrationRouter.post("/customers/commit", upload.single("file"), async (req: Aut
 
       let customerId: string;
       if (r.status === "duplicate") {
+        // Branch and address are deliberately included in commonData for
+        // updates too — an existing customer being re-supplied through
+        // migration should end up with the same real branch a fresh
+        // create would get, not silently keep whatever it had before.
         const updated = await prisma.customer.update({ where: { id: r.existingCustomerId! }, data: { ...commonData, importBatchId: batch.id } });
         customerId = updated.id;
       } else {
-        const created = await prisma.customer.create({
-          data: { institutionId: req.auth!.institutionId, phone: r.data.phone, status: "ACTIVE", kycStatus: "VERIFIED", importBatchId: batch.id, ...commonData },
-        });
-        customerId = created.id;
+        // Same generator the manual "Create customer" form uses — the
+        // earlier version of this route never called it, so migrated
+        // customers ended up with no customer number at all.
+        try {
+          const created = await prisma.customer.create({
+            data: { institutionId: req.auth!.institutionId, phone: r.data.phone, customerNumber: generateCustomerNumber(), status: "ACTIVE", kycStatus: "VERIFIED", importBatchId: batch.id, ...commonData },
+          });
+          customerId = created.id;
+        } catch (createErr: any) {
+          // uq_customer_institution_id_phone (institutionId, phone) is a
+          // real DB constraint — it cannot accept a duplicate phone within
+          // one institution no matter what this route does. Dry-run
+          // already checked for an existing customer, but a second person
+          // committing an overlapping file in the same window can still
+          // lose this race. Rather than fail the row, fall back to the
+          // same update path the "duplicate" branch above takes — the
+          // system only ever writes an update in that case, never a
+          // second row for the same customer.
+          if (createErr.code === "P2002" && createErr.meta?.target?.includes?.("uq_customer_institution_id_phone")) {
+            const existing = await prisma.customer.findUniqueOrThrow({ where: { institutionId_phone: { institutionId: req.auth!.institutionId, phone: r.data.phone } } });
+            const updated = await prisma.customer.update({ where: { id: existing.id }, data: { ...commonData, importBatchId: batch.id } });
+            customerId = updated.id;
+          } else {
+            throw createErr;
+          }
+        }
       }
       customerIdByPhone[r.data.phone] = customerId;
       successRows++;
@@ -430,6 +513,29 @@ migrationRouter.post("/customers/commit", upload.single("file"), async (req: Aut
       await prisma.beneficialOwner.create({ data: { customerId, fullName: r.data.fullName, ownershipPct: Number(r.data.ownershipPct), idType: r.data.idType || null, idNumber: r.data.idNumber || null } });
     } catch (err: any) {
       rowErrors.push({ rowNumber: r.rowNumber, sheet: "Beneficial Owners", error: err.message || "Unknown error" });
+    }
+  }
+
+  for (const r of consentResults) {
+    const customerId = customerIdByPhone[r.data.customerPhone];
+    if (!customerId) continue;
+    try {
+      // §43.5 "Consent records cannot be deleted" — capturedById is
+      // required by the model, so a migrated consent is attributed to
+      // whoever ran this import, same as any other consent captured
+      // through the normal UI. grantedAt defaults to now() on the model;
+      // an explicit Granted Date in the file overrides that so a
+      // genuinely historical consent doesn't get today's date.
+      const grantedAt = r.data.grantedDate ? parseDate(r.data.grantedDate) : null;
+      await prisma.customerConsent.create({
+        data: {
+          institutionId: req.auth!.institutionId, customerId, consentType: r.data.consentType as any,
+          granted: r.data.granted === "Y", notes: r.data.notes || null, capturedById: req.auth!.userId,
+          ...(grantedAt && { grantedAt }),
+        },
+      });
+    } catch (err: any) {
+      rowErrors.push({ rowNumber: r.rowNumber, sheet: "Consent Records", error: err.message || "Unknown error" });
     }
   }
 
