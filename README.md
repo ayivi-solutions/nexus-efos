@@ -42,7 +42,10 @@ real customer data.
   documents per customer segment — not a stored flag that can drift.
 - Customer number (auto-generated), address, and mandatory branch
   assignment — added after auditing the EFS's Customer Registration
-  requirements found these three genuinely missing.
+  requirements found these three genuinely missing. That fix only
+  reached the manual "Create customer" form at first; Data Migration
+  kept creating customers with no number and no branch until a second,
+  separate pass caught and closed the same gap on the bulk path.
 - Document upload (Supabase Storage) with replace/version history.
 
 **Loans**
@@ -119,15 +122,27 @@ real customer data.
   approving it than whoever wrote it.
 
 **Data Migration**
-- Bulk-onboard an existing company's Customers, Savings Accounts, and
-  Loans via downloadable Excel templates — for institutions that already
-  have customers, not just greenfield ones.
+- Bulk-onboard an existing company's Customers, Next of Kin, Beneficiaries,
+  Beneficial Owners, Consent Records, Savings Accounts, and Loans via
+  downloadable Excel templates — for institutions that already have
+  customers, not just greenfield ones.
+- Customer import requires Branch (matched against the institution's real
+  branches, not free text) the same way the manual creation form always
+  has — there is no "unassigned" customer state Data Migration is allowed
+  to produce. Every created customer gets a real, generated customer
+  number, same generator the manual form uses. A phone-number collision at
+  commit time (the database's own unique constraint, not just an
+  application check) resolves to an update of the existing customer rather
+  than a failed row.
 - Two Loan import methods: Opening Balance (clean start, remaining balance
   split across remaining installments) and Full History (real original
   schedule + every historical repayment replayed through the same
   allocation logic real-time repayments use).
 - Dry-run validation with zero writes before an explicit, separate commit.
   Every imported record traceable to a batch, with a genuine undo action.
+- Document upload is deliberately not part of migration — identity
+  documents, proof of address, and photographs are files, not spreadsheet
+  data, and get uploaded per-customer after migration.
 
 **Collections**
 - Collector Management: registration (a role on existing Employees, not a
@@ -454,12 +469,26 @@ customer-referencing models inside a real database transaction, with
 exact rollback — the highest-stakes piece in this entire build),
 Consent Management (§43, immutable records, real withdrawal).
 
-**Remaining phases:**
-- **Phase 8 — Ghana regulatory reporting** (BOG, GDPC, GAMC, TMA) —
-  deliberately blocked on the pilot partner furnishing the real official
-  templates; building against a guessed format would create false
-  confidence in compliance that isn't real. The only phase of the
-  original 9-phase roadmap not yet started.
+**Phase 8 (Ghana Regulatory Reporting) built against the actual Bank of
+Ghana "Guide for Financial Publication" document** — the four core
+statements (Balance Sheet, Income Statement, Changes in Equity, Trial
+Balance) already existed from Phase 5; genuinely new here: a Cash Flow
+Statement (a previously-named gap, closed via a real reconciliation
+invariant — operating + investing + financing must equal the actual
+change in cash, tested before use) and BOG's NPL and Liquidity ratios,
+NPL using BOG's own documented 90-day default definition rather than an
+unconfirmed bucket mapping. Capital Adequacy Ratio and IFRS 9
+expected-credit-loss disclosures deliberately not built — both need
+real methodology decisions (Basel-style risk-weighting; PD/LGD/EAD
+statistical modeling) that shouldn't be invented unilaterally, the same
+discipline already applied to tax rates and KYC risk-scoring weights.
+GDPC returns stay a named gap — the actual format sits behind their
+member-only portal, not publicly available.
+
+**All 9 phases of the original roadmap now have real, substantive
+work.** What remains across the whole platform is a set of named,
+disclosed boundaries — not a blocked or unstarted phase. See "Also
+open" below for the full list.
 
 **Also open, outside the 9-phase roadmap:**
 - **GitHub Dependabot: 36 vulnerabilities (20 high, 14 moderate, 2
@@ -475,6 +504,12 @@ Consent Management (§43, immutable records, real withdrawal).
   those same three edit forms on the frontend.
 - Notification multi-channel (SMS/Email/WhatsApp) — in-app only today;
   needs a provider decision before the integration itself can be built.
+- Capital Adequacy Ratio and IFRS 9 expected-credit-loss disclosures
+  (Phase 8) — real regulatory-capital and statistical-modeling
+  methodology decisions, not built to avoid inventing them unilaterally.
+- GDPC (Ghana Deposit Protection Corporation) premium/deposit returns —
+  confirmed the actual format sits behind their member-only portal, not
+  publicly available.
 - MFA / enhanced security controls — parked pending a dedicated Enterprise
   Security Specification.
 - Scheduled/automated Savings interest posting — currently staff-
