@@ -52,6 +52,13 @@ model Institution {
   phone          String?
   email          String?
   onboardingStep Int               @default(1) @map("onboarding_step") // 1..5, drives onboarding wizard
+  // Deliberately narrow gate for the demo-link feature (auth.routes.ts
+  // POST/GET /auth/demo-link) — a shareable pre-filled-credentials login
+  // link can only ever be minted for a user belonging to an institution
+  // flagged isDemo. Without this, the same mechanism could leak a real
+  // pilot customer-facing user's working credentials into a URL by
+  // mistake. Never set true on a real pilot institution.
+  isDemo         Boolean           @default(false) @map("is_demo")
 
   branches                Branch[]
   users                   User[]

@@ -55,12 +55,17 @@ async function downloadFile(path: string, filename: string) {
 // the login page itself while just trying to sign in with the wrong
 // password, which had nothing to do with a session at all.
 const UNAUTHENTICATED_PATHS = ["/auth/login", "/auth/register-institution", "/auth/accept-invite", "/auth/refresh", "/auth/logout"];
+// /auth/demo-link/:token is dynamic (the token is part of the path), so it
+// can't sit in the exact-match list above — checked separately below.
+function isUnauthenticatedPath(path: string) {
+  return UNAUTHENTICATED_PATHS.includes(path) || path.startsWith("/auth/demo-link/");
+}
 
 async function request(path: string, options: RequestInit = {}, _retried = false): Promise<any> {
   const accessToken = typeof window !== "undefined" ? sessionStorage.getItem("nexus_access_token") : null;
   const res = await rawFetch(path, options, accessToken);
 
-  if (res.status === 401 && !_retried && typeof window !== "undefined" && !UNAUTHENTICATED_PATHS.includes(path)) {
+  if (res.status === 401 && !_retried && typeof window !== "undefined" && !isUnauthenticatedPath(path)) {
     const refreshToken = sessionStorage.getItem("nexus_refresh_token");
     if (refreshToken) {
       try {
@@ -78,6 +83,16 @@ async function request(path: string, options: RequestInit = {}, _retried = false
     sessionStorage.removeItem("nexus_refresh_token");
     if (!window.location.pathname.startsWith("/login")) {
       window.location.href = "/login?expired=1";
+      // Deliberately not throwing here. This used to throw "Session
+      // expired," which every page's own catch block turned into a toast
+      // via useErrorToast — so for a moment before the browser actually
+      // finished navigating, people saw a "Session expired" popup flash
+      // on screen even though the redirect to the login page (with its
+      // own banner) was already underway. The redirect alone is the
+      // correct, complete UX; returning a promise that never settles
+      // means no caller's .catch/await ever runs, so nothing else fires
+      // while the navigation completes.
+      return new Promise(() => {});
     }
     throw new Error("Session expired");
   }
@@ -103,6 +118,14 @@ export const api = {
 
   login: (data: { email: string; password: string }) =>
     request("/auth/login", { method: "POST", body: JSON.stringify(data) }),
+
+  // Demo-link: createDemoLink is called once by whoever's sharing the demo
+  // (needs to already be signed into the demo institution); resolveDemoLink
+  // is called by the login page itself when someone opens the shared link.
+  createDemoLink: (data: { email: string; password: string }) =>
+    request("/auth/demo-link", { method: "POST", body: JSON.stringify(data) }),
+
+  resolveDemoLink: (token: string) => request(`/auth/demo-link/${encodeURIComponent(token)}`),
 
   whoAmI: () => request("/auth/me"),
 

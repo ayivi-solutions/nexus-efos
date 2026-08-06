@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { api, persistSession } from "@/lib/api";
 import { useErrorToast } from "@/components/Toast";
@@ -9,12 +9,47 @@ function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const expired = searchParams.get("expired") === "1";
+  const demoToken = searchParams.get("demo");
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   useErrorToast(error);
   const [loading, setLoading] = useState(false);
+  // Distinct from `loading` (the sign-in submit spinner) — this covers the
+  // brief window before we know whether to even show the form: either an
+  // existing session is being checked, or a demo link is being resolved.
+  const [checkingSession, setCheckingSession] = useState(true);
+
+  useEffect(() => {
+    // Already signed in with a live session (token not expired, this isn't
+    // an ?expired=1 bounce-back) — skip the form entirely and go straight
+    // to the app, same as the person asked: "if they already login before,
+    // they are taken to the Home screen."
+    if (!expired && !demoToken && typeof window !== "undefined" && sessionStorage.getItem("nexus_access_token")) {
+      api.whoAmI()
+        .then(() => router.replace("/dashboard"))
+        .catch(() => setCheckingSession(false));
+      return;
+    }
+    // A shared demo link — resolve it server-side to the real credentials
+    // it carries and pre-fill the form. The person still has to press
+    // Sign In themselves; this only saves them typing.
+    if (demoToken) {
+      api.resolveDemoLink(demoToken)
+        .then((creds: { email: string; password: string }) => {
+          setEmail(creds.email);
+          setPassword(creds.password);
+          setCheckingSession(false);
+        })
+        .catch(() => {
+          setError("This demo link is invalid or has expired. Ask for a new one.");
+          setCheckingSession(false);
+        });
+      return;
+    }
+    setCheckingSession(false);
+  }, [demoToken, expired, router]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -30,6 +65,8 @@ function LoginForm() {
       setLoading(false);
     }
   }
+
+  if (checkingSession) return null;
 
   return (
     <main className="min-h-screen bg-ink-950 flex items-center justify-center px-6">

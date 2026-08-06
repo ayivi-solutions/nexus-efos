@@ -3,7 +3,7 @@ import bcrypt from "bcryptjs";
 import { z } from "zod";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma";
-import { signAccessToken, generateRefreshToken, hashRefreshToken } from "../lib/jwt";
+import { signAccessToken, generateRefreshToken, hashRefreshToken, signDemoLinkToken, verifyDemoLinkToken } from "../lib/jwt";
 import { requireAuth, AuthedRequest } from "../middleware/auth";
 import { SYSTEM_ROLE_TEMPLATES } from "../seed-data";
 
@@ -185,6 +185,56 @@ authRouter.post("/login", async (req, res) => {
     refreshToken: raw,
     user: { id: user.id, fullName: user.fullName, email: user.email, institutionId: user.institutionId },
   });
+});
+
+// -----------------------------------------------------------------------
+// POST /auth/demo-link
+// Mints a shareable login link that pre-fills the login form with a demo
+// account's real credentials — for sharing the platform with prospective
+// pilot contacts without creating a separate real user per person.
+//
+// Deliberately narrow: only usable for a user inside an institution
+// flagged isDemo, and the caller must supply and prove they know that
+// user's actual current password (checked against the real hash below) —
+// this isn't a privilege-escalation shortcut, it's a convenience wrapper
+// around credentials the caller already has.
+// -----------------------------------------------------------------------
+const demoLinkSchema = z.object({ email: z.string().email(), password: z.string() });
+
+authRouter.post("/demo-link", requireAuth, async (req: AuthedRequest, res) => {
+  const parsed = demoLinkSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+  const { email, password } = parsed.data;
+
+  const user = await prisma.user.findFirst({
+    where: { email, institutionId: req.auth!.institutionId },
+    include: { institution: { select: { isDemo: true } } },
+  });
+  if (!user) return res.status(404).json({ error: "No user with that email in your institution" });
+  if (!user.institution.isDemo) {
+    return res.status(403).json({ error: "This institution isn't flagged as a demo institution — demo links can't be created for it" });
+  }
+  const valid = await bcrypt.compare(password, user.passwordHash);
+  if (!valid) return res.status(401).json({ error: "That isn't this user's current password" });
+
+  const token = signDemoLinkToken({ email, password });
+  const webBase = process.env.WEB_APP_URL || "http://localhost:3100";
+  res.json({ url: `${webBase}/login?demo=${token}` });
+});
+
+// -----------------------------------------------------------------------
+// GET /auth/demo-link/:token
+// Public — resolves a demo link back into the credentials it carries, for
+// the login page to pre-fill. Never issues a session directly; the person
+// still has to press Sign In, same as any other login.
+// -----------------------------------------------------------------------
+authRouter.get("/demo-link/:token", async (req, res) => {
+  try {
+    const { email, password } = verifyDemoLinkToken(req.params.token);
+    res.json({ email, password });
+  } catch {
+    res.status(410).json({ error: "This demo link is invalid or has expired" });
+  }
 });
 
 // -----------------------------------------------------------------------
