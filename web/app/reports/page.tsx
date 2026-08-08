@@ -8,6 +8,12 @@ const REPORTS = [
   { href: "/reports/savings", title: "Savings Report", desc: "Balances by branch, net deposit/withdrawal flow, top accounts." },
   { href: "/reports/collections", title: "Collections Report", desc: "Collector and route performance, cash settlement, exceptions, commission." },
   { href: "/reports/customers", title: "Customer Report", desc: "Segmentation, lifecycle funnel, KYC compliance rate, branch mix." },
+  { href: "/reports/cheques", title: "Cheque Register Report", desc: "Volume by status/direction, bounce rate, pending confirmation." },
+  { href: "/reports/customer-care", title: "Customer Care Report", desc: "Interaction volume by channel, complaint resolution time, escalation rate." },
+  { href: "/reports/hr", title: "HR Report", desc: "Attendance corrections, performance review completion, disciplinary outcomes." },
+  { href: "/reports/internal-audit", title: "Internal Audit Report", desc: "Findings by risk, overdue rate, engagement status breakdown." },
+  { href: "/capital-adequacy", title: "Capital Adequacy", desc: "CAR, RWA, NPL vs. ceiling, credit concentration risk — live dashboard, not a static report." },
+  { href: "/analytics", title: "Financial & Portfolio Analytics", desc: "GL trends, branch performance, portfolio PAR/aging/concentration — live dashboard." },
 ];
 
 export default function ReportsPage() {

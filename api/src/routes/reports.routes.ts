@@ -2,6 +2,8 @@ import { Router } from "express";
 import { prisma } from "../lib/prisma";
 import { requireAuth, AuthedRequest } from "../middleware/auth";
 import { requirePermission } from "../middleware/rbac";
+import { outstandingLoansWithBalance, parRatio } from "../lib/portfolio";
+import { round2 } from "../lib/generalLedger";
 
 export const reportsRouter = Router();
 reportsRouter.use(requireAuth);
@@ -131,13 +133,17 @@ reportsRouter.get("/loans", async (req: AuthedRequest, res) => {
   const byBranch: Record<string, { count: number; principal: number }> = {};
   const byStatus: Record<string, number> = {};
   // doc §77 Loan Arrears Management / §76 Portfolio Management "PAR
-  // Benchmark" — genuinely built on real arrears data now (the scheduled
-  // daily check in lib/scheduler.ts), not an approximation based on days
-  // since disbursement, which is a materially different and less useful
-  // number for exactly the question this report exists to answer.
+  // Benchmark" — real arrears data (the scheduled daily check in
+  // lib/scheduler.ts). Outstanding portfolio and PAR30 now come from
+  // lib/portfolio.ts's shared calculation — the same one the Portfolio
+  // Analytics dashboard uses — rather than a second, independent
+  // computation. The previous version here used raw principal (the
+  // original loan amount, not actual outstanding balance) and inferred
+  // "at risk" from arrears-bucket labels instead of the daysInArrears
+  // threshold directly; the two views could disagree on PAR for the
+  // same institution at the same moment. Fixed by sharing one source of
+  // truth instead of two independent approximations.
   const arrearsAging = { CURRENT: 0, ARREARS_1_30: 0, ARREARS_31_60: 0, ARREARS_61_90: 0, ARREARS_90_PLUS: 0 };
-  let outstandingPortfolio = 0;
-  let atRiskPortfolio = 0; // PAR30 — outstanding balance of any loan with an installment 30+ days overdue
 
   for (const l of filtered) {
     const branchName = l.branch?.name || "Unassigned";
@@ -148,14 +154,13 @@ reportsRouter.get("/loans", async (req: AuthedRequest, res) => {
 
     if (["DISBURSED", "ACTIVE"].includes(l.status)) {
       arrearsAging[l.arrearsClassification as keyof typeof arrearsAging]++;
-      outstandingPortfolio += Number(l.principal);
-      if (l.arrearsClassification !== "CURRENT" && l.arrearsClassification !== "ARREARS_1_30") {
-        atRiskPortfolio += Number(l.principal);
-      }
     }
   }
 
-  const parPercent = outstandingPortfolio > 0 ? Math.round((atRiskPortfolio / outstandingPortfolio) * 10000) / 100 : 0;
+  const outstandingLoans = await outstandingLoansWithBalance(institutionId);
+  const outstandingPortfolio = outstandingLoans.reduce((s, l) => s + l.outstanding, 0);
+  const atRiskPortfolio = outstandingLoans.filter((l) => l.daysInArrears > 30).reduce((s, l) => s + l.outstanding, 0);
+  const parPercent = parRatio(outstandingLoans, 30);
 
   res.json({
     loans: filtered.map((l) => ({
@@ -176,7 +181,7 @@ reportsRouter.get("/loans", async (req: AuthedRequest, res) => {
     byBranch,
     byStatus,
     arrearsAging,
-    portfolioAtRisk: { outstandingPortfolio, atRiskPortfolio, parPercent },
+    portfolioAtRisk: { outstandingPortfolio: round2(outstandingPortfolio), atRiskPortfolio: round2(atRiskPortfolio), parPercent },
   });
 });
 
@@ -271,5 +276,197 @@ reportsRouter.get("/customers", async (req: AuthedRequest, res) => {
     byStage,
     byKyc,
     byBranch,
+  });
+});
+
+// -----------------------------------------------------------------------
+// Cheque Register Report
+// -----------------------------------------------------------------------
+reportsRouter.get("/cheques", async (req: AuthedRequest, res) => {
+  const institutionId = req.auth!.institutionId;
+  const { from, to } = parseRange(req);
+
+  const cheques = await prisma.cheque.findMany({
+    where: { institutionId },
+    orderBy: { createdAt: "desc" },
+  });
+  const filtered = cheques.filter((c: any) => inRange(new Date(c.createdAt), from, to));
+
+  const byStatus: Record<string, number> = {};
+  const byDirection: Record<string, number> = {};
+  let totalAmount = 0;
+  let bouncedCount = 0;
+  let pendingConfirmationCount = 0;
+  const todayStart = new Date();
+  todayStart.setHours(0, 0, 0, 0);
+
+  for (const c of filtered) {
+    byStatus[c.status] = (byStatus[c.status] || 0) + 1;
+    byDirection[c.direction] = (byDirection[c.direction] || 0) + 1;
+    totalAmount += Number(c.amount);
+    if (c.status === "BOUNCED") bouncedCount++;
+    if (!["CLEARED", "BOUNCED", "STOPPED", "CANCELLED"].includes(c.status) && (!c.confirmedAt || new Date(c.confirmedAt) < todayStart)) {
+      pendingConfirmationCount++;
+    }
+  }
+  const submittedOrBeyond = filtered.filter((c: any) => ["PENDING_CLEARING", "CLEARED", "BOUNCED"].includes(c.status)).length;
+  const bounceRate = submittedOrBeyond > 0 ? round2((bouncedCount / submittedOrBeyond) * 100) : 0;
+
+  res.json({
+    cheques: filtered.map((c: any) => ({
+      id: c.id, direction: c.direction, chequeNumber: c.chequeNumber, bankName: c.bankName,
+      chequeDate: c.chequeDate, amount: c.amount, status: c.status,
+      payerName: c.payerName, payeeName: c.payeeName, confirmedAt: c.confirmedAt, createdAt: c.createdAt,
+    })),
+    total: filtered.length,
+    totalAmount: round2(totalAmount),
+    byStatus,
+    byDirection,
+    bounceRate,
+    pendingConfirmationCount,
+  });
+});
+
+// -----------------------------------------------------------------------
+// Customer Care Report — EFS §157 Interactions + §160 Complaints
+// -----------------------------------------------------------------------
+reportsRouter.get("/customer-care", async (req: AuthedRequest, res) => {
+  const institutionId = req.auth!.institutionId;
+  const { from, to } = parseRange(req);
+
+  const [interactions, complaints] = await Promise.all([
+    prisma.customerInteraction.findMany({ where: { institutionId }, orderBy: { createdAt: "desc" } }),
+    prisma.customerComplaint.findMany({ where: { institutionId }, orderBy: { createdAt: "desc" } }),
+  ]);
+  const filteredInteractions = interactions.filter((i: any) => inRange(new Date(i.createdAt), from, to));
+  const filteredComplaints = complaints.filter((c: any) => inRange(new Date(c.createdAt), from, to));
+
+  const byChannel: Record<string, number> = {};
+  let followUpsScheduled = 0;
+  let followUpsCompleted = 0;
+  for (const i of filteredInteractions) {
+    byChannel[i.channel] = (byChannel[i.channel] || 0) + 1;
+    if (i.followUpScheduledAt) followUpsScheduled++;
+    if (i.followUpCompleted) followUpsCompleted++;
+  }
+
+  const byCategory: Record<string, number> = {};
+  const byPriority: Record<string, number> = {};
+  let resolvedCount = 0;
+  let totalResolutionHours = 0;
+  let escalatedCount = 0;
+  for (const c of filteredComplaints) {
+    byCategory[c.category] = (byCategory[c.category] || 0) + 1;
+    byPriority[c.priority] = (byPriority[c.priority] || 0) + 1;
+    if (c.escalated) escalatedCount++;
+    if (c.resolvedAt) {
+      resolvedCount++;
+      totalResolutionHours += (new Date(c.resolvedAt).getTime() - new Date(c.createdAt).getTime()) / (1000 * 60 * 60);
+    }
+  }
+  const avgResolutionHours = resolvedCount > 0 ? round2(totalResolutionHours / resolvedCount) : 0;
+  const escalationRate = filteredComplaints.length > 0 ? round2((escalatedCount / filteredComplaints.length) * 100) : 0;
+
+  res.json({
+    interactions: { total: filteredInteractions.length, byChannel, followUpsScheduled, followUpsCompleted },
+    complaints: {
+      total: filteredComplaints.length,
+      byCategory, byPriority,
+      resolvedCount,
+      avgResolutionHours,
+      escalationRate,
+      list: filteredComplaints.map((c: any) => ({
+        id: c.id, referenceNumber: c.referenceNumber, category: c.category, priority: c.priority,
+        status: c.status, escalated: c.escalated, createdAt: c.createdAt, resolvedAt: c.resolvedAt,
+      })),
+    },
+  });
+});
+
+// -----------------------------------------------------------------------
+// HR Report — EFS §201 Attendance + §203 Performance + ETAS §41.4 Disciplinary
+// -----------------------------------------------------------------------
+reportsRouter.get("/hr", async (req: AuthedRequest, res) => {
+  const institutionId = req.auth!.institutionId;
+  const { from, to } = parseRange(req);
+
+  const [attendance, reviews, cases] = await Promise.all([
+    prisma.attendanceRecord.findMany({ where: { institutionId }, orderBy: { workDate: "desc" } }),
+    prisma.performanceReview.findMany({ where: { institutionId }, orderBy: { createdAt: "desc" } }),
+    prisma.disciplinaryCase.findMany({ where: { institutionId }, orderBy: { createdAt: "desc" } }),
+  ]);
+  const filteredAttendance = attendance.filter((a: any) => inRange(new Date(a.workDate), from, to));
+  const filteredReviews = reviews.filter((r: any) => inRange(new Date(r.createdAt), from, to));
+  const filteredCases = cases.filter((c: any) => inRange(new Date(c.createdAt), from, to));
+
+  const correctionsPending = filteredAttendance.filter((a: any) => a.correctionPending).length;
+
+  const reviewsByStatus: Record<string, number> = {};
+  const reviewsByRating: Record<string, number> = {};
+  for (const r of filteredReviews) {
+    reviewsByStatus[r.status] = (reviewsByStatus[r.status] || 0) + 1;
+    if (r.rating) reviewsByRating[r.rating] = (reviewsByRating[r.rating] || 0) + 1;
+  }
+  const completionRate = filteredReviews.length > 0
+    ? round2((filteredReviews.filter((r: any) => r.status === "COMPLETED").length / filteredReviews.length) * 100)
+    : 0;
+
+  const casesByStatus: Record<string, number> = {};
+  const casesByAction: Record<string, number> = {};
+  for (const c of filteredCases) {
+    casesByStatus[c.status] = (casesByStatus[c.status] || 0) + 1;
+    if (c.actionTaken) casesByAction[c.actionTaken] = (casesByAction[c.actionTaken] || 0) + 1;
+  }
+
+  res.json({
+    attendance: { total: filteredAttendance.length, correctionsPending },
+    performance: { total: filteredReviews.length, byStatus: reviewsByStatus, byRating: reviewsByRating, completionRate },
+    disciplinary: { total: filteredCases.length, byStatus: casesByStatus, byAction: casesByAction },
+  });
+});
+
+// -----------------------------------------------------------------------
+// Internal Audit Report — EFS §298/§299, ETAS §78
+// -----------------------------------------------------------------------
+reportsRouter.get("/internal-audit", async (req: AuthedRequest, res) => {
+  const institutionId = req.auth!.institutionId;
+  const { from, to } = parseRange(req);
+
+  const [engagements, findings] = await Promise.all([
+    prisma.auditEngagement.findMany({ where: { institutionId }, orderBy: { createdAt: "desc" } }),
+    prisma.auditFinding.findMany({ where: { institutionId }, orderBy: { createdAt: "desc" } }),
+  ]);
+  const filteredEngagements = engagements.filter((e: any) => inRange(new Date(e.createdAt), from, to));
+  const filteredFindings = findings.filter((f: any) => inRange(new Date(f.createdAt), from, to));
+
+  const engagementsByStatus: Record<string, number> = {};
+  for (const e of filteredEngagements) engagementsByStatus[e.status] = (engagementsByStatus[e.status] || 0) + 1;
+
+  const findingsByRisk: Record<string, number> = {};
+  const findingsByStatus: Record<string, number> = {};
+  let overdueCount = 0;
+  let unassignedCount = 0;
+  for (const f of filteredFindings) {
+    findingsByRisk[f.riskClassification] = (findingsByRisk[f.riskClassification] || 0) + 1;
+    findingsByStatus[f.status] = (findingsByStatus[f.status] || 0) + 1;
+    if (f.overdue) overdueCount++;
+    if (!f.actionOwnerId) unassignedCount++;
+  }
+  const overdueRate = filteredFindings.length > 0 ? round2((overdueCount / filteredFindings.length) * 100) : 0;
+
+  res.json({
+    engagements: { total: filteredEngagements.length, byStatus: engagementsByStatus },
+    findings: {
+      total: filteredFindings.length,
+      byRisk: findingsByRisk,
+      byStatus: findingsByStatus,
+      overdueCount,
+      overdueRate,
+      unassignedCount,
+      list: filteredFindings.map((f: any) => ({
+        id: f.id, referenceNumber: f.referenceNumber, riskClassification: f.riskClassification,
+        status: f.status, overdue: f.overdue, targetRemediationDate: f.targetRemediationDate, createdAt: f.createdAt,
+      })),
+    },
   });
 });

@@ -768,6 +768,14 @@ export const api = {
     request(`/reports/savings${from || to ? `?${new URLSearchParams({ ...(from ? { from } : {}), ...(to ? { to } : {}) })}` : ""}`),
   getCustomerReport: (from?: string, to?: string) =>
     request(`/reports/customers${from || to ? `?${new URLSearchParams({ ...(from ? { from } : {}), ...(to ? { to } : {}) })}` : ""}`),
+  getChequeReport: (from?: string, to?: string) =>
+    request(`/reports/cheques${from || to ? `?${new URLSearchParams({ ...(from ? { from } : {}), ...(to ? { to } : {}) })}` : ""}`),
+  getCustomerCareReport: (from?: string, to?: string) =>
+    request(`/reports/customer-care${from || to ? `?${new URLSearchParams({ ...(from ? { from } : {}), ...(to ? { to } : {}) })}` : ""}`),
+  getHrReport: (from?: string, to?: string) =>
+    request(`/reports/hr${from || to ? `?${new URLSearchParams({ ...(from ? { from } : {}), ...(to ? { to } : {}) })}` : ""}`),
+  getInternalAuditReport: (from?: string, to?: string) =>
+    request(`/reports/internal-audit${from || to ? `?${new URLSearchParams({ ...(from ? { from } : {}), ...(to ? { to } : {}) })}` : ""}`),
 
   downloadCustomerImportTemplate: () => downloadFile("/migration/customers/template", "nexus-customer-import-template.xlsx"),
   dryRunCustomerImport: (file: File) => {

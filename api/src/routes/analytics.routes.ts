@@ -3,6 +3,7 @@ import { prisma } from "../lib/prisma";
 import { requireAuth, AuthedRequest } from "../middleware/auth";
 import { requirePermission } from "../middleware/rbac";
 import { round2, linearTrendForecast } from "../lib/generalLedger";
+import { outstandingLoansWithBalance, parRatio, OutstandingLoan } from "../lib/portfolio";
 
 // doc §125 Financial Analytics. §125.2 lists 10 functional pieces; built
 // here are the ones genuinely computable from real data that already
@@ -130,41 +131,7 @@ analyticsRouter.get("/branch-performance", requirePermission("reports.view"), as
 // arrears system can never silently disagree with each other.
 // ---------------------------------------------------------------------
 
-const OUTSTANDING_STATUSES = ["DISBURSED", "ACTIVE", "DEFAULTED"];
-
-interface OutstandingLoan {
-  id: string;
-  principal: unknown;
-  branchId: string | null;
-  productVersionId: string | null;
-  customerId: string;
-  arrearsClassification: string;
-  daysInArrears: number;
-  outstanding: number;
-}
-
-async function outstandingLoansWithBalance(institutionId: string): Promise<OutstandingLoan[]> {
-  const loans = await prisma.loan.findMany({
-    where: { institutionId, status: { in: OUTSTANDING_STATUSES as any } },
-    select: {
-      id: true, principal: true, branchId: true, productVersionId: true, customerId: true,
-      arrearsClassification: true, daysInArrears: true,
-      installments: { select: { principalPaid: true } },
-    },
-  });
-  return loans.map((l: any) => {
-    const principalPaid = l.installments.reduce((s: number, i: any) => s + Number(i.principalPaid), 0);
-    const outstanding = Math.max(0, round2(Number(l.principal) - principalPaid));
-    return { ...l, outstanding };
-  });
-}
-
-function parRatio(loans: OutstandingLoan[], thresholdDays: number) {
-  const total = loans.reduce((s: number, l: OutstandingLoan) => s + l.outstanding, 0);
-  if (total === 0) return 0;
-  const atRisk = loans.filter((l: OutstandingLoan) => l.daysInArrears > thresholdDays).reduce((s: number, l: OutstandingLoan) => s + l.outstanding, 0);
-  return round2((atRisk / total) * 100);
-}
+// (portfolio helpers now live in lib/portfolio.ts — imported above)
 
 analyticsRouter.get("/portfolio/overview", requirePermission("reports.view"), async (req: AuthedRequest, res) => {
   const loans = await outstandingLoansWithBalance(req.auth!.institutionId);
