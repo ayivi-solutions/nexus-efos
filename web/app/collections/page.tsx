@@ -9,7 +9,7 @@ export default function CollectionsPage() {
   const toast = useToast();
   const [error, setError] = useState<string | null>(null);
   useErrorToast(error);
-  const [tab, setTab] = useState<"collectors" | "routes" | "transactions" | "settlements" | "commission">("collectors");
+  const [tab, setTab] = useState<"collectors" | "routes" | "transactions" | "settlements" | "commission" | "risk">("collectors");
 
   const [collectors, setCollectors] = useState<any[]>([]);
   const [employees, setEmployees] = useState<any[]>([]);
@@ -26,6 +26,7 @@ export default function CollectionsPage() {
   const [settleForm, setSettleForm] = useState({ collectorId: "", settlementDate: "", actualAmount: "", notes: "" });
   const [structures, setStructures] = useState<any[]>([]);
   const [records, setRecords] = useState<any[]>([]);
+  const [delinquencyRisk, setDelinquencyRisk] = useState<any[]>([]);
   const [structureForm, setStructureForm] = useState({ name: "", type: "PERCENTAGE_OF_COLLECTIONS", rate: "" });
   const [calcForm, setCalcForm] = useState({ collectorId: "", structureId: "", periodStart: "", periodEnd: "" });
   const [busy, setBusy] = useState(false);
@@ -40,6 +41,7 @@ export default function CollectionsPage() {
     api.listSettlements().then((r) => setSettlements(r.settlements)).catch(() => {});
     api.listCommissionStructures().then((r) => setStructures(r.structures)).catch(() => {});
     api.listCommissionRecords().then((r) => setRecords(r.records)).catch(() => {});
+    api.getDelinquencyRisk().then((r) => setDelinquencyRisk(r.loans)).catch(() => {});
   }
 
   async function handleCreateStructure(e: React.FormEvent) {
@@ -162,6 +164,7 @@ export default function CollectionsPage() {
           <button onClick={() => setTab("transactions")} className={`btn-text ${tab === "transactions" ? "text-gold-600 font-semibold" : "text-text-muted"}`}>Daily Collections</button>
           <button onClick={() => setTab("settlements")} className={`btn-text ${tab === "settlements" ? "text-gold-600 font-semibold" : "text-text-muted"}`}>Settlements</button>
           <button onClick={() => setTab("commission")} className={`btn-text ${tab === "commission" ? "text-gold-600 font-semibold" : "text-text-muted"}`}>Commission</button>
+          <button onClick={() => setTab("risk")} className={`btn-text ${tab === "risk" ? "text-gold-600 font-semibold" : "text-text-muted"}`}>Delinquency Risk</button>
         </div>
 
         {tab === "collectors" && (
@@ -361,6 +364,37 @@ export default function CollectionsPage() {
                     </tr>
                   ))}
                   {records.length === 0 && <tr><td colSpan={6} className="text-center text-text-muted text-sm py-8">No commission records.</td></tr>}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
+
+        {tab === "risk" && (
+          <>
+            <p className="text-text-muted text-[12.5px] mb-4">
+              EAIS §129.1 Delinquency Prediction — loans that are still <b>current</b> (not yet in arrears) but showing early warning signs: a shrinking payment buffer, a longer-than-usual gap since the last repayment, or other risk context. This is advisory only — it does not change arrears status, apply fees, or take any action. Confidence is lower for loans with fewer than 3 installments due so far (not enough history yet to judge a trend).
+            </p>
+            <div className="card overflow-x-auto">
+              <table className="w-full min-w-[860px] text-sm table-modern">
+                <thead><tr><th>Customer</th><th>Phone</th><th>Principal</th><th>Buffer</th><th>Risk</th><th>Confidence</th><th>Why</th></tr></thead>
+                <tbody>
+                  {delinquencyRisk.map((l: any) => (
+                    <tr key={l.loanId}>
+                      <td className="text-text-900 font-medium">{l.customerName}</td>
+                      <td className="text-text-700">{l.customerPhone}</td>
+                      <td className="text-text-700">GHS {Number(l.principal).toLocaleString()}</td>
+                      <td className={l.bufferRatio < 0 ? "text-rose-600" : "text-text-700"}>{(l.bufferRatio * 100).toFixed(1)}%</td>
+                      <td>
+                        <span className={`badge ${l.riskBand === "HIGH" ? "bg-rose-100 text-rose-600" : l.riskBand === "ELEVATED" ? "bg-gold-500/15 text-gold-600" : "bg-paper-100 text-text-muted"}`}>
+                          {l.riskBand} ({l.riskScore})
+                        </span>
+                      </td>
+                      <td className="text-text-muted text-[12px]">{l.confidence}</td>
+                      <td className="text-text-muted text-[11.5px] max-w-[260px]">{l.breakdown.map((b: any) => b.factor).join("; ")}</td>
+                    </tr>
+                  ))}
+                  {delinquencyRisk.length === 0 && <tr><td colSpan={7} className="text-center text-text-muted text-sm py-8">No loans currently flagged — everything current looks healthy.</td></tr>}
                 </tbody>
               </table>
             </div>

@@ -4,6 +4,7 @@ import { prisma } from "../lib/prisma";
 import { requireAuth, AuthedRequest } from "../middleware/auth";
 import { requirePermission } from "../middleware/rbac";
 import { generateCollectionTransactionNumber } from "../lib/collectionTransactionNumber";
+import { assessDelinquencyRisk } from "../lib/delinquencyRisk";
 
 // doc §78 Collections Management. §79 Collector Management + §80 Route
 // Management shipped first — everything else in this module (Daily
@@ -526,3 +527,88 @@ collectionsRouter.get("/reports/summary", requirePermission("reports.view"), asy
 
   res.json({ dailyCollection, collectorPerformance, routePerformance, cashSettlement, exceptions, commissionSummary });
 });
+
+// -----------------------------------------------------------------------
+// EAIS §129.1 Delinquency Prediction / §129.2 Collections Prioritisation.
+// Scores loans that are CURRENT (not yet in arrears) for early-warning
+// signals — the reactive arrears system (lib/arrears.ts) already tells
+// you what's late; this estimates what's *about to be*. Advisory Mode
+// only, per the EAIS: does not alter arrears status, fees, or take any
+// action — purely a prioritised list for a collections officer's actual
+// daily decision (who to check in on before they become a problem).
+// -----------------------------------------------------------------------
+collectionsRouter.get("/delinquency-risk", requirePermission("reports.view"), async (req: AuthedRequest, res) => {
+  const loans = await prisma.loan.findMany({
+    where: { institutionId: req.auth!.institutionId, status: { in: ["DISBURSED", "ACTIVE"] }, arrearsClassification: "CURRENT" },
+    include: {
+      customer: { select: { id: true, fullName: true, phone: true, riskRating: true } },
+      installments: { orderBy: { installmentNumber: "asc" } },
+    },
+  });
+
+  // Batched once, not per-loan — real customers can hold multiple loans;
+  // this avoids an N+1 query for the "other loans in arrears" signal.
+  const customerIds = Array.from(new Set(loans.map((l: any) => l.customerId)));
+  const loansInArrearsByCustomer = await prisma.loan.findMany({
+    where: { institutionId: req.auth!.institutionId, customerId: { in: customerIds }, arrearsClassification: { not: "CURRENT" }, status: { in: ["DISBURSED", "ACTIVE"] } },
+    select: { customerId: true },
+  });
+  const customersWithArrears = new Set(loansInArrearsByCustomer.map((l: any) => l.customerId));
+
+  // Batched once for every loan being scored, not one query per loan —
+  // Supabase's connection pool can't sustain per-row sequential queries.
+  const loanIds = loans.map((l: any) => l.id);
+  const allRepayments = await prisma.loanRepayment.findMany({
+    where: { loanId: { in: loanIds } },
+    orderBy: { paidAt: "desc" },
+    select: { loanId: true, amount: true, paidAt: true },
+  });
+  const repaymentsByLoan = new Map<string, { amount: any; paidAt: Date }[]>();
+  for (const r of allRepayments as any[]) {
+    if (!repaymentsByLoan.has(r.loanId)) repaymentsByLoan.set(r.loanId, []);
+    repaymentsByLoan.get(r.loanId)!.push(r);
+  }
+
+  const now = new Date();
+  const results = [];
+  for (const loan of loans as any[]) {
+    const dueInstallments = loan.installments.filter((i: any) => new Date(i.dueDate) <= now);
+    if (dueInstallments.length === 0) continue; // nothing due yet at all — no basis for a signal either way
+
+    const cumulativeDue = dueInstallments.reduce((s: number, i: any) => s + Number(i.totalDue), 0);
+    const repayments = repaymentsByLoan.get(loan.id) || []; // already sorted desc by paidAt from the batched query above
+    const cumulativePaid = repayments.reduce((s: number, r: any) => s + Number(r.amount), 0);
+
+    const daysSinceLastRepayment = repayments.length > 0 ? Math.floor((now.getTime() - new Date(repayments[0].paidAt).getTime()) / (1000 * 60 * 60 * 24)) : null;
+
+    // Real interval from this loan's own schedule, not an assumed default.
+    let typicalInstallmentIntervalDays = 30;
+    if (loan.installments.length >= 2) {
+      const d1 = new Date(loan.installments[0].dueDate).getTime();
+      const d2 = new Date(loan.installments[1].dueDate).getTime();
+      typicalInstallmentIntervalDays = Math.max(1, Math.round((d2 - d1) / (1000 * 60 * 60 * 24)));
+    }
+
+    const risk = assessDelinquencyRisk({
+      cumulativeDue,
+      cumulativePaid,
+      daysSinceLastRepayment,
+      typicalInstallmentIntervalDays,
+      installmentsSoFar: dueInstallments.length,
+      customerRiskRating: loan.customer.riskRating,
+      hasOtherLoansInArrears: customersWithArrears.has(loan.customerId),
+    });
+
+    if (risk.riskBand === "LOW") continue; // not worth surfacing — this is a prioritised watch list, not every current loan
+
+    results.push({
+      loanId: loan.id, customerId: loan.customerId, customerName: loan.customer.fullName, customerPhone: loan.customer.phone,
+      principal: loan.principal, branchId: loan.branchId,
+      ...risk,
+    });
+  }
+
+  results.sort((a, b) => b.riskScore - a.riskScore);
+  res.json({ loans: results });
+});
+

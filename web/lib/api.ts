@@ -362,6 +362,7 @@ export const api = {
   calculateCommission: (data: { collectorId: string; structureId: string; periodStart: string; periodEnd: string }) => request("/collections/commission-records/calculate", { method: "POST", body: JSON.stringify(data) }),
   requestCommissionPayment: (id: string) => request(`/collections/commission-records/${id}/request-payment`, { method: "POST" }),
   getCollectionsReport: (from?: string, to?: string) => request(`/collections/reports/summary${from ? `?from=${from}&to=${to}` : ""}`),
+  getDelinquencyRisk: () => request("/collections/delinquency-risk"),
 
   listSavingsFeeTypes: () => request("/savings/fee-types"),
   createSavingsFeeType: (data: any) => request("/savings/fee-types", { method: "POST", body: JSON.stringify(data) }),
