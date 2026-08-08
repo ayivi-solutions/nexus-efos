@@ -12,6 +12,12 @@ export function OnboardingShell({
   return (
     <main className="min-h-screen bg-paper-0 flex items-center justify-center px-6 py-12">
       <div className="w-full max-w-xl">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src="/brand/nexus-icon-dark-on-white-128.png"
+          alt="Nexus EFOS"
+          className="w-10 h-10 mb-6"
+        />
         <div className="flex items-center gap-2 mb-6">
           {STEPS.map((label, i) => {
             const n = i + 1;

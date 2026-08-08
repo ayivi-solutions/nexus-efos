@@ -94,7 +94,9 @@ export function AppShell({ active, children }: { active: string; children: React
           <span aria-hidden="true">{open ? "✕" : "☰"}</span>
         </button>
         <div className="flex items-center gap-2">
-          <span className="w-2 h-2 rounded-full bg-gold-400" style={{ boxShadow: "0 0 8px #e2c46a" }} aria-hidden="true" />
+          {/* eslint-disable-next-line @next/next/no-img-element -- small
+              fixed-size chrome icon, not worth next/image's overhead here */}
+          <img src="/brand/nexus-icon-gold-on-dark-128.png" alt="" aria-hidden="true" className="w-6 h-6 rounded-sm" />
           <span className="font-mono text-sm tracking-wide">
             NEXUS <b className="text-gold-400">EFOS</b>
           </span>

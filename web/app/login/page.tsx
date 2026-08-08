@@ -71,7 +71,12 @@ function LoginForm() {
   return (
     <main className="min-h-screen bg-ink-950 flex items-center justify-center px-6">
       <form onSubmit={handleSubmit} className="w-full max-w-sm">
-        <div className="font-mono text-xs tracking-[0.3em] text-gold-400 uppercase mb-6 text-center">NX</div>
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src="/brand/nexus-icon-gold-on-dark-128.png"
+          alt="Nexus EFOS"
+          className="w-12 h-12 mx-auto mb-6 rounded-md"
+        />
         <h1 className="font-display font-semibold text-2xl text-paper-50 mb-2 text-center">Sign in to Nexus EFOS</h1>
 
         {expired && (

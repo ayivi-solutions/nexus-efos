@@ -4,6 +4,12 @@ export default function Home() {
   return (
     <main className="min-h-screen bg-gradient-to-br from-ink-950 via-ink-900 to-ink-700 flex items-center justify-center px-6">
       <div className="max-w-lg text-center">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src="/brand/nexus-icon-gold-on-dark-128.png"
+          alt="Nexus EFOS"
+          className="w-16 h-16 mx-auto mb-6 rounded-lg"
+        />
         <div className="font-mono text-xs tracking-[0.3em] text-gold-400 uppercase mb-4">
           Enterprise Concept Build · v0.1
         </div>
