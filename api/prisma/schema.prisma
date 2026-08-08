@@ -101,6 +101,8 @@ model Institution {
   cashTransfers           CashTransfer[]
   cashBalancings          CashBalancing[]
   cheques                 Cheque[]
+  customerInteractions    CustomerInteraction[]
+  customerComplaints      CustomerComplaint[]
   glAccounts              GLAccount[]
   journals                Journal[]
   fiscalYears             FiscalYear[]
@@ -813,6 +815,8 @@ model Customer {
   mergedInto         CustomerMergeRecord[] @relation("MergedCustomer")
   mergesReceived     CustomerMergeRecord[] @relation("PrimaryCustomer")
   cheques            Cheque[]
+  interactions       CustomerInteraction[]
+  complaints         CustomerComplaint[]
 
   // doc §35 — the merge target this customer was consolidated into, if
   // any. Never deleted, only pointed elsewhere and marked MERGED —
@@ -917,6 +921,148 @@ model CustomerNote {
   versionNo    Int          @default(1) @map("version_no")
   recordStatus RecordStatus @default(ACTIVE) @map("record_status")
   @@map("customer_note")
+  @@schema("nexus")
+}
+
+// EFS §157 Customer Interaction Management — "records, manages and
+// tracks every interaction between the institution and its customers
+// regardless of communication channel." Distinct from CustomerNote
+// (free-text, ad hoc) — this is the structured, channel-typed record
+// with its own named requirement, Follow-Up Scheduling.
+enum InteractionChannel {
+  CALL
+  BRANCH_VISIT
+  EMAIL
+  SMS
+  LIVE_CHAT
+  SOCIAL_MEDIA
+  MEETING
+
+  @@schema("nexus")
+}
+
+model CustomerInteraction {
+  id            String              @id(map: "pk_customer_interaction") @default(uuid())
+  institution   Institution         @relation(fields: [institutionId], references: [id], onDelete: Cascade, map: "fk_customer_interaction_institution")
+  institutionId String              @map("institution_id")
+  customer      Customer            @relation(fields: [customerId], references: [id], onDelete: Cascade, map: "fk_customer_interaction_customer")
+  customerId    String              @map("customer_id")
+
+  channel       InteractionChannel
+  summary       String
+
+  // §157.2 Follow-Up Scheduling — also the Operations Supervisor role
+  // schedule's actual named task ("make follow-up calls on loan
+  // defaulters and weekly payment clients"), which this directly covers.
+  followUpScheduledAt   DateTime? @map("follow_up_scheduled_at")
+  followUpCompleted     Boolean   @default(false) @map("follow_up_completed")
+  followUpCompletedAt   DateTime? @map("follow_up_completed_at")
+  followUpCompletedById String?   @map("follow_up_completed_by_id")
+  followUpNotes         String?   @map("follow_up_notes")
+
+  recordedById String   @map("recorded_by_id")
+  createdAt    DateTime @default(now()) @map("created_at")
+  // §157.3 "Interaction history cannot be deleted" — no update/delete
+  // endpoint exists for the core record, by design, not just convention
+  // (same discipline as CashTransfer once COMPLETED). Only the follow-up
+  // fields above are ever mutated after creation.
+
+  @@index([institutionId, customerId], map: "idx_customer_interaction_institution_customer")
+  @@map("customer_interaction")
+  @@schema("nexus")
+}
+
+// EFS §160 Customer Complaint Management — "record, investigate, resolve
+// and monitor customer complaints efficiently and transparently."
+// §160.3 names service level targets and automatic escalation as
+// required behaviour but, like the security thresholds and the interest
+// posting cadence, specifies neither actual SLA durations nor an
+// escalation rule engine ("configurable" in both cases — no
+// configuration screen is built here). SLA_TARGET_HOURS_BY_PRIORITY
+// below is a disclosed default (see complaint.routes.ts), and escalation
+// is driven by a real daily scheduler check against that default, not a
+// configurable rule engine — the same honest scope as the interest
+// posting default.
+enum ComplaintCategory {
+  SERVICE_QUALITY
+  LOAN_TERMS
+  FEES_CHARGES
+  STAFF_CONDUCT
+  TRANSACTION_ERROR
+  FRAUD_SECURITY
+  OTHER
+
+  @@schema("nexus")
+}
+
+enum ComplaintPriority {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+
+  @@schema("nexus")
+}
+
+enum ComplaintStatus {
+  OPEN
+  INVESTIGATING
+  RESOLVED
+  CLOSED
+
+  @@schema("nexus")
+}
+
+model CustomerComplaint {
+  id            String            @id(map: "pk_customer_complaint") @default(uuid())
+  institution   Institution       @relation(fields: [institutionId], references: [id], onDelete: Cascade, map: "fk_customer_complaint_institution")
+  institutionId String            @map("institution_id")
+  customer      Customer          @relation(fields: [customerId], references: [id], onDelete: Cascade, map: "fk_customer_complaint_customer")
+  customerId    String            @map("customer_id")
+
+  // §160.3 "Complaint reference numbers are unique" — generated, not
+  // client-supplied (generateComplaintReference in complaint.routes.ts,
+  // same CMP+timestamp+random pattern as generateJournalNumber).
+  referenceNumber String          @unique @map("reference_number")
+  category        ComplaintCategory
+  priority        ComplaintPriority @default(MEDIUM)
+  description     String
+  status          ComplaintStatus   @default(OPEN)
+
+  assignedToId String?   @map("assigned_to_id") // §160.2 Case Assignment
+
+  // §160.3 SLA target — computed at creation from the disclosed default
+  // duration for this priority, not user-supplied.
+  slaTargetAt  DateTime  @map("sla_target_at")
+  // §160.3 "Escalations occur automatically where configured" — set by
+  // the daily scheduler check when slaTargetAt passes with the complaint
+  // still open, not by a person.
+  escalated       Boolean   @default(false)
+  escalatedAt     DateTime? @map("escalated_at")
+
+  investigationNotes String? @map("investigation_notes")
+  resolutionNotes    String? @map("resolution_notes")
+  resolvedAt         DateTime? @map("resolved_at")
+  resolvedById       String?   @map("resolved_by_id")
+
+  // §160.2 Customer Notifications — recorded here as an audit fact,
+  // same disclosed gap as elsewhere in this build: no SMS/email provider
+  // is wired up, so this timestamp means "we recorded that the customer
+  // should be/was told," not that an actual message was sent.
+  customerNotifiedAt DateTime? @map("customer_notified_at")
+
+  raisedById String   @map("raised_by_id")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  createdById  String?      @map("created_by_id")
+  updatedById  String?      @map("updated_by_id")
+  deletedAt    DateTime?    @map("deleted_at")
+  deletedById  String?      @map("deleted_by_id")
+  versionNo    Int          @default(1) @map("version_no")
+  recordStatus RecordStatus @default(ACTIVE) @map("record_status")
+
+  @@index([institutionId, status], map: "idx_customer_complaint_institution_status")
+  @@map("customer_complaint")
   @@schema("nexus")
 }
 

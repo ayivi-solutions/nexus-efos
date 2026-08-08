@@ -450,6 +450,33 @@ export const api = {
   stopCheque: (id: string) => request(`/cheques/${id}/stop`, { method: "POST" }),
   cancelCheque: (id: string) => request(`/cheques/${id}/cancel`, { method: "POST" }),
 
+  listInteractions: (filters?: { customerId?: string; dueForFollowUp?: boolean }) => {
+    const qs = new URLSearchParams();
+    if (filters?.customerId) qs.set("customerId", filters.customerId);
+    if (filters?.dueForFollowUp) qs.set("dueForFollowUp", "true");
+    const suffix = qs.toString() ? `?${qs.toString()}` : "";
+    return request(`/crm/interactions${suffix}`);
+  },
+  recordInteraction: (data: { customerId: string; channel: string; summary: string; followUpScheduledAt?: string }) =>
+    request("/crm/interactions", { method: "POST", body: JSON.stringify(data) }),
+  completeFollowUp: (id: string, notes?: string) => request(`/crm/interactions/${id}/complete-follow-up`, { method: "POST", body: JSON.stringify({ notes }) }),
+
+  listComplaints: (filters?: { customerId?: string; status?: string; escalatedOnly?: boolean }) => {
+    const qs = new URLSearchParams();
+    if (filters?.customerId) qs.set("customerId", filters.customerId);
+    if (filters?.status) qs.set("status", filters.status);
+    if (filters?.escalatedOnly) qs.set("escalatedOnly", "true");
+    const suffix = qs.toString() ? `?${qs.toString()}` : "";
+    return request(`/crm/complaints${suffix}`);
+  },
+  registerComplaint: (data: { customerId: string; category: string; priority?: string; description: string; assignedToId?: string }) =>
+    request("/crm/complaints", { method: "POST", body: JSON.stringify(data) }),
+  investigateComplaint: (id: string, data: { assignedToId?: string; investigationNotes?: string }) =>
+    request(`/crm/complaints/${id}/investigate`, { method: "POST", body: JSON.stringify(data) }),
+  resolveComplaint: (id: string, data: { resolutionNotes: string; customerNotified?: boolean }) =>
+    request(`/crm/complaints/${id}/resolve`, { method: "POST", body: JSON.stringify(data) }),
+  closeComplaint: (id: string) => request(`/crm/complaints/${id}/close`, { method: "POST" }),
+
   listGLAccounts: () => request("/general-ledger/accounts"),
   createGLAccount: (data: any) => request("/general-ledger/accounts", { method: "POST", body: JSON.stringify(data) }),
   setGLAccountStatus: (id: string, status: "ACTIVE" | "INACTIVE") => request(`/general-ledger/accounts/${id}/status`, { method: "PATCH", body: JSON.stringify({ status }) }),

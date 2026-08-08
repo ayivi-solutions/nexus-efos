@@ -223,6 +223,19 @@ async function runSavingsInterestPosting() {
   );
 }
 
+// EFS §160.3 "Escalations occur automatically where configured" — driven
+// here by the disclosed SLA-target default (SLA_TARGET_HOURS_BY_PRIORITY
+// in crm.routes.ts), not a configurable rule engine. Any OPEN or
+// INVESTIGATING complaint whose slaTargetAt has passed gets flagged.
+async function runComplaintEscalationCheck() {
+  const startedAt = Date.now();
+  const overdue = await prisma.customerComplaint.updateMany({
+    where: { status: { in: ["OPEN", "INVESTIGATING"] }, escalated: false, slaTargetAt: { lt: new Date() } },
+    data: { escalated: true, escalatedAt: new Date() },
+  });
+  console.log(`[scheduler] complaint escalation check: ${overdue.count} complaint(s) escalated, ${Date.now() - startedAt}ms`);
+}
+
 export function startScheduler() {
   // 01:00 every day, server time — after any prior day's end-of-day
   // activity, before the next business day starts.
@@ -231,6 +244,7 @@ export function startScheduler() {
     runStandingInstructions().catch((err) => console.error("[scheduler] standing instructions failed:", err));
     runRecurringJournals().catch((err) => console.error("[scheduler] recurring journals failed:", err));
     runSavingsInterestAccrual().catch((err) => console.error("[scheduler] savings interest accrual failed:", err));
+    runComplaintEscalationCheck().catch((err) => console.error("[scheduler] complaint escalation check failed:", err));
   });
   // 02:00 on the 1st of the month — after the same day's 01:00 accrual
   // run has already captured the final day of the prior month, so
@@ -239,10 +253,10 @@ export function startScheduler() {
     runSavingsInterestPosting().catch((err) => console.error("[scheduler] savings interest posting failed:", err));
   });
   console.log(
-    "[scheduler] started — arrears check + standing instructions + recurring journals + savings interest accrual scheduled daily at 01:00; savings interest posting scheduled monthly at 02:00 on the 1st"
+    "[scheduler] started — arrears check + standing instructions + recurring journals + savings interest accrual + complaint escalation check scheduled daily at 01:00; savings interest posting scheduled monthly at 02:00 on the 1st"
   );
 }
 
 // Exported so an admin route (or a manual run during testing/pilot setup)
 // can trigger these on demand rather than waiting for the next scheduled run.
-export { runArrearsCheck, runStandingInstructions, runRecurringJournals, runSavingsInterestAccrual, runSavingsInterestPosting };
+export { runArrearsCheck, runStandingInstructions, runRecurringJournals, runSavingsInterestAccrual, runSavingsInterestPosting, runComplaintEscalationCheck };

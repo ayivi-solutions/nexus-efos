@@ -21,6 +21,7 @@ import { departmentsRouter, positionsRouter } from "./routes/departments.routes"
 import { collectionsRouter } from "./routes/collections.routes";
 import { cashVaultRouter } from "./routes/cashVault.routes";
 import { chequeRouter } from "./routes/cheque.routes";
+import { crmRouter } from "./routes/crm.routes";
 import { generalLedgerRouter } from "./routes/generalLedger.routes";
 import { interBranchRouter } from "./routes/interBranch.routes";
 import { analyticsRouter } from "./routes/analytics.routes";
@@ -68,6 +69,7 @@ app.use("/v1/positions", positionsRouter);
 app.use("/v1/collections", collectionsRouter);
 app.use("/v1/cash-vault", cashVaultRouter);
 app.use("/v1/cheques", chequeRouter);
+app.use("/v1/crm", crmRouter);
 app.use("/v1/general-ledger", generalLedgerRouter);
 app.use("/v1/inter-branch", interBranchRouter);
 app.use("/v1/analytics", analyticsRouter);

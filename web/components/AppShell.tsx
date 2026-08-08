@@ -24,6 +24,7 @@ const NAV_FULL: { label: string; icon: string; href: string; perm: string | null
   { label: "Standing Instructions", icon: "↻", href: "/savings/standing-instructions", perm: "savings.initiate" },
   { label: "Cash & Vault", icon: "🏦", href: "/cash-vault", perm: "institution.configure" },
   { label: "Cheques", icon: "🖊", href: "/cheques", perm: "institution.configure" },
+  { label: "Customer Care", icon: "☎", href: "/customer-care", perm: "customers.view" },
   { label: "General Ledger", icon: "📒", href: "/general-ledger", perm: "institution.configure" },
   { label: "Inter-Branch", icon: "🔁", href: "/inter-branch", perm: "institution.configure" },
   { label: "Financial Analytics", icon: "📈", href: "/analytics", perm: "reports.view" },
