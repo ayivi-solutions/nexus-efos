@@ -5,6 +5,7 @@ import { requireAuth, AuthedRequest } from "../middleware/auth";
 import { requirePermission } from "../middleware/rbac";
 import { generateCollectionTransactionNumber } from "../lib/collectionTransactionNumber";
 import { assessDelinquencyRisk } from "../lib/delinquencyRisk";
+import { assessCollectorIntegrity } from "../lib/collectorIntegrity";
 
 // doc §78 Collections Management. §79 Collector Management + §80 Route
 // Management shipped first — everything else in this module (Daily
@@ -612,3 +613,95 @@ collectionsRouter.get("/delinquency-risk", requirePermission("reports.view"), as
   res.json({ loans: results });
 });
 
+// -----------------------------------------------------------------------
+// EAIS §127.5 Agent and Collector Fraud. See lib/collectorIntegrity.ts
+// for the full reasoning on the three signals used and the one
+// deliberately excluded (off-hours timing — the EAIS itself warns
+// against exactly that kind of naive signal for field agents).
+// Defaults to the last 30 days; this is genuinely a period-sensitive
+// metric (a collector with 2 transactions this week shouldn't get a
+// confident score), so the frontend always shows confidence alongside it.
+// -----------------------------------------------------------------------
+collectionsRouter.get("/collector-integrity", requirePermission("reports.view"), async (req: AuthedRequest, res) => {
+  const institutionId = req.auth!.institutionId;
+  const days = Math.min(Math.max(Number((req.query as any).days) || 30, 7), 90);
+  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+
+  const collectors = await prisma.collector.findMany({
+    where: { institutionId },
+    include: { routes: { where: { active: true }, include: { customers: { where: { active: true }, select: { customerId: true } } } } },
+  });
+  if (collectors.length === 0) return res.json({ collectors: [] });
+
+  const collectorIds = collectors.map((c: any) => c.id);
+  // Collector has no direct Prisma relation to Employee, only a plain
+  // employeeId string — same reasoning as the existing /reports/summary
+  // endpoint just above: a separate batched lookup, not an include.
+  const employeeIds = collectors.map((c: any) => c.employeeId);
+  const employeesForNames = await prisma.employee.findMany({ where: { id: { in: employeeIds } }, select: { id: true, fullName: true } });
+  const collectorEmpName: Record<string, string> = Object.fromEntries(employeesForNames.map((e: any) => [e.id, e.fullName]));
+
+  // Batched once across every collector — same discipline as
+  // /delinquency-risk, avoiding a query per collector in a loop.
+  const [allTransactions, allSettlements, allComplaints] = await Promise.all([
+    prisma.collectionTransaction.findMany({
+      where: { institutionId, collectorId: { in: collectorIds }, collectedAt: { gte: since } },
+      select: { collectorId: true, reversedAt: true },
+    }),
+    prisma.collectionSettlement.findMany({
+      where: { institutionId, collectorId: { in: collectorIds }, settlementDate: { gte: since } },
+      select: { collectorId: true, variance: true, expectedAmount: true },
+    }),
+    prisma.customerComplaint.findMany({
+      where: { institutionId, createdAt: { gte: since } },
+      select: { customerId: true },
+    }),
+  ]);
+
+  const complaintCountByCustomer = new Map<string, number>();
+  for (const c of allComplaints as any[]) complaintCountByCustomer.set(c.customerId, (complaintCountByCustomer.get(c.customerId) || 0) + 1);
+
+  // Institutional baseline reversal rate — computed once across all
+  // collectors in the period, so each collector's own rate is judged
+  // relative to how this institution's collectors normally behave.
+  const totalTxns = allTransactions.length;
+  const totalReversals = (allTransactions as any[]).filter((t) => t.reversedAt).length;
+  const institutionalReversalRate = totalTxns > 0 ? totalReversals / totalTxns : 0;
+
+  const results = [];
+  for (const collector of collectors as any[]) {
+    const txns = (allTransactions as any[]).filter((t) => t.collectorId === collector.id);
+    const reversals = txns.filter((t) => t.reversedAt).length;
+    const settlements = (allSettlements as any[]).filter((s) => s.collectorId === collector.id);
+    const varianceSettlements = settlements.filter((s) => Number(s.variance) !== 0);
+    const totalVarianceAmount = settlements.reduce((s: number, x: any) => s + Math.abs(Number(x.variance)), 0);
+    const totalSettledAmount = settlements.reduce((s: number, x: any) => s + Number(x.expectedAmount), 0);
+
+    const routeCustomerIds = new Set<string>();
+    for (const route of collector.routes) for (const rc of route.customers) routeCustomerIds.add(rc.customerId);
+    let complaintCount = 0;
+    for (const custId of routeCustomerIds) complaintCount += complaintCountByCustomer.get(custId) || 0;
+
+    const result = assessCollectorIntegrity({
+      collectorTransactionCount: txns.length,
+      collectorReversalCount: reversals,
+      institutionalReversalRate,
+      settlementCount: settlements.length,
+      varianceSettlementCount: varianceSettlements.length,
+      totalVarianceAmount,
+      totalSettledAmount,
+      complaintCount,
+    });
+
+    if (result.band === "NORMAL") continue; // a watch list, not a roster of everyone
+
+    results.push({
+      collectorId: collector.id, employeeName: collectorEmpName[collector.employeeId] || "—", availability: collector.availability,
+      transactionCount: txns.length, settlementCount: settlements.length,
+      ...result,
+    });
+  }
+
+  results.sort((a, b) => b.score - a.score);
+  res.json({ collectors: results, periodDays: days });
+});

@@ -9,7 +9,7 @@ export default function CollectionsPage() {
   const toast = useToast();
   const [error, setError] = useState<string | null>(null);
   useErrorToast(error);
-  const [tab, setTab] = useState<"collectors" | "routes" | "transactions" | "settlements" | "commission" | "risk">("collectors");
+  const [tab, setTab] = useState<"collectors" | "routes" | "transactions" | "settlements" | "commission" | "risk" | "integrity">("collectors");
 
   const [collectors, setCollectors] = useState<any[]>([]);
   const [employees, setEmployees] = useState<any[]>([]);
@@ -27,6 +27,7 @@ export default function CollectionsPage() {
   const [structures, setStructures] = useState<any[]>([]);
   const [records, setRecords] = useState<any[]>([]);
   const [delinquencyRisk, setDelinquencyRisk] = useState<any[]>([]);
+  const [collectorIntegrity, setCollectorIntegrity] = useState<any[]>([]);
   const [structureForm, setStructureForm] = useState({ name: "", type: "PERCENTAGE_OF_COLLECTIONS", rate: "" });
   const [calcForm, setCalcForm] = useState({ collectorId: "", structureId: "", periodStart: "", periodEnd: "" });
   const [busy, setBusy] = useState(false);
@@ -42,6 +43,7 @@ export default function CollectionsPage() {
     api.listCommissionStructures().then((r) => setStructures(r.structures)).catch(() => {});
     api.listCommissionRecords().then((r) => setRecords(r.records)).catch(() => {});
     api.getDelinquencyRisk().then((r) => setDelinquencyRisk(r.loans)).catch(() => {});
+    api.getCollectorIntegrity().then((r) => setCollectorIntegrity(r.collectors)).catch(() => {});
   }
 
   async function handleCreateStructure(e: React.FormEvent) {
@@ -165,6 +167,7 @@ export default function CollectionsPage() {
           <button onClick={() => setTab("settlements")} className={`btn-text ${tab === "settlements" ? "text-gold-600 font-semibold" : "text-text-muted"}`}>Settlements</button>
           <button onClick={() => setTab("commission")} className={`btn-text ${tab === "commission" ? "text-gold-600 font-semibold" : "text-text-muted"}`}>Commission</button>
           <button onClick={() => setTab("risk")} className={`btn-text ${tab === "risk" ? "text-gold-600 font-semibold" : "text-text-muted"}`}>Delinquency Risk</button>
+          <button onClick={() => setTab("integrity")} className={`btn-text ${tab === "integrity" ? "text-gold-600 font-semibold" : "text-text-muted"}`}>Collector Integrity</button>
         </div>
 
         {tab === "collectors" && (
@@ -395,6 +398,37 @@ export default function CollectionsPage() {
                     </tr>
                   ))}
                   {delinquencyRisk.length === 0 && <tr><td colSpan={7} className="text-center text-text-muted text-sm py-8">No loans currently flagged — everything current looks healthy.</td></tr>}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
+
+        {tab === "integrity" && (
+          <>
+            <p className="text-text-muted text-[12.5px] mb-4">
+              EAIS §127.5 Agent and Collector Fraud — an indicator for investigation, not proof of wrongdoing. Reversal rate is judged against the institutional average, not a fixed threshold. Deliberately excludes off-hours transaction timing as a signal — field collectors legitimately work irregular hours, and the EAIS itself warns against exactly that kind of naive flag. Last 30 days; confidence is lower for collectors with little activity in the period.
+            </p>
+            <div className="card overflow-x-auto">
+              <table className="w-full min-w-[820px] text-sm table-modern">
+                <thead><tr><th>Collector</th><th>Transactions</th><th>Reversal rate</th><th>Variance rate</th><th>Score</th><th>Confidence</th><th>Why</th></tr></thead>
+                <tbody>
+                  {collectorIntegrity.map((c: any) => (
+                    <tr key={c.collectorId}>
+                      <td className="text-text-900 font-medium">{c.employeeName}</td>
+                      <td className="text-text-700">{c.transactionCount}</td>
+                      <td className={c.collectorReversalRate > 0.1 ? "text-rose-600" : "text-text-700"}>{(c.collectorReversalRate * 100).toFixed(1)}%</td>
+                      <td className={c.varianceRate > 0.01 ? "text-rose-600" : "text-text-700"}>{(c.varianceRate * 100).toFixed(1)}%</td>
+                      <td>
+                        <span className={`badge ${c.band === "INVESTIGATE" ? "bg-rose-100 text-rose-600" : "bg-gold-500/15 text-gold-600"}`}>
+                          {c.band} ({c.score})
+                        </span>
+                      </td>
+                      <td className="text-text-muted text-[12px]">{c.confidence}</td>
+                      <td className="text-text-muted text-[11.5px] max-w-[260px]">{c.breakdown.map((b: any) => b.factor).join("; ")}</td>
+                    </tr>
+                  ))}
+                  {collectorIntegrity.length === 0 && <tr><td colSpan={7} className="text-center text-text-muted text-sm py-8">No collectors flagged — nothing outside normal range in the last 30 days.</td></tr>}
                 </tbody>
               </table>
             </div>
