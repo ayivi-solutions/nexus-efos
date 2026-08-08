@@ -28,6 +28,7 @@ const NAV_FULL: { label: string; icon: string; href: string; perm: string | null
   { label: "HR: Attendance & Discipline", icon: "🧑‍💼", href: "/hr", perm: "users.administer" },
   { label: "Internal Audit", icon: "🛡", href: "/internal-audit", perm: "users.administer" },
   { label: "Capital Adequacy", icon: "⚖", href: "/capital-adequacy", perm: "reports.view" },
+  { label: "Notifications", icon: "🔔", href: "/notifications", perm: "institution.configure" },
   { label: "General Ledger", icon: "📒", href: "/general-ledger", perm: "institution.configure" },
   { label: "Inter-Branch", icon: "🔁", href: "/inter-branch", perm: "institution.configure" },
   { label: "Financial Analytics", icon: "📈", href: "/analytics", perm: "reports.view" },

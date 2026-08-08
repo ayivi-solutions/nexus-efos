@@ -109,6 +109,8 @@ model Institution {
   auditEngagements        AuditEngagement[]
   auditFindings           AuditFinding[]
   regulatoryCapitalSnapshots RegulatoryCapitalSnapshot[]
+  notificationProviderConfigs NotificationProviderConfig[]
+  notifications                Notification[]
   glAccounts              GLAccount[]
   journals                Journal[]
   fiscalYears             FiscalYear[]
@@ -3661,6 +3663,104 @@ model RegulatoryCapitalSnapshot {
 
   @@index([institutionId, asOfDate], map: "idx_regulatory_capital_snapshot_institution_date")
   @@map("regulatory_capital_snapshot")
+  @@schema("nexus")
+}
+
+// ---------------------------------------------------------------------------
+// NOTIFICATIONS — EFS §249 External Service Connectors names SMS/Email
+// Providers as required categories with real business rules (connectors
+// configurable, credentials encrypted, connection failures generate
+// alerts, every connector transaction audited) but no vendor. GM chose:
+// Resend (email), Hubtel (SMS), Meta WhatsApp Cloud API directly (Hubtel's
+// WhatsApp offering isn't in their public docs the way SMS is — Meta's
+// Cloud API is the well-documented, standard path underneath virtually
+// every WhatsApp Business integration, including likely Hubtel's own).
+//
+// Closes a real, quietly-accumulating gap: CustomerComplaint and other
+// modules have been recording customerNotifiedAt as an audit fact with
+// no actual message ever sent — this is the piece that makes it real.
+// ---------------------------------------------------------------------------
+
+enum NotificationChannel {
+  SMS
+  EMAIL
+  WHATSAPP
+
+  @@schema("nexus")
+}
+
+// One row per institution per channel — credentials encrypted at rest
+// with the same AES-256-GCM helper already used for MFA secrets
+// (lib/security.ts), not a new mechanism.
+model NotificationProviderConfig {
+  id            String              @id(map: "pk_notification_provider_config") @default(uuid())
+  institution   Institution         @relation(fields: [institutionId], references: [id], onDelete: Cascade, map: "fk_notification_provider_config_institution")
+  institutionId String              @map("institution_id")
+
+  channel  NotificationChannel
+  provider String // "resend" | "hubtel" | "meta_whatsapp" — a string, not an enum, so a future provider swap doesn't need a migration
+  // Provider-specific: Resend api key; Hubtel clientId/clientSecret/senderId;
+  // Meta phoneNumberId/accessToken. Stored as one encrypted JSON blob via
+  // encryptSecret — same reasoning as UserMfa.secretEncrypted: never
+  // plaintext, self-contained (iv+authTag+ciphertext), one decrypt call.
+  credentialsEncrypted String @map("credentials_encrypted")
+  senderId              String? @map("sender_id") // SMS sender name / verified email from-address / WhatsApp phone number ID, whichever applies
+  active                Boolean @default(true)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  createdById  String?      @map("created_by_id")
+  updatedById  String?      @map("updated_by_id")
+  deletedAt    DateTime?    @map("deleted_at")
+  deletedById  String?      @map("deleted_by_id")
+  versionNo    Int          @default(1) @map("version_no")
+  recordStatus RecordStatus @default(ACTIVE) @map("record_status")
+
+  @@unique([institutionId, channel], map: "uq_notification_provider_config_institution_channel")
+  @@map("notification_provider_config")
+  @@schema("nexus")
+}
+
+enum NotificationStatus {
+  PENDING
+  SENT
+  FAILED
+
+  @@schema("nexus")
+}
+
+// The audit trail §249.3 requires ("every connector transaction is
+// audited") — every send attempt, not just successful ones, so a
+// failure is visible and queryable, not silently swallowed.
+model Notification {
+  id            String              @id(map: "pk_notification") @default(uuid())
+  institution   Institution         @relation(fields: [institutionId], references: [id], onDelete: Cascade, map: "fk_notification_institution")
+  institutionId String              @map("institution_id")
+
+  channel   NotificationChannel
+  recipient String // phone number or email address
+  subject   String? // email only
+  body      String // rendered message text; for WHATSAPP this is the human-readable summary, not necessarily what Meta requires (see templateName)
+  templateName     String? @map("template_name") // WhatsApp only — Meta requires a pre-approved template name for business-initiated messages outside a live 24h conversation window
+  templateLanguage String? @map("template_language")
+
+  status         NotificationStatus @default(PENDING)
+  providerMessageId String? @map("provider_message_id")
+  errorMessage       String? @map("error_message")
+
+  // Polymorphic link to whatever triggered this — a CustomerComplaint,
+  // an AuditFinding, etc. — by convention (resourceType/resourceId), same
+  // pattern AuditLog already uses, not a new one.
+  relatedResourceType String? @map("related_resource_type")
+  relatedResourceId   String? @map("related_resource_id")
+
+  sentById String? @map("sent_by_id") // null when sent by a scheduler/system process, not a person
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([institutionId, status], map: "idx_notification_institution_status")
+  @@index([institutionId, relatedResourceType, relatedResourceId], map: "idx_notification_institution_resource")
+  @@map("notification")
   @@schema("nexus")
 }
 

@@ -3,6 +3,7 @@ import { z } from "zod";
 import { prisma } from "../lib/prisma";
 import { requireAuth, AuthedRequest } from "../middleware/auth";
 import { requirePermission } from "../middleware/rbac";
+import { sendSms, sendEmail } from "../lib/notifications";
 
 // EFS §157 Customer Interaction Management + §160 Customer Complaint
 // Management. Also directly covers the Operations Supervisor role
@@ -183,6 +184,15 @@ crmRouter.post("/complaints/:id/investigate", requirePermission("customers.updat
 
 const resolveSchema = z.object({ resolutionNotes: z.string().min(2), customerNotified: z.boolean().optional() });
 
+// customerNotified now genuinely sends, rather than just recording
+// intent — the actual gap this whole notification build closes. Tries
+// SMS first, falls back to email, respecting the customer's own
+// preference toggles (smsEnabled/emailEnabled, already built and
+// enforced elsewhere — this is the first place that actually reads
+// them for an outbound send). WhatsApp isn't attempted here: Meta
+// requires a pre-approved template per message type, and no
+// complaint-resolution template exists by default — a real per-
+// institution setup step, not something to fake around.
 crmRouter.post("/complaints/:id/resolve", requirePermission("customers.update"), async (req: AuthedRequest, res) => {
   const parsed = resolveSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
@@ -192,6 +202,25 @@ crmRouter.post("/complaints/:id/resolve", requirePermission("customers.update"),
     return res.status(400).json({ error: `Cannot resolve from status ${complaint.status}` });
   }
 
+  let customerNotifiedAt: Date | undefined;
+  if (parsed.data.customerNotified) {
+    const customer = await prisma.customer.findUnique({ where: { id: complaint.customerId } });
+    if (customer) {
+      const message = `Nexus EFOS: your complaint ${complaint.referenceNumber} has been resolved. ${parsed.data.resolutionNotes}`;
+      let result: { sent: boolean } | null = null;
+      if (customer.smsEnabled) {
+        result = await sendSms(req.auth!.institutionId, customer.phone, message, { relatedResourceType: "CustomerComplaint", relatedResourceId: complaint.id, sentById: req.auth!.userId });
+      }
+      if ((!result || !result.sent) && customer.emailEnabled && customer.email) {
+        result = await sendEmail(req.auth!.institutionId, customer.email, `Complaint ${complaint.referenceNumber} resolved`, `<p>${message}</p>`, { relatedResourceType: "CustomerComplaint", relatedResourceId: complaint.id, sentById: req.auth!.userId });
+      }
+      // customerNotifiedAt only set on an actual successful send — not
+      // on intent, and not if the customer has opted out of both
+      // channels or no provider is configured at all.
+      if (result?.sent) customerNotifiedAt = new Date();
+    }
+  }
+
   const updated = await prisma.customerComplaint.update({
     where: { id: complaint.id },
     data: {
@@ -199,11 +228,11 @@ crmRouter.post("/complaints/:id/resolve", requirePermission("customers.update"),
       resolutionNotes: parsed.data.resolutionNotes,
       resolvedAt: new Date(),
       resolvedById: req.auth!.userId,
-      customerNotifiedAt: parsed.data.customerNotified ? new Date() : undefined,
+      customerNotifiedAt,
     },
   });
   await prisma.auditLog.create({ data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "complaint.resolve", resource: "customer_complaint", resourceId: complaint.id } });
-  res.json({ complaint: updated });
+  res.json({ complaint: updated, customerNotified: !!customerNotifiedAt });
 });
 
 crmRouter.post("/complaints/:id/close", requirePermission("customers.update"), async (req: AuthedRequest, res) => {

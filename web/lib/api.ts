@@ -586,6 +586,20 @@ export const api = {
   createCapitalAdequacySnapshot: (asOfDate: string) => request("/capital-adequacy/snapshots", { method: "POST", body: JSON.stringify({ asOfDate }) }),
   getCreditConcentrationRisk: () => request("/capital-adequacy/concentration"),
 
+  listNotificationConfigs: () => request("/notifications/config"),
+  setNotificationConfig: (data: { channel: string; provider: string; credentials: Record<string, string>; senderId?: string }) =>
+    request("/notifications/config", { method: "POST", body: JSON.stringify(data) }),
+  deactivateNotificationConfig: (id: string) => request(`/notifications/config/${id}/deactivate`, { method: "POST" }),
+  testNotification: (data: { channel: string; to: string; templateName?: string; templateLanguage?: string }) =>
+    request("/notifications/test", { method: "POST", body: JSON.stringify(data) }),
+  listNotifications: (filters?: { channel?: string; status?: string }) => {
+    const qs = new URLSearchParams();
+    if (filters?.channel) qs.set("channel", filters.channel);
+    if (filters?.status) qs.set("status", filters.status);
+    const suffix = qs.toString() ? `?${qs.toString()}` : "";
+    return request(`/notifications${suffix}`);
+  },
+
   listPayrollCalendars: () => request("/payroll/calendars"),
   createPayrollCalendar: (data: any) => request("/payroll/calendars", { method: "POST", body: JSON.stringify(data) }),
   listPayrollPeriods: () => request("/payroll/periods"),
