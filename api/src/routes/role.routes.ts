@@ -28,6 +28,7 @@ const createRoleSchema = z.object({
   description: z.string().optional(),
   category: z.enum(["EXECUTIVE", "OPERATIONAL", "GOVERNANCE", "TECHNICAL", "CUSTOMER"]),
   permissionCodes: z.array(z.string()).optional(),
+  requireMfa: z.boolean().optional(),
 });
 
 roleRouter.post("/", requirePermission("roles.configure"), async (req: AuthedRequest, res) => {
@@ -41,6 +42,7 @@ roleRouter.post("/", requirePermission("roles.configure"), async (req: AuthedReq
       description: parsed.data.description,
       category: parsed.data.category,
       isSystem: false,
+      requireMfa: !!parsed.data.requireMfa,
     },
   });
 
@@ -119,6 +121,7 @@ roleRouter.delete("/assign/:userRoleId", requirePermission("roles.assign"), asyn
 const updateRoleSchema = z.object({
   description: z.string().optional(),
   permissionCodes: z.array(z.string()).optional(),
+  requireMfa: z.boolean().optional(),
 });
 
 roleRouter.patch("/:id", requirePermission("roles.configure"), async (req: AuthedRequest, res) => {
@@ -141,6 +144,9 @@ roleRouter.patch("/:id", requirePermission("roles.configure"), async (req: Authe
   await prisma.$transaction(async (tx) => {
     if (parsed.data.description !== undefined) {
       await tx.role.update({ where: { id: role.id }, data: { description: parsed.data.description } });
+    }
+    if (parsed.data.requireMfa !== undefined) {
+      await tx.role.update({ where: { id: role.id }, data: { requireMfa: parsed.data.requireMfa } });
     }
     if (parsed.data.permissionCodes) {
       const permissions = await tx.permission.findMany({ where: { code: { in: parsed.data.permissionCodes } } });

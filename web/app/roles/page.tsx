@@ -33,10 +33,11 @@ export default function RolesPage() {
 
   const [editingRoleId, setEditingRoleId] = useState<string | null>(null);
   const [editRolePermCodes, setEditRolePermCodes] = useState<string[]>([]);
+  const [editRoleRequireMfa, setEditRoleRequireMfa] = useState(false);
 
   const [showNewRole, setShowNewRole] = useState(false);
   const [creatingRole, setCreatingRole] = useState(false);
-  const [newRoleForm, setNewRoleForm] = useState({ name: "", description: "", category: "OPERATIONAL" });
+  const [newRoleForm, setNewRoleForm] = useState({ name: "", description: "", category: "OPERATIONAL", requireMfa: false });
   const [newRolePermCodes, setNewRolePermCodes] = useState<string[]>([]);
 
   const [showArchivedEmployees, setShowArchivedEmployees] = useState(false);
@@ -163,6 +164,7 @@ export default function RolesPage() {
   function startEditRole(role: any) {
     setEditingRoleId(role.id);
     setEditRolePermCodes(role.rolePermissions.map((rp: any) => rp.permission.code));
+    setEditRoleRequireMfa(!!role.requireMfa);
   }
 
   function togglePermCode(code: string) {
@@ -179,7 +181,7 @@ export default function RolesPage() {
     setError(null);
     try {
       await api.createRole({ ...newRoleForm, permissionCodes: newRolePermCodes });
-      setNewRoleForm({ name: "", description: "", category: "OPERATIONAL" });
+      setNewRoleForm({ name: "", description: "", category: "OPERATIONAL", requireMfa: false });
       setNewRolePermCodes([]);
       setShowNewRole(false);
       load();
@@ -195,7 +197,11 @@ export default function RolesPage() {
     setError(null);
     try {
       const current = roles.find((r) => r.id === roleId);
-      await api.updateRole(roleId, { permissionCodes: editRolePermCodes, expectedVersion: current?.versionNo });
+      await api.updateRole(roleId, {
+        permissionCodes: editRolePermCodes,
+        requireMfa: editRoleRequireMfa,
+        expectedVersion: current?.versionNo,
+      });
       setEditingRoleId(null);
       load();
     } catch (err: any) {
@@ -313,6 +319,14 @@ export default function RolesPage() {
                 ))}
               </div>
             </div>
+            <label className="flex items-center gap-2 mb-4 text-[13px] text-text-700">
+              <input
+                type="checkbox"
+                checked={newRoleForm.requireMfa}
+                onChange={(e) => setNewRoleForm((f) => ({ ...f, requireMfa: e.target.checked }))}
+              />
+              Require two-factor authentication for this role
+            </label>
             <button type="submit" disabled={creatingRole} className="btn-primary">{creatingRole ? "Creating…" : "Create role"}</button>
           </form>
         )}
@@ -321,7 +335,12 @@ export default function RolesPage() {
           {roles.map((r) => (
             <div key={r.id} className="card p-4">
               <div className="flex items-center justify-between mb-2">
-                <div className="font-display font-semibold text-ink-900">{r.name}</div>
+                <div className="flex items-center gap-2">
+                  <div className="font-display font-semibold text-ink-900">{r.name}</div>
+                  {r.requireMfa && (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-rose-500/15 text-rose-600 font-semibold">2FA required</span>
+                  )}
+                </div>
                 {editingRoleId === r.id ? (
                   <div className="flex gap-2">
                     <button onClick={() => saveRolePermissions(r.id)} disabled={busyId === r.id} className="text-[11.5px] text-green-600 font-semibold">Save</button>
@@ -331,6 +350,13 @@ export default function RolesPage() {
                   <button onClick={() => startEditRole(r)} className="text-[11.5px] text-gold-600 font-semibold">Edit</button>
                 )}
               </div>
+
+              {editingRoleId === r.id && (
+                <label className="flex items-center gap-2 mb-2 text-[12px] text-text-700">
+                  <input type="checkbox" checked={editRoleRequireMfa} onChange={(e) => setEditRoleRequireMfa(e.target.checked)} />
+                  Require two-factor authentication for this role
+                </label>
+              )}
 
               {editingRoleId === r.id ? (
                 <div className="grid grid-cols-2 gap-1.5 max-h-48 overflow-y-auto">

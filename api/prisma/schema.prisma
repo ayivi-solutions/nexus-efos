@@ -330,7 +330,14 @@ model UserDevice {
 
   fingerprint String  @map("fingerprint") // derived client-side, opaque to the server
   deviceName  String? @map("device_name")
-  trusted     Boolean @default(false)
+  // "trusted" here means MFA-skip-eligible, not a strong device-identity
+  // guarantee — the fingerprint is client-supplied and unattested (no
+  // hardware backing), same honesty disclosure as the customer-search
+  // ILIKE-vs-trigram gap. Only settable immediately after a device has
+  // already completed a full password+MFA login once — trust can never
+  // itself be the mechanism that bypasses MFA for the first time.
+  trusted     Boolean   @default(false)
+  trustedUntil DateTime? @map("trusted_until")
   lastSeenAt  DateTime @map("last_seen_at")
   ipAddress   String? @map("ip_address")
   userAgent   String? @map("user_agent")
@@ -402,6 +409,11 @@ model Role {
   category      RoleCategory
   description   String?
   isSystem      Boolean      @default(false) @map("is_system") // seeded template vs institution-defined
+  // PDDS Phase 4 follow-on — real enforcement, not advisory: a user
+  // assigned a role with requireMfa=true cannot obtain a full session
+  // without MFA actually verified. See auth.routes.ts login flow and
+  // docs/security-policy-defaults.md.
+  requireMfa    Boolean      @default(false) @map("require_mfa")
 
   rolePermissions RolePermission[]
   userRoles       UserRole[]

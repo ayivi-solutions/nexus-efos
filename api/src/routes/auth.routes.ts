@@ -21,6 +21,7 @@ import {
   MFA_PENDING_TOKEN_TTL_SECONDS,
   passwordExpiryDate,
   lockoutExpiryDate,
+  deviceTrustExpiryDate,
   validatePasswordLength,
   isPasswordReused,
   encryptSecret,
@@ -58,6 +59,33 @@ interface LoginableUser {
   lockedUntil: Date | null;
   mustChangePassword: boolean;
   passwordExpiresAt: Date | null;
+  mfaEnabled: boolean;
+}
+
+// Real enforcement, not advisory: a user holding any active (non-expired)
+// role assignment with requireMfa=true cannot get a full session without
+// MFA actually verified — see the login flow below.
+async function userHasRoleRequiringMfa(userId: string): Promise<boolean> {
+  const match = await prisma.userRole.findFirst({
+    where: {
+      userId,
+      OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
+      role: { requireMfa: true },
+    },
+  });
+  return match !== null;
+}
+
+// "Trusted" = MFA-skip-eligible for a bounded window, not a strong
+// device-identity guarantee (client-supplied fingerprint, unattested).
+// Password is still required regardless of trust — only the MFA step is
+// skipped. See the trust-model caveats on UserDevice in schema.prisma.
+async function isDeviceTrusted(userId: string, fingerprint: string | undefined): Promise<boolean> {
+  if (!fingerprint) return false;
+  const device = await prisma.userDevice.findUnique({
+    where: { userId_fingerprint: { userId, fingerprint } },
+  });
+  return !!device?.trusted && !!device.trustedUntil && device.trustedUntil > new Date();
 }
 
 async function recordLoginAttempt(
@@ -95,7 +123,8 @@ async function registerFailedPassword(user: LoginableUser, req: { headers: { "us
 async function completeSuccessfulLogin(
   user: LoginableUser,
   req: { headers: { "user-agent"?: string }; ip?: string },
-  deviceFingerprint?: string
+  deviceFingerprint?: string,
+  trustDevice?: boolean
 ) {
   const accessToken = signAccessToken({
     userId: user.id,
@@ -120,6 +149,14 @@ async function completeSuccessfulLogin(
   });
 
   if (deviceFingerprint) {
+    // trustDevice is only ever honoured here — the point this function is
+    // called from is, by construction, always a point where MFA (if it was
+    // required at all) has just been satisfied or wasn't required. A
+    // device can never bootstrap trust without having passed MFA at least
+    // once when MFA was actually required.
+    const trustFields = trustDevice
+      ? { trusted: true, trustedUntil: deviceTrustExpiryDate() }
+      : {};
     await prisma.userDevice.upsert({
       where: { userId_fingerprint: { userId: user.id, fingerprint: deviceFingerprint } },
       create: {
@@ -128,11 +165,13 @@ async function completeSuccessfulLogin(
         lastSeenAt: new Date(),
         ipAddress: req.ip,
         userAgent: req.headers["user-agent"],
+        ...trustFields,
       },
       update: {
         lastSeenAt: new Date(),
         ipAddress: req.ip,
         userAgent: req.headers["user-agent"],
+        ...trustFields,
       },
     });
   }
@@ -284,24 +323,27 @@ authRouter.post("/register-institution", async (req, res) => {
 
 // -----------------------------------------------------------------------
 // POST /auth/login
-// PDDS Phase 4 — now a real two-step exchange when MFA is enrolled: a
-// correct password alone returns { mfaRequired: true, mfaPendingToken }
-// instead of tokens; the client completes the login via POST
-// /auth/login/mfa. Lockout (§136.5, disclosed default: 5 attempts / 30
-// min — see docs/security-policy-defaults.md) is checked before the
-// password comparison runs at all.
+// PDDS Phase 4 — a real two-step exchange whenever MFA is either already
+// enrolled OR mandated by an active role (requireMfa=true) and not yet
+// enrolled: a correct password alone returns a pending token, never a
+// full session, until MFA is actually satisfied. Trusted devices (see
+// isDeviceTrusted) skip the MFA step but never the password step.
+// Lockout (§136.5, disclosed default: 5 attempts / 30 min — see
+// docs/security-policy-defaults.md) is checked before the password
+// comparison runs at all.
 // -----------------------------------------------------------------------
 const loginSchema = z.object({
   institutionId: z.string().optional(),
   email: z.string().email(),
   password: z.string(),
   deviceFingerprint: z.string().optional(),
+  trustDevice: z.boolean().optional(),
 });
 
 authRouter.post("/login", async (req, res) => {
   const parsed = loginSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
-  const { email, password, institutionId, deviceFingerprint } = parsed.data;
+  const { email, password, institutionId, deviceFingerprint, trustDevice } = parsed.data;
 
   const user = await prisma.user.findFirst({
     where: { email, ...(institutionId ? { institutionId } : {}) },
@@ -328,12 +370,23 @@ authRouter.post("/login", async (req, res) => {
     return res.status(403).json({ error: `Account is ${user.status.toLowerCase()}` });
   }
 
-  if (user.mfaEnabled) {
-    const mfaPendingToken = signMfaPendingToken({ userId: user.id }, MFA_PENDING_TOKEN_TTL_SECONDS);
-    return res.json({ mfaRequired: true, mfaPendingToken });
+  const trustedSkip = await isDeviceTrusted(user.id, deviceFingerprint);
+
+  if (!trustedSkip) {
+    if (user.mfaEnabled) {
+      const mfaPendingToken = signMfaPendingToken({ userId: user.id }, MFA_PENDING_TOKEN_TTL_SECONDS);
+      return res.json({ mfaRequired: true, mfaPendingToken });
+    }
+    // MFA not enrolled yet — check whether any active role mandates it.
+    // A trusted device can never reach this branch: trust is only ever
+    // granted at a point where mfaEnabled was already true.
+    if (await userHasRoleRequiringMfa(user.id)) {
+      const mfaPendingToken = signMfaPendingToken({ userId: user.id }, MFA_PENDING_TOKEN_TTL_SECONDS);
+      return res.json({ mfaSetupRequired: true, mfaPendingToken });
+    }
   }
 
-  const result = await completeSuccessfulLogin(user, req, deviceFingerprint);
+  const result = await completeSuccessfulLogin(user, req, deviceFingerprint, trustDevice);
   res.json(result);
 });
 
@@ -349,12 +402,13 @@ const loginMfaSchema = z.object({
   mfaPendingToken: z.string(),
   code: z.string().min(6),
   deviceFingerprint: z.string().optional(),
+  trustDevice: z.boolean().optional(),
 });
 
 authRouter.post("/login/mfa", async (req, res) => {
   const parsed = loginMfaSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
-  const { mfaPendingToken, code, deviceFingerprint } = parsed.data;
+  const { mfaPendingToken, code, deviceFingerprint, trustDevice } = parsed.data;
 
   let userId: string;
   try {
@@ -392,8 +446,101 @@ authRouter.post("/login/mfa", async (req, res) => {
     });
   }
 
-  const result = await completeSuccessfulLogin(user, req, deviceFingerprint);
+  const result = await completeSuccessfulLogin(user, req, deviceFingerprint, trustDevice);
   res.json(result);
+});
+
+// -----------------------------------------------------------------------
+// POST /auth/mfa/setup-required — same job as POST /auth/mfa/setup, but
+// reachable mid-login (mfaPendingToken, not a Bearer access token) for the
+// case a role mandates MFA and the person has never enrolled. Without
+// this, a first-time required-MFA enrollment would need a real session to
+// exist first — circular, since the whole point is no real session until
+// MFA is done.
+// -----------------------------------------------------------------------
+authRouter.post("/mfa/setup-required", async (req, res) => {
+  const { mfaPendingToken } = req.body as { mfaPendingToken?: string };
+  if (!mfaPendingToken) return res.status(400).json({ error: "mfaPendingToken required" });
+
+  let userId: string;
+  try {
+    userId = verifyMfaPendingToken(mfaPendingToken).userId;
+  } catch {
+    return res.status(401).json({ error: "This challenge has expired. Please log in again." });
+  }
+
+  const user = await prisma.user.findUnique({ where: { id: userId }, include: { mfa: true } });
+  if (!user) return res.status(404).json({ error: "User not found" });
+  if (user.mfa?.verifiedAt) {
+    return res.status(409).json({ error: "MFA is already enrolled on this account." });
+  }
+
+  const secret = generateTotpSecretBase32();
+  await prisma.userMfa.upsert({
+    where: { userId: user.id },
+    create: { userId: user.id, secretEncrypted: encryptSecret(secret), backupCodesHashed: [] },
+    update: { secretEncrypted: encryptSecret(secret), backupCodesHashed: [], verifiedAt: null },
+  });
+
+  res.json({ secret, otpauthUri: totpEnrollmentUri(secret, user.email) });
+});
+
+// -----------------------------------------------------------------------
+// POST /auth/mfa/verify-required — completes a mandatory first-time
+// enrollment reached via the mfaPendingToken path, and — unlike
+// POST /auth/mfa/verify, which is for an already-logged-in user adding
+// MFA voluntarily — actually finishes the login here, since the entire
+// point was withholding a real session until this succeeded.
+// -----------------------------------------------------------------------
+const mfaVerifyRequiredSchema = z.object({
+  mfaPendingToken: z.string(),
+  code: z.string().length(6),
+  deviceFingerprint: z.string().optional(),
+});
+
+authRouter.post("/mfa/verify-required", async (req, res) => {
+  const parsed = mfaVerifyRequiredSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+  const { mfaPendingToken, code, deviceFingerprint } = parsed.data;
+
+  let userId: string;
+  try {
+    userId = verifyMfaPendingToken(mfaPendingToken).userId;
+  } catch {
+    return res.status(401).json({ error: "This challenge has expired. Please log in again." });
+  }
+
+  const user = await prisma.user.findUnique({ where: { id: userId }, include: { mfa: true } });
+  if (!user?.mfa) return res.status(400).json({ error: "Call POST /auth/mfa/setup-required first." });
+  if (user.mfa.verifiedAt) return res.status(409).json({ error: "MFA is already verified on this account." });
+
+  const secret = decryptSecret(user.mfa.secretEncrypted);
+  const valid = await verifyTotpCode(code, secret);
+  if (!valid) return res.status(401).json({ error: "Incorrect code" });
+
+  const backupCodes = generateBackupCodes();
+  const hashedCodes = await hashBackupCodes(backupCodes);
+
+  const [, updatedUser] = await prisma.$transaction([
+    prisma.userMfa.update({
+      where: { userId: user.id },
+      data: { verifiedAt: new Date(), backupCodesHashed: hashedCodes },
+    }),
+    prisma.user.update({ where: { id: user.id }, data: { mfaEnabled: true } }),
+  ]);
+
+  await prisma.auditLog.create({
+    data: { institutionId: user.institutionId, userId: user.id, action: "auth.mfa_enrolled" },
+  });
+
+  // This enrollment was mandatory (role-required), so completing it also
+  // completes the login that was blocked pending it — unlike voluntary
+  // enrollment via /mfa/verify, which just adds MFA to an already-live
+  // session. trustDevice deliberately not accepted here: trust can only
+  // ever be granted once a device has already been through a genuinely
+  // repeat MFA success, not on the very first enrollment.
+  const result = await completeSuccessfulLogin(updatedUser, req, deviceFingerprint, false);
+  res.json({ ...result, backupCodes });
 });
 
 // -----------------------------------------------------------------------

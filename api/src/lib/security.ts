@@ -15,6 +15,11 @@ export const FAILED_ATTEMPT_THRESHOLD = 5;
 export const LOCKOUT_DURATION_MINUTES = 30;
 export const BACKUP_CODE_COUNT = 10;
 export const MFA_PENDING_TOKEN_TTL_SECONDS = 120;
+// How long a device stays MFA-skip-eligible once trusted. Matches the
+// existing 30-day refresh-token TTL default for consistency, not a value
+// sourced from any working document — see the trust-model caveats on
+// UserDevice in schema.prisma.
+export const DEVICE_TRUST_DURATION_DAYS = 30;
 
 export function passwordExpiryDate(from: Date = new Date()): Date {
   return new Date(from.getTime() + PASSWORD_EXPIRY_DAYS * 24 * 60 * 60 * 1000);
@@ -22,6 +27,10 @@ export function passwordExpiryDate(from: Date = new Date()): Date {
 
 export function lockoutExpiryDate(from: Date = new Date()): Date {
   return new Date(from.getTime() + LOCKOUT_DURATION_MINUTES * 60 * 1000);
+}
+
+export function deviceTrustExpiryDate(from: Date = new Date()): Date {
+  return new Date(from.getTime() + DEVICE_TRUST_DURATION_DAYS * 24 * 60 * 60 * 1000);
 }
 
 // ---------------------------------------------------------------------------

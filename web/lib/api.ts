@@ -54,7 +54,16 @@ async function downloadFile(path: string, filename: string) {
 // misleading message. Found live: repeated "Session expired" toasts on
 // the login page itself while just trying to sign in with the wrong
 // password, which had nothing to do with a session at all.
-const UNAUTHENTICATED_PATHS = ["/auth/login", "/auth/register-institution", "/auth/accept-invite", "/auth/refresh", "/auth/logout"];
+const UNAUTHENTICATED_PATHS = [
+  "/auth/login",
+  "/auth/login/mfa",
+  "/auth/mfa/setup-required",
+  "/auth/mfa/verify-required",
+  "/auth/register-institution",
+  "/auth/accept-invite",
+  "/auth/refresh",
+  "/auth/logout",
+];
 // /auth/demo-link/:token is dynamic (the token is part of the path), so it
 // can't sit in the exact-match list above — checked separately below.
 function isUnauthenticatedPath(path: string) {
@@ -105,6 +114,23 @@ async function request(path: string, options: RequestInit = {}, _retried = false
   return res.json();
 }
 
+// Device fingerprint — deliberately a simple persistent random ID stored
+// in localStorage, not a real browser-fingerprinting library. Honest
+// about what this is: an opaque per-browser-profile identifier the person
+// implicitly controls (clearing storage resets it), not an unspoofable
+// hardware attestation. See the trust-model caveats on UserDevice in
+// api/prisma/schema.prisma — this is the client half of that disclosure.
+export function getDeviceFingerprint(): string {
+  if (typeof window === "undefined") return "";
+  const key = "nexus_device_fingerprint";
+  let fp = localStorage.getItem(key);
+  if (!fp) {
+    fp = crypto.randomUUID();
+    localStorage.setItem(key, fp);
+  }
+  return fp;
+}
+
 export const api = {
   registerInstitution: (data: {
     legalName: string;
@@ -116,8 +142,29 @@ export const api = {
     setupKey: string;
   }) => request("/auth/register-institution", { method: "POST", body: JSON.stringify(data) }),
 
-  login: (data: { email: string; password: string }) =>
+  login: (data: { email: string; password: string; deviceFingerprint?: string; trustDevice?: boolean }) =>
     request("/auth/login", { method: "POST", body: JSON.stringify(data) }),
+
+  // PDDS Phase 4 — second step of login when MFA is already enrolled.
+  loginMfa: (data: { mfaPendingToken: string; code: string; deviceFingerprint?: string; trustDevice?: boolean }) =>
+    request("/auth/login/mfa", { method: "POST", body: JSON.stringify(data) }),
+
+  // Mandatory first-time enrollment, reached mid-login when a role
+  // requires MFA and the person has never set it up — distinct from
+  // mfaSetup/mfaVerify below, which are for an already-signed-in user
+  // adding MFA voluntarily.
+  mfaSetupRequired: (mfaPendingToken: string) =>
+    request("/auth/mfa/setup-required", { method: "POST", body: JSON.stringify({ mfaPendingToken }) }),
+
+  mfaVerifyRequired: (data: { mfaPendingToken: string; code: string; deviceFingerprint?: string }) =>
+    request("/auth/mfa/verify-required", { method: "POST", body: JSON.stringify(data) }),
+
+  // Voluntary MFA management for an already-signed-in user.
+  mfaSetup: () => request("/auth/mfa/setup", { method: "POST" }),
+  mfaVerify: (code: string) => request("/auth/mfa/verify", { method: "POST", body: JSON.stringify({ code }) }),
+  mfaDisable: (password: string) => request("/auth/mfa/disable", { method: "POST", body: JSON.stringify({ password }) }),
+  changePassword: (data: { currentPassword: string; newPassword: string }) =>
+    request("/auth/change-password", { method: "POST", body: JSON.stringify(data) }),
 
   // Demo-link: createDemoLink is called once by whoever's sharing the demo
   // (needs to already be signed into the demo institution); resolveDemoLink
@@ -150,9 +197,11 @@ export const api = {
   assignRole: (data: { userId: string; roleId: string; branchId?: string; expiresAt?: string; isDelegated?: boolean }) =>
     request("/roles/assign", { method: "POST", body: JSON.stringify(data) }),
   revokeRole: (userRoleId: string) => request(`/roles/assign/${userRoleId}`, { method: "DELETE" }),
-  updateRole: (id: string, data: { description?: string; permissionCodes?: string[]; expectedVersion?: number }) =>
-    request(`/roles/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
-  createRole: (data: { name: string; description?: string; category: string; permissionCodes?: string[] }) =>
+  updateRole: (
+    id: string,
+    data: { description?: string; permissionCodes?: string[]; requireMfa?: boolean; expectedVersion?: number }
+  ) => request(`/roles/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
+  createRole: (data: { name: string; description?: string; category: string; requireMfa?: boolean; permissionCodes?: string[] }) =>
     request("/roles", { method: "POST", body: JSON.stringify(data) }),
 
   inviteStaff: (data: { fullName: string; email: string; roleId: string; branchId?: string }) =>
