@@ -329,6 +329,22 @@ async function applyApproval(request: { id: string; type: string; targetId: stri
       break;
     }
 
+    // doc §201.3 "Corrections require approval" — the proposed times only
+    // become the record's real clockInAt/clockOutAt once approved; the
+    // original clock-in/out is never overwritten before that.
+    case "ATTENDANCE_CORRECTION": {
+      const record = await prisma.attendanceRecord.findUniqueOrThrow({ where: { id: request.targetId } });
+      await prisma.attendanceRecord.update({
+        where: { id: record.id },
+        data: {
+          clockInAt: record.proposedClockInAt ?? record.clockInAt,
+          clockOutAt: record.proposedClockOutAt ?? record.clockOutAt,
+          correctionPending: false,
+        },
+      });
+      break;
+    }
+
     // doc §190.3 "Transfers require authorisation" / "Asset custody is
     // continuously maintained" — the asset's current custodian fields
     // only actually move once approved, not at request time.
@@ -477,6 +493,14 @@ approvalsRouter.post("/:id/reject", requirePermission("institution.configure"), 
   }
   if (request.type === "CASH_TRANSFER") {
     await prisma.cashTransfer.update({ where: { id: request.targetId }, data: { status: "REJECTED" } });
+  }
+  // Rejected correction — clear the pending proposal, the original
+  // clock-in/out stands untouched.
+  if (request.type === "ATTENDANCE_CORRECTION") {
+    await prisma.attendanceRecord.update({
+      where: { id: request.targetId },
+      data: { correctionPending: false, proposedClockInAt: null, proposedClockOutAt: null },
+    });
   }
   // CASH_BALANCING_VARIANCE deliberately has no reject-side handler — a
   // rejected variance stays exactly as VARIANCE_PENDING_APPROVAL, which

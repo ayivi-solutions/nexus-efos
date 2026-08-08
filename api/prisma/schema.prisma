@@ -103,6 +103,9 @@ model Institution {
   cheques                 Cheque[]
   customerInteractions    CustomerInteraction[]
   customerComplaints      CustomerComplaint[]
+  attendanceRecords       AttendanceRecord[]
+  performanceReviews      PerformanceReview[]
+  disciplinaryCases       DisciplinaryCase[]
   glAccounts              GLAccount[]
   journals                Journal[]
   fiscalYears             FiscalYear[]
@@ -603,6 +606,11 @@ model Employee {
   reportingManagerId String?    @map("reporting_manager_id")
   directReports      Employee[] @relation("ReportingLine")
 
+  attendanceRecords     AttendanceRecord[]
+  performanceReviews     PerformanceReview[]  @relation("EmployeePerformanceReviews")
+  performanceReviewsGiven PerformanceReview[] @relation("EmployeePerformanceReviewsGiven")
+  disciplinaryCases      DisciplinaryCase[]
+
   status EmploymentStatus @default(ACTIVE)
 
   // doc §211.2 "Bank File Generation" needs somewhere real to pull an
@@ -635,6 +643,174 @@ model Employee {
   @@unique([institutionId, email], map: "uq_employee_institution_id_email")
   @@unique([institutionId, employeeNumber], map: "uq_employee_institution_id_employee_number")
   @@map("employee")
+  @@schema("nexus")
+}
+
+// ---------------------------------------------------------------------------
+// HR — ATTENDANCE, PERFORMANCE, DISCIPLINARY (EFS §201 Attendance
+// Management, §203 Performance Management; ETAS §41.4 names
+// DisciplinaryCase as an owned entity though EFS gives it no detailed
+// business rules — built to standard HR disciplinary-case practice
+// instead). Ops Supervisor role schedule: "Ensure all Staff report to
+// work by 7:30am" (attendance) — the concrete trigger for this gap item.
+// §201.2 also names Shift Management and Biometric Integration; neither
+// is built — no shift/roster concept exists anywhere in Employee yet,
+// and no biometric hardware/SDK integration exists. Both are real,
+// disclosed gaps, not silently dropped.
+// ---------------------------------------------------------------------------
+
+enum AttendanceMethod {
+  MANUAL
+  REMOTE // §201.2 Remote Attendance — self-reported, no location verification built
+
+  @@schema("nexus")
+}
+
+model AttendanceRecord {
+  id            String           @id(map: "pk_attendance_record") @default(uuid())
+  institution   Institution      @relation(fields: [institutionId], references: [id], onDelete: Cascade, map: "fk_attendance_record_institution")
+  institutionId String           @map("institution_id")
+  employee      Employee         @relation(fields: [employeeId], references: [id], onDelete: Cascade, map: "fk_attendance_record_employee")
+  employeeId    String           @map("employee_id")
+
+  workDate    DateTime         @map("work_date") // normalized to midnight — one record per employee per day
+  clockInAt   DateTime         @map("clock_in_at")
+  clockOutAt  DateTime?        @map("clock_out_at")
+  method      AttendanceMethod @default(MANUAL)
+
+  // §201.3 "Corrections require approval" — routes through the existing
+  // ApprovalRequest system (ATTENDANCE_CORRECTION), same pattern as Cash
+  // Balancing variance. The proposed times sit here, unapplied, until
+  // approved; clockInAt/clockOutAt above only ever reflect what's
+  // actually been approved (or the original clock-in/out if never
+  // corrected).
+  correctionPending       Boolean   @default(false) @map("correction_pending")
+  proposedClockInAt       DateTime? @map("proposed_clock_in_at")
+  proposedClockOutAt      DateTime? @map("proposed_clock_out_at")
+  correctionReason        String?   @map("correction_reason")
+  correctionRequestedById String?   @map("correction_requested_by_id")
+
+  recordedById String   @map("recorded_by_id") // may differ from employeeId's own user — a supervisor can record on someone's behalf
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  createdById  String?      @map("created_by_id")
+  updatedById  String?      @map("updated_by_id")
+  deletedAt    DateTime?    @map("deleted_at")
+  deletedById  String?      @map("deleted_by_id")
+  versionNo    Int          @default(1) @map("version_no")
+  recordStatus RecordStatus @default(ACTIVE) @map("record_status")
+
+  @@unique([employeeId, workDate], map: "uq_attendance_record_employee_work_date")
+  @@map("attendance_record")
+  @@schema("nexus")
+}
+
+enum PerformanceRating {
+  UNSATISFACTORY
+  NEEDS_IMPROVEMENT
+  MEETS_EXPECTATIONS
+  EXCEEDS_EXPECTATIONS
+  OUTSTANDING
+
+  @@schema("nexus")
+}
+
+enum PerformanceReviewStatus {
+  DRAFT
+  SELF_ASSESSMENT
+  MANAGER_ASSESSMENT
+  COMPLETED
+
+  @@schema("nexus")
+}
+
+model PerformanceReview {
+  id            String                  @id(map: "pk_performance_review") @default(uuid())
+  institution   Institution             @relation(fields: [institutionId], references: [id], onDelete: Cascade, map: "fk_performance_review_institution")
+  institutionId String                  @map("institution_id")
+  employee      Employee                @relation("EmployeePerformanceReviews", fields: [employeeId], references: [id], onDelete: Cascade, map: "fk_performance_review_employee")
+  employeeId    String                  @map("employee_id")
+  reviewer      Employee                @relation("EmployeePerformanceReviewsGiven", fields: [reviewerId], references: [id], onDelete: Cascade, map: "fk_performance_review_reviewer")
+  reviewerId    String                  @map("reviewer_id")
+
+  // §203.3 "Performance cycles are configurable" — free text, not a rigid
+  // enum, so an institution can label cycles however it actually runs
+  // them ("2026 H1", "Q3 2026", "Annual 2026").
+  cycleLabel String @map("cycle_label")
+
+  goals              String? // §203.2 Goal Setting
+  kpis               Json? // §203.2 Key Performance Indicators — flexible shape, institution-defined
+  selfAssessment     String? @map("self_assessment")
+  managerAssessment  String? @map("manager_assessment")
+  rating             PerformanceRating?
+  developmentPlan    String? @map("development_plan")
+  status             PerformanceReviewStatus @default(DRAFT)
+  completedAt        DateTime? @map("completed_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  createdById  String?      @map("created_by_id")
+  updatedById  String?      @map("updated_by_id")
+  deletedAt    DateTime?    @map("deleted_at")
+  deletedById  String?      @map("deleted_by_id")
+  versionNo    Int          @default(1) @map("version_no")
+  recordStatus RecordStatus @default(ACTIVE) @map("record_status")
+
+  @@index([institutionId, employeeId], map: "idx_performance_review_institution_employee")
+  @@map("performance_review")
+  @@schema("nexus")
+}
+
+// ECD §43.11 Human-in-the-Loop Automation explicitly names "Disciplinary
+// actions" as requiring human judgement, not automation — this workflow
+// is deliberately entirely staff-driven, nothing here auto-escalates the
+// way complaint SLA breaches do.
+enum DisciplinaryActionType {
+  VERBAL_WARNING
+  WRITTEN_WARNING
+  FINAL_WARNING
+  SUSPENSION
+  TERMINATION
+
+  @@schema("nexus")
+}
+
+enum DisciplinaryCaseStatus {
+  OPEN
+  INVESTIGATING
+  RESOLVED
+  CLOSED
+
+  @@schema("nexus")
+}
+
+model DisciplinaryCase {
+  id            String                 @id(map: "pk_disciplinary_case") @default(uuid())
+  institution   Institution            @relation(fields: [institutionId], references: [id], onDelete: Cascade, map: "fk_disciplinary_case_institution")
+  institutionId String                 @map("institution_id")
+  employee      Employee               @relation(fields: [employeeId], references: [id], onDelete: Cascade, map: "fk_disciplinary_case_employee")
+  employeeId    String                 @map("employee_id")
+
+  misconductDescription String   @map("misconduct_description")
+  investigationNotes    String?  @map("investigation_notes")
+  actionTaken           DisciplinaryActionType? @map("action_taken")
+  status                 DisciplinaryCaseStatus  @default(OPEN)
+
+  resolvedAt   DateTime? @map("resolved_at")
+  resolvedById String?   @map("resolved_by_id")
+
+  raisedById String   @map("raised_by_id")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  createdById  String?      @map("created_by_id")
+  updatedById  String?      @map("updated_by_id")
+  deletedAt    DateTime?    @map("deleted_at")
+  deletedById  String?      @map("deleted_by_id")
+  versionNo    Int          @default(1) @map("version_no")
+  recordStatus RecordStatus @default(ACTIVE) @map("record_status")
+
+  @@index([institutionId, status], map: "idx_disciplinary_case_institution_status")
+  @@map("disciplinary_case")
   @@schema("nexus")
 }
 
@@ -1184,6 +1360,7 @@ enum ApprovalRequestType {
   INTER_BRANCH_TRANSFER  // doc §121
   SALARY_STRUCTURE_CHANGE  // doc §208
   PAYROLL_RUN_APPROVAL  // doc §211
+  ATTENDANCE_CORRECTION  // doc §201.3 "Corrections require approval"
   ASSET_TRANSFER  // doc §190
   ASSET_DISPOSAL  // doc §193
   CUSTOMER_MERGE  // doc §35

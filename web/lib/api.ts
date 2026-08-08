@@ -477,6 +477,38 @@ export const api = {
     request(`/crm/complaints/${id}/resolve`, { method: "POST", body: JSON.stringify(data) }),
   closeComplaint: (id: string) => request(`/crm/complaints/${id}/close`, { method: "POST" }),
 
+  listAttendance: (filters?: { employeeId?: string; from?: string; to?: string }) => {
+    const qs = new URLSearchParams();
+    if (filters?.employeeId) qs.set("employeeId", filters.employeeId);
+    if (filters?.from) qs.set("from", filters.from);
+    if (filters?.to) qs.set("to", filters.to);
+    const suffix = qs.toString() ? `?${qs.toString()}` : "";
+    return request(`/hr/attendance${suffix}`);
+  },
+  clockIn: (employeeId: string, method?: "MANUAL" | "REMOTE") => request("/hr/attendance/clock-in", { method: "POST", body: JSON.stringify({ employeeId, method }) }),
+  clockOut: (id: string) => request(`/hr/attendance/${id}/clock-out`, { method: "POST" }),
+  requestAttendanceCorrection: (id: string, data: { proposedClockInAt?: string; proposedClockOutAt?: string; reason: string }) =>
+    request(`/hr/attendance/${id}/request-correction`, { method: "POST", body: JSON.stringify(data) }),
+
+  listPerformanceReviews: (employeeId?: string) => request(`/hr/performance-reviews${employeeId ? `?employeeId=${employeeId}` : ""}`),
+  createPerformanceReview: (data: { employeeId: string; reviewerId: string; cycleLabel: string; goals?: string }) =>
+    request("/hr/performance-reviews", { method: "POST", body: JSON.stringify(data) }),
+  submitSelfAssessment: (id: string, selfAssessment: string) => request(`/hr/performance-reviews/${id}/self-assessment`, { method: "POST", body: JSON.stringify({ selfAssessment }) }),
+  submitManagerAssessment: (id: string, data: { managerAssessment: string; rating: string; developmentPlan?: string }) =>
+    request(`/hr/performance-reviews/${id}/manager-assessment`, { method: "POST", body: JSON.stringify(data) }),
+
+  listDisciplinaryCases: (filters?: { employeeId?: string; status?: string }) => {
+    const qs = new URLSearchParams();
+    if (filters?.employeeId) qs.set("employeeId", filters.employeeId);
+    if (filters?.status) qs.set("status", filters.status);
+    const suffix = qs.toString() ? `?${qs.toString()}` : "";
+    return request(`/hr/disciplinary-cases${suffix}`);
+  },
+  raiseDisciplinaryCase: (data: { employeeId: string; misconductDescription: string }) => request("/hr/disciplinary-cases", { method: "POST", body: JSON.stringify(data) }),
+  investigateDisciplinaryCase: (id: string, investigationNotes?: string) => request(`/hr/disciplinary-cases/${id}/investigate`, { method: "POST", body: JSON.stringify({ investigationNotes }) }),
+  resolveDisciplinaryCase: (id: string, actionTaken: string) => request(`/hr/disciplinary-cases/${id}/resolve`, { method: "POST", body: JSON.stringify({ actionTaken }) }),
+  closeDisciplinaryCase: (id: string) => request(`/hr/disciplinary-cases/${id}/close`, { method: "POST" }),
+
   listGLAccounts: () => request("/general-ledger/accounts"),
   createGLAccount: (data: any) => request("/general-ledger/accounts", { method: "POST", body: JSON.stringify(data) }),
   setGLAccountStatus: (id: string, status: "ACTIVE" | "INACTIVE") => request(`/general-ledger/accounts/${id}/status`, { method: "PATCH", body: JSON.stringify({ status }) }),

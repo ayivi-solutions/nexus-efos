@@ -25,6 +25,7 @@ const NAV_FULL: { label: string; icon: string; href: string; perm: string | null
   { label: "Cash & Vault", icon: "🏦", href: "/cash-vault", perm: "institution.configure" },
   { label: "Cheques", icon: "🖊", href: "/cheques", perm: "institution.configure" },
   { label: "Customer Care", icon: "☎", href: "/customer-care", perm: "customers.view" },
+  { label: "HR: Attendance & Discipline", icon: "🧑‍💼", href: "/hr", perm: "users.administer" },
   { label: "General Ledger", icon: "📒", href: "/general-ledger", perm: "institution.configure" },
   { label: "Inter-Branch", icon: "🔁", href: "/inter-branch", perm: "institution.configure" },
   { label: "Financial Analytics", icon: "📈", href: "/analytics", perm: "reports.view" },
