@@ -348,6 +348,77 @@ management (list/revoke) didn't exist at all until this session.
   schema changed. Held without exception across roughly twenty
   deliveries in one session.
 
+## 8 Aug 2026 (continued) — Notifications, a Reports second-look, and a real dependency/optimistic-locking cleanup
+
+Same day, later in the session, after the docs were last brought current.
+
+### Notification providers: Resend, Hubtel, Meta WhatsApp Cloud API
+GM chose all three providers directly rather than leaving it open. Before
+writing any integration code, verified each provider's actual current
+endpoint/auth shape via web search — not assumed from training data.
+One real finding along the way: Hubtel's WhatsApp offering isn't in
+their public docs the way SMS is, so WhatsApp went through Meta's own
+Cloud API directly instead, which turned out to be the better call
+anyway — it's the well-documented standard path underneath virtually
+every WhatsApp Business integration. Closed a gap that had been quietly
+accumulating since the Customer Complaint module shipped:
+`customerNotified` was setting a timestamp with no message ever
+actually sent. Now it genuinely sends, respecting preference toggles
+that had existed but were never read for an outbound send.
+
+### Reports module — a second look, not assumed complete
+Asked directly to revisit the Reports module given how much had been
+built since it was last touched. Before proposing anything, audited the
+existing Loans/Savings/Customers/Collections reports against what the
+Portfolio Analytics dashboard (built earlier this session) actually
+computes — and found a real, material inconsistency: the Loans Report
+was independently computing PAR from raw `principal` instead of actual
+outstanding balance, and inferring "at risk" from arrears-bucket labels
+instead of the `daysInArrears > 30` threshold directly. The two views
+could show different PAR numbers for the same institution at the same
+moment. Fixed by extracting one shared calculation both now import,
+rather than living with two independently-approximated versions of the
+same metric. Then built four new reports for modules that had none
+(Cheques, Customer Care, HR, Internal Audit) and updated the hub.
+
+### Dependabot and optimistic-locking, done together
+GM asked to clear both remaining "also open" items before proposing
+what's next. Ran `npm audit` directly on both workspaces rather than
+trusting GitHub's cached count, and found the real shape of the "37
+vulnerabilities": 3 root packages (`next`, transitive `postcss`, and
+`xlsx`) each carrying a stack of individually-numbered advisories that
+GitHub counts separately but `npm audit` collapses — `next` alone had
+21, matching GitHub's "21 high" exactly. Upgraded `next` 14→16.3.0 and
+`react`/`react-dom` 18→19 — a two-major-version jump on a live
+production app, not something to force through blindly. Checked the
+real breaking changes first (async `params`/`searchParams`, Pages
+Router removal) and confirmed neither applies here before touching
+anything: no `pages/` directory anywhere, every dynamic route already
+uses the client-side `useParams()` hook. Full production build verified
+across all 53 routes before shipping. Along the way, the stricter build
+surfaced a real pre-existing bug unrelated to the upgrade itself:
+`branches/page.tsx` referenced an undefined `toast` global inside its
+optimistic-locking conflict handler — it would have thrown a runtime
+error the first time an actual conflict occurred. `xlsx`'s real fix
+lives on SheetJS's own CDN (they stopped publishing patches to the npm
+registry); `package.json` now points at it, but the sandbox here
+couldn't reach `cdn.sheetjs.com` to regenerate the lockfile — that step
+had to run on GM's own machine.
+
+The optimistic-locking audit corrected something said earlier in this
+same conversation: initially reported Branch's backend as already
+having real version enforcement, based on finding `expectedVersion`
+handling in the route file — but that finding came from having already
+fixed it moments earlier in a part of the session that got compacted
+out of visible context, not from it being pre-existing. The actual
+prior state: Branch's frontend had been sending `expectedVersion` since
+it was built, but the backend silently ignored it and always
+overwrote — the UI implied protection that didn't exist server-side.
+Business Rules had zero version checking and no edit UI on the
+frontend at all. Both fixed for real: genuine `checkVersion`
+enforcement on both PATCH endpoints, and a full DRAFT-only edit UI
+built for Business Rules matching the existing create-form UI.
+
 ## Current status
 
 See the companion progress tracker (`nexus-efos-progress-tracker.html`)
@@ -358,37 +429,27 @@ authoritative feature-by-feature detail. As of 8 Aug 2026: the original
 performance/disciplinary, internal audit findings, portfolio dashboard)
 are built, Capital Adequacy/RWA/Credit Concentration Risk are built
 against the actual uploaded BOG documents, PDDS Phase 4 security is
-fully enforced (not just schema), and platform-wide UX (role-based
-mobile nav, dashboard redesign, Settings page) is current. What remains
-is a short, genuinely open list, not a backlog of half-finished phases.
+fully enforced (not just schema), platform-wide UX (role-based mobile
+nav, dashboard redesign, Settings page) is current, notification
+providers (Resend/Hubtel/Meta WhatsApp) are live, the Reports module
+has been revisited and a real PAR-calculation inconsistency fixed,
+Dependabot is genuinely at 0 vulnerabilities on both workspaces (not
+just triaged), and both real optimistic-locking gaps found (Branch,
+Business Rules) are closed. What remains is a short, genuinely open
+list, not a backlog of half-finished phases.
 
 ## What's next
 
-1. **Notification multi-channel (SMS/Email/WhatsApp)** — blocked on a
-   provider decision (Twilio, Africa's Talking, Hubtel, etc.) before
-   the integration itself is buildable. Several features already
-   quietly depend on this — complaint customer-notification timestamps,
-   audit-finding communications — recording "should have notified them"
-   as an audit fact, not an actual message sent.
-2. **GitHub Dependabot: 36 vulnerabilities** on the default branch —
-   flagged on every push throughout the whole build, deliberately not
-   investigated per standing instruction. The count hasn't moved. Worth
-   a real pass — the actual advisory list, separating meaningful
-   request-path issues from noisy dev-only tooling flags — before this
-   goes near production.
-3. **Optimistic-locking frontend** — backend genuinely rejects a stale
-   update with a 409 on Customer/Employee/Role; only those three forms
-   are wired on the frontend.
-4. **GDPC returns** — confirmed the actual format sits behind their
+1. **GDPC returns** — confirmed the actual format sits behind their
    member-only portal, not publicly available; stays open until that
    changes.
-5. **CAR/Credit Concentration Risk boundaries, disclosed, not silent
+2. **CAR/Credit Concentration Risk boundaries, disclosed, not silent
    gaps**: loan classification day-boundaries beyond the CRD's
    confirmed >90-day past-due threshold are a convention; "qualifying
    retail" is a simplified proxy; mortgage-specific past-due treatment
    isn't applied; the Guidelines' own Pillar II PD/LGD/EAD modeling is
    explicitly bank-only and correctly not built.
-6. **Everything named as a disclosed gap inline, module by module** —
+3. **Everything named as a disclosed gap inline, module by module** —
    Shift Management and Biometric Integration (HR), Sector Analysis and
    Officer Performance (Portfolio), full §297 Audit Planning (Internal
    Audit), inward/outward cheque clearing-house integration into actual

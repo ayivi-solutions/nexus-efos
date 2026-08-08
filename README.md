@@ -463,6 +463,50 @@ built from the actual uploaded source documents, not invented)
   500,000 — the one criterion checkable from existing data); mortgage-
   specific past-due treatment (CRD §144-145) isn't applied.
 
+**Notifications** (EFS §249 External Service Connectors — names SMS/
+Email Providers as required categories, no vendor)
+- Resend (email), Hubtel (SMS), Meta's WhatsApp Cloud API directly
+  (Hubtel's WhatsApp offering isn't in their public docs the way SMS
+  is — Meta's Cloud API is the well-documented standard path underneath
+  virtually every WhatsApp Business integration anyway). Every provider
+  endpoint/auth shape verified against current public documentation
+  before writing any code, not guessed.
+- Configurable per-institution connectors with encrypted credentials
+  (same AES-256-GCM helper already used for MFA secrets), every send
+  attempt logged (success or failure — a failure also writes an
+  AuditLog entry per §249.3's alerting requirement).
+- Closes a real, quietly-accumulating gap: `CustomerComplaint.resolve`'s
+  `customerNotified` flag used to just set a timestamp with no message
+  ever sent. Now genuinely sends (SMS first, email fallback, respecting
+  the customer's own preference toggles that already existed but had
+  never been read for an outbound send) — `customerNotifiedAt` only
+  sets on confirmed delivery, not intent.
+- WhatsApp sends always go through Meta's required pre-approved-
+  template path, not free-form text — a real constraint (business-
+  initiated messages outside a live 24-hour conversation window need a
+  template approved in Meta's WhatsApp Manager), disclosed on the
+  Notifications settings page itself, not glossed over.
+
+**Reports Module** — a second-look pass across the whole module,
+prompted directly rather than assumed complete
+- **A real correctness bug found and fixed**: the Loans Report was
+  computing PAR from raw `principal` (not actual outstanding balance)
+  and inferring "at risk" from arrears-bucket labels instead of the
+  `daysInArrears > 30` test directly — it could show a different PAR
+  than the Portfolio Analytics dashboard for the same institution at
+  the same moment. Fixed by extracting one shared calculation
+  (`lib/portfolio.ts`) both now import, so they can't drift apart again.
+- Four new reports for this session's modules, matching the existing
+  date-range/CSV-export convention exactly: Cheque Register (volume,
+  bounce rate, pending confirmation), Customer Care (interaction/
+  complaint volume, resolution time, escalation rate), HR (attendance
+  corrections, performance completion, disciplinary outcomes), Internal
+  Audit (findings by risk, overdue rate, unassigned-owner count).
+- Reports hub updated to list all 8 report pages plus links to Capital
+  Adequacy and Financial/Portfolio Analytics — both already dedicated
+  live dashboards, linked for discoverability rather than duplicated as
+  static reports.
+
 **Accessibility**
 - WCAG AA color contrast (verified programmatically, not eyeballed),
   screen-reader-announced notifications, keyboard focus indicators,
@@ -471,7 +515,7 @@ built from the actual uploaded source documents, not invented)
 ## Tech stack
 
 - **API:** Node.js, Express, TypeScript, Prisma ORM, PostgreSQL (Supabase)
-- **Web:** Next.js 14, TypeScript, Tailwind CSS
+- **Web:** Next.js 16 (App Router, Turbopack), React 19, TypeScript, Tailwind CSS
 - **Storage:** Supabase Storage (customer documents)
 - **Hosting:** Railway (API + Web), Cloudflare
 - **Deployment:** GitHub → Railway CI/CD, auto-deploy on push to `develop`
@@ -625,22 +669,41 @@ disclosed boundaries — not a blocked or unstarted phase. See "Also
 open" below for the full list.
 
 **Also open, outside the 9-phase roadmap:**
-- **GitHub Dependabot: 36 vulnerabilities (20 high, 14 moderate, 2
-  low)** on the default branch — flagged consistently on every push
-  throughout this build and deliberately not investigated yet, per
-  standing instruction to ignore these in the moment and revisit later.
-  The count hasn't moved through the entire build. Worth a real pass —
-  pulling the actual advisory list to separate meaningful issues in the
-  request path from noisy dev-only tooling flags — before this goes
-  anywhere near production.
-- Optimistic-locking conflict rejection has a fully working backend
-  (Customer/Employee/Role reject a stale update with a 409), wired into
-  those same three edit forms on the frontend.
-- Notification multi-channel (SMS/Email/WhatsApp) — in-app only today;
-  needs a provider decision before the integration itself can be built.
 - GDPC (Ghana Deposit Protection Corporation) premium/deposit returns —
   confirmed the actual format sits behind their member-only portal, not
   publicly available.
+
+**Resolved since the list above was last accurate:**
+- **GitHub Dependabot: was 36 vulnerabilities (20 high, 14 moderate, 2
+  low), now 0** on both `api` and `web` (confirmed via `npm audit`
+  directly, both workspaces, real numbers not GitHub's cache — GitHub's
+  own dashboard count updates on a delay after a push). Root cause
+  turned out to be 3 packages carrying stacked historical advisories,
+  not 36 independent problems: `next` (21 individually-numbered GHSAs,
+  matching GitHub's "21 high" exactly), its transitive `postcss` (4
+  more), and `xlsx` (2, on the API side). Fixed by upgrading `next`
+  14→16.3.0 and `react`/`react-dom` 18→19 — verified first that the
+  real Next 16 breaking changes (async `params`/`searchParams`, Pages
+  Router removal) don't apply here: no `pages/` directory anywhere, and
+  every dynamic route already uses the client-side `useParams()` hook,
+  not the affected server-component prop pattern. Full production build
+  verified across all 53 routes before shipping. `xlsx`'s fix is CDN-
+  hosted (SheetJS stopped publishing patched versions to the npm
+  registry) — `package.json` now points at the real fixed tarball.
+- **Optimistic-locking — two real gaps found and closed, not just
+  documented coverage.** Branch's frontend has been sending
+  `expectedVersion` on every update since it was built, but the backend
+  silently ignored it and always overwrote — the UI implied protection
+  that didn't actually exist server-side. Business Rules had zero
+  version checking on the backend and no edit UI on the frontend at
+  all (rules could only be created, activated, or retired — never
+  edited, despite the backend's own DRAFT-only-editing business rule
+  implying an edit path should exist). Both fixed: real `checkVersion`
+  enforcement on both PATCH endpoints, and a full DRAFT-only edit UI
+  built for Business Rules. Customer/Employee/Role remain the other
+  three genuinely-covered forms.
+- Notification multi-channel (SMS/Email/WhatsApp) — built. See
+  **Notifications** below.
 
 **Everything the Operations Supervisor role schedule (4 Aug 2026) named
 is now built** — cheque register, customer interactions/complaints, HR
