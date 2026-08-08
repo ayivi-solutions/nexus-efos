@@ -28,6 +28,24 @@ real customer data.
   existing institution on server boot — no manual re-seeding, no
   re-registering an institution to pick up a platform update.
 - Department/Position as real, normalized lookup tables (not free text).
+- **Multi-factor authentication** — TOTP (RFC 6238), client-side QR
+  generation (the secret never leaves the browser to a third party),
+  one-time backup codes. Voluntary self-service via Settings, or
+  mandatory when a role has `requireMfa` set — enforcement is real, not
+  advisory: a role-required-MFA login can't obtain a full session
+  without MFA actually verified, via the same pending-token pattern used
+  for the ordinary MFA login step.
+- **Account lockout** — 5 failed attempts locks for 30 minutes (disclosed
+  default, `docs/security-policy-defaults.md`), checked before password
+  comparison even runs.
+- **Password policy** — 12-character minimum, last-5-password reuse
+  blocked against real history, 90-day expiry, all disclosed defaults.
+  Self-service change-password in Settings.
+- **Trusted devices** — 30-day MFA-skip window, only grantable
+  immediately after a device has already passed MFA once (can never
+  bootstrap trust on a first login), password still required every time
+  regardless. Self-service list/revoke in Settings. Disclosed honestly:
+  a client-supplied fingerprint, not a hardware-backed guarantee.
 
 **Customers**
 - Full lifecycle: Registered → KYC → Active → Dormant/Restricted/Suspended
@@ -81,6 +99,13 @@ real customer data.
   Balance, Minimum Monthly Balance), 4 rate types (Fixed, Tiered, Variable,
   Promotional), real Accrual/Posting/Suspension/Recalculation/Reversal
   workflow, not a live-only number.
+- **Automated, not just staff-triggered**: accrual runs daily across
+  every institution's active accounts; posting runs automatically
+  monthly on the 1st (a disclosed cadence — matches how
+  AVERAGE_DAILY_BALANCE/MINIMUM_MONTHLY_BALANCE already compute per
+  calendar month; no working document specifies a posting frequency).
+  Manual `/accrue`, `/accrue-all`, `/post`, `/post-all` unchanged for
+  out-of-cycle corrections.
 - Deposit/withdraw with a full transaction ledger.
 - Fees & Charges: configurable fee types, amounts always computed from the
   fee type's own configuration (never trusted from the request), waivers
@@ -329,6 +354,87 @@ real customer data.
 - Consent Management: real capture, withdrawal, and permanent history —
   no delete route exists for consent records at all.
 
+**Cheque Register** (Ops Supervisor role schedule — "monitor and confirm
+outgoing cheques daily and during disbursements" — built as a standard
+complete register, not limited to that one line; not named in the ECD/
+EFS/ETAS/PDDS/ESS at all)
+- Both directions (inward customer deposits, outward institution-issued
+  — loan disbursements, vendor payments), real clearing lifecycle
+  (received/issued → pending clearing → cleared/bounced, plus stop and
+  cancel), optional cross-reference to customer/savings account/loan.
+- The doc's actual named task — a daily "confirm" step distinct from
+  clearing status — with a dedicated pending-confirmation view.
+- A tracking/audit register, not a money-mover: clearing a cheque here
+  doesn't itself create a transaction or touch a loan's disbursed date;
+  those stay whatever workflow already handles the real deposit/
+  disbursement.
+
+**Customer Interactions & Complaints** (EFS §157 Customer Interaction
+Management + §160 Customer Complaint Management — both genuinely named
+in the working documents)
+- Interactions: channel-typed (call, branch visit, email, SMS, live
+  chat, social media, meeting), follow-up scheduling and completion
+  tracking — directly covers the Ops Supervisor doc's actual task
+  ("make follow-up calls on loan defaulters and weekly payment
+  clients"). History can't be deleted (§157.3), by design.
+- Complaints: unique auto-generated reference numbers, classification,
+  priority, case assignment, investigate → resolve → close lifecycle.
+- SLA targets (24h Critical / 48h High / 5 days Medium / 10 days Low)
+  and automatic escalation are disclosed defaults — §160.3 says both are
+  "configurable" but specifies no actual values. Escalation is a real
+  daily scheduler check against those defaults, not a rule engine.
+
+**HR — Attendance, Performance, Disciplinary** (EFS §201 Attendance
+Management + §203 Performance Management; ETAS §41.4 names
+DisciplinaryCase as an owned entity though EFS gives it no detailed
+business rules)
+- Attendance: clock-in/out, one record per employee per day. §201.3's
+  "corrections require approval" is real — routes through the existing
+  Approval Workflow, proposed times only overwrite the record once
+  approved.
+- Performance: goal setting, self-assessment → manager-assessment →
+  completed lifecycle, ratings, development plans.
+- Disciplinary: open → investigating → resolved → closed, defined
+  action taken (verbal/written/final warning, suspension, termination).
+  Deliberately no automatic escalation — ECD §43.11 names disciplinary
+  actions as requiring human judgement, unlike complaint SLA breaches.
+- Named gaps, not silently dropped: Shift Management and Biometric
+  Integration (both in EFS §201.2) aren't built — no roster concept
+  exists, no biometric hardware/SDK integration exists.
+
+**Internal Audit** (EFS §298 Audit Findings and Recommendation
+Management + §299.2 Overdue Action Monitoring; ETAS §78 Audit Entity
+Architecture)
+- Audit engagements with a real named lifecycle (planned → approved →
+  in progress → under review → completed → follow-up → closed →
+  archived), scope approval routes through the Approval Workflow
+  (ETAS §78.7's "every audit shall have an approved scope").
+- Findings: unique reference numbers, risk classification, root cause,
+  recommendation, management response, accountable owner. Closure is
+  genuinely blocked — not just documented — until every finding on an
+  engagement has an owner assigned.
+- Implementation Verification is a distinct step from marking a
+  recommendation implemented (§299.2), not just a status label — someone
+  other than the implementer confirms it actually addressed the finding.
+- Overdue findings flagged by a daily scheduler check, same
+  disclosed-default pattern as complaint escalation.
+- Deliberately scoped to findings/remediation, not the full §297 Audit
+  Planning and Execution (no audit universe, annual risk-based planning,
+  or team assignment) — a real, disclosed boundary.
+
+**Loan Portfolio Dashboard** (EFS §76 Loan Portfolio Management + ECD
+§64.10 Portfolio at Risk (PAR) — matches the Ops Supervisor doc's
+explicit "PAR Benchmark adherence" line)
+- No new schema — pure read-only aggregation over existing loan data.
+  PAR30/PAR90 use the same `arrearsClassification`/`daysInArrears`
+  fields the daily arrears scheduler already keeps current, so this can
+  never silently disagree with the arrears system.
+- Overview (outstanding, loan count, PAR30/PAR90), aging distribution,
+  by-branch, by-product, top-10 borrower concentration.
+- Named gaps: Sector Analysis and Officer Performance (both in EFS
+  §76.3) aren't built — no sector field exists on Customer, no
+  loan-officer assignment field exists on Loan.
+
 **Capital Adequacy** (Act 930 §29 + BOG Capital Requirements Directive,
 2018 + BOG Guidelines on Credit Concentration Risk, 2025 — all three
 built from the actual uploaded source documents, not invented)
@@ -535,42 +641,36 @@ open" below for the full list.
 - GDPC (Ghana Deposit Protection Corporation) premium/deposit returns —
   confirmed the actual format sits behind their member-only portal, not
   publicly available.
-- MFA / enhanced security controls — parked pending a dedicated Enterprise
-  Security Specification.
-- Scheduled/automated Savings interest posting — currently staff-
-  triggered; the scheduler infrastructure now exists (built for Loan
-  Arrears) but hasn't been wired to this yet.
 
-**Identified via the Operations Supervisor functional realignment
-document (4 Aug 2026), not yet in any phase — noted for later
-integration, not forgotten:**
-- **Cheque verification/tracking** — Cash & Vault Management (Phase 4)
-  covers cashbook, vault, and petty cash genuinely well, but cheque-
-  specific handling (verification, register, clearing status) was never
-  built as its own thing. Natural fit: an addition to Phase 4's existing
-  Cash & Vault module.
-- **Complaint Resolution / customer follow-up** — no complaints or
-  grievance tracking exists anywhere in the platform today. A real,
-  distinct gap from Customer onboarding (which does exist). Natural fit:
-  an extension of the Customer module.
-- **HR attendance, discipline, and performance tracking** — Employee
-  records exist (StaffX), but day-to-day attendance/scheduling/discipline
-  as dedicated features don't. Natural fit: an HR-focused addition,
-  possibly alongside Payroll (Phase 6) given the shared HR data.
-- **Internal audit findings/remediation tracking** — the Audit Log is
-  comprehensive and immutable, and the Approval Workflow enforces
-  segregation of duties, but there's no structured "finding → remediation
-  → close-out" workflow, which is a different thing from a transaction
-  log. Natural fit: a standalone Internal Control module.
-- **Consolidated portfolio/credit-performance dashboard** — PAR30 and
-  arrears classification exist at the loan level (§77); a rolled-up,
-  institution-wide portfolio-quality view specifically doesn't. Natural
-  fit: an extension of Financial Analytics (§125) or its own Credit Risk
-  reporting view.
-- Business Development & Sales (prospecting, market development, sales
-  pipeline) was reviewed and judged genuinely out of scope for a core
-  banking backend unless explicitly requested as a dedicated CRM/pipeline
-  feature — not treated as a gap, a deliberate scope boundary.
+**Everything the Operations Supervisor role schedule (4 Aug 2026) named
+is now built** — cheque register, customer interactions/complaints, HR
+attendance/performance/disciplinary, internal audit findings, and the
+consolidated portfolio dashboard, all described above with their
+disclosed gaps named inline rather than silently dropped. Business
+Development & Sales (prospecting, market development, sales pipeline)
+was reviewed and judged genuinely out of scope for a core banking
+backend unless explicitly requested as a dedicated CRM/pipeline
+feature — not treated as a gap, a deliberate scope boundary.
+
+## UX and platform-wide work (outside the module list above)
+
+- **Role-based mobile bottom nav** — Dashboard/Customers/Loans/Savings
+  fixed for everyone, a 5th slot chosen from the person's actual
+  `Role.category` (a real enum, not name-matching against something
+  literally called "CEO"): EXECUTIVE gets Approvals, GOVERNANCE gets
+  Internal Audit, OPERATIONAL gets Cash & Vault, TECHNICAL gets Audit
+  Log, CUSTOMER gets Customer Care.
+- **Dashboard redesign** — a "needs your attention" strip (pending
+  approvals, escalated complaints, overdue audit findings, cheques
+  pending confirmation), portfolio health and regulatory snapshot
+  (reusing the Portfolio Analytics and Capital Adequacy endpoints, no
+  new backend aggregation), live cash position, a quick-access tap grid
+  for every module. Numbers count up on load and sections fade in on a
+  staggered sequence, both skip entirely under `prefers-reduced-motion`.
+- **Settings page** — voluntary MFA setup/disable and change-password,
+  which existed as endpoints with no UI until now; trusted-device
+  list/revoke, a capability that didn't exist at all before this (trust
+  was previously only set at login, with no way to see or undo it).
 
 ## Design decisions worth flagging
 

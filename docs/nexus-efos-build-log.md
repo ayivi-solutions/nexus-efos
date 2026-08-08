@@ -187,19 +187,210 @@ Rather than trust a clean `tsc` pass, walked the entire application through real
 ### Process lesson, confirmed twice in one session
 A targeted Python string-replacement patch silently failed against a Windows/CRLF-converted file with no visible error — the script's own assertion failure was never checked before continuing to run `tsc` and commit, so a fix appeared to succeed (clean `tsc`, "nothing to commit") without ever actually landing. Diagnosed by explicitly checking `git status --short`/`git diff --stat` immediately after every patch attempt, and resolved by switching to full-file heredoc overwrites — which don't depend on matching exact substrings against a file whose line endings may have been silently converted. Now the default for any file with prior CRLF exposure, which by this point in the project is effectively every file.
 
+## 26 Jul – 6 Aug 2026 — bridging note
+
+This file wasn't kept current through this stretch — the 9-phase
+roadmap (Loan Servicing completeness, Collections, Savings
+completeness, Cash & Vault, General Ledger, Payroll, Asset Management,
+Ghana Regulatory Reporting, cross-cutting Customer gaps) was designed
+and built end to end, plus the branding pass and PDDS Phase 4's initial
+security schema. All of it is real and shipped — the README's "What's
+built" section and the progress tracker are both current and are the
+authoritative record for this period. Noted honestly here rather than
+reconstructed after the fact: this log itself fell behind the actual
+work for these two weeks.
+
+## 8 Aug 2026 — security enforcement, five Ops Supervisor gaps, Capital Adequacy, and platform-wide UX
+
+One long continuous session. Recorded in full here since it's the most
+recent work and the log is the right place for the actual narrative,
+decisions, and corrections — not just a bullet-point outcome list.
+
+### PDDS Phase 4 completed: security schema → real route enforcement
+The schema (`UserMfa`, `UserPasswordHistory`, `UserDevice`,
+`UserLoginHistory`, lockout/expiry fields on `User`) existed from the
+prior stretch but nothing enforced it yet. Wired up: real two-step
+login (password → MFA code, via a short-lived pending-token JWT
+namespace so a leaked/expired token can never be mistaken for a real
+session), account lockout before password comparison even runs,
+self-service change-password with reuse checking against real history,
+TOTP enrollment with client-side QR generation (the secret never
+touches a third party — the earlier draft used a public QR API and
+that was caught and fixed before shipping).
+
+### Role-required MFA: made it real, not advisory
+Given the choice between advisory (frontend nudge only, matching how
+`mustChangePassword` already worked) and real enforcement, went with
+real: a role explicitly flagged `requireMfa` is a deliberate
+high-risk designation, and advisory-only would mean a stolen password
+still gets full access. Reused the existing pending-token pattern
+rather than inventing new token architecture — first-time mandatory
+enrollment gets its own `/mfa/setup-required` and `/mfa/verify-required`
+endpoints that complete the login themselves once MFA is actually
+verified, since the whole point was withholding a session until then.
+
+### Trusted devices: real, with the limitation disclosed up front
+30-day MFA-skip window, but trust can only ever be granted immediately
+after a device has already completed a full password+MFA login —
+it can never be the mechanism that bypasses MFA for the first time.
+Documented plainly, in the schema comment and later in the Settings UI
+itself, that the fingerprint is client-supplied and unattested, not a
+hardware-backed guarantee — same honesty standard as the KYC
+risk-scoring weights and the customer-search ILIKE disclosure.
+
+### The cheque-tracking scope correction
+Asked to build cheque tracking from a one-line summary ("verification,
+register, clearing status"), searched the ECD/EFS/ETAS/PDDS/ESS
+exhaustively and found genuinely nothing — confirmed the summary came
+from an Operations Supervisor role-schedule PDF not yet uploaded.
+First instinct was to ask GM which direction (inward/outward) and
+whether to include post-dated cheques; corrected directly: *"You are
+asking too many questions. When in doubt, consult the working
+documents... You need to store in your permanent memory to always
+consult the documents first."* Re-searched exhaustively, found nothing,
+made the call myself (both directions, post-dated included via a
+single date field) — then GM uploaded the actual source PDF, which
+turned out to name only outward cheques tied to disbursements. Told
+directly: *"we are building a standard app using this document as a
+guide, not limiting to the document's content."* Built the full
+standard register (both directions, real clearing lifecycle) as
+originally judged, with the doc's actual line (daily monitor/confirm)
+represented as a distinct step, not the whole feature.
+
+### Consulting the documents properly, going forward
+That correction changed how the rest of the session's document-driven
+gaps got handled: exhaustive searches before asking, and — critically —
+several items assumed to be thin summaries turned out to be genuinely
+detailed EFS sections once actually searched for. Customer complaints
+(§157/§160), HR attendance/performance (§201/§203), and internal audit
+findings (§298/§299) all had real functional requirements and business
+rules in the EFS, not just a name. Portfolio dashboard (§76) and
+Capital Adequacy (Act 930 §29, once GM uploaded the actual BOG Capital
+Requirements Directive and Credit Concentration Risk Guidelines PDFs)
+were fully specified once looked for properly.
+
+### Scheduled Savings interest posting
+Accrual now runs daily across every institution; posting runs monthly
+on the 1st. Asked GM for the cadence rather than guessing; he asked
+what the documents said or what I'd recommend — EFS §52.3 names
+"Interest Posting" as required but specifies no frequency, so this is a
+disclosed default (matches how AVERAGE_DAILY_BALANCE/
+MINIMUM_MONTHLY_BALANCE already compute per calendar month), not a
+confirmed spec value.
+
+### Five Ops Supervisor gaps, in the order GM chose
+1. **Cheque register** — see above.
+2. **Customer interactions & complaints** (EFS §157/§160) — interactions
+   with follow-up scheduling (directly covers the doc's actual
+   follow-up-calls task), complaints with SLA/escalation as disclosed
+   defaults (§160.3 says both are "configurable," specifies neither).
+3. **HR — attendance, performance, disciplinary** (EFS §201/§203, ETAS
+   §41.4) — attendance corrections route through the real Approval
+   Workflow (not just documented — a new `ATTENDANCE_CORRECTION` type).
+   Disciplinary deliberately has no auto-escalation, since ECD §43.11
+   names disciplinary actions as requiring human judgement.
+4. **Internal audit findings** (EFS §298/§299, ETAS §78) — scope
+   approval via Approval Workflow, engagement closure genuinely blocked
+   until every finding has an accountable owner, Implementation
+   Verification as a real distinct step from "marked implemented."
+   Scoped deliberately to findings/remediation, not the full §297 audit
+   planning module.
+5. **Portfolio dashboard** (EFS §76, ECD §64.10 PAR) — no new schema at
+   all, pure aggregation reusing the same `arrearsClassification`/
+   `daysInArrears` the arrears scheduler already maintains.
+
+### Capital Adequacy, Risk-Weighted Assets, Credit Concentration Risk
+The one methodology discussion in the session that genuinely needed to
+happen before any code: CAR/IFRS9 had been deliberately left unbuilt
+for weeks specifically because inventing Basel-style risk-weighting or
+PD/LGD/ECL modeling would have meant fabricating regulatory numbers.
+GM supplied the actual documents — Act 930 text, the BOG Capital
+Requirements Directive 2018 PDF, the BOG Credit Concentration Risk
+Guidelines 2025 PDF — and a live news search surfaced a genuinely
+current, relevant fact along the way: Ghana's microfinance regulatory
+framework is mid-overhaul as of Jan 2026, with detailed new-category
+directives not yet issued by BoG, which is exactly why this hadn't been
+buildable with confidence before. Built the real CET1/Tier1/Total CAR
+structure with the CRD's exact admissibility caps, RWA from real loan
+data (Table 2A categories), GL accounts self-tagged with a capital
+tier/risk weight the same way `isLiquidAsset` already works, and HHI/
+Gini/concentration-ratio metrics — explicitly not the Pillar II PD/LGD/
+EAD modeling, which the Guidelines themselves say is bank-only.
+
+### Role-based mobile bottom nav, dashboard redesign, Settings page
+GM flagged directly that "My Payslips" — no permission gate, so always
+eligible — was winning a bottom-nav slot regardless of role, ahead of
+things people actually touch daily; the underlying bug was
+first-permitted-item-in-list rather than curated selection. Fixed using
+`Role.category` (a real enum already in the schema) rather than
+matching on role names, so it generalizes past any one institution's
+"CEO" role name. That led into a full dashboard redesign (a
+needs-your-attention cross-module inbox, portfolio/regulatory snapshot,
+live cash position, reduced-motion-aware animation) and, closing a
+gap flagged back when PDDS Phase 4 first shipped, a Settings page — the
+voluntary MFA/change-password endpoints had existed for weeks with no
+UI outside the mandatory login-forced path, and trusted-device
+management (list/revoke) didn't exist at all until this session.
+
+### Process notes worth keeping
+- This sandbox's `prisma generate` cannot reach `binaries.prisma.sh` —
+  a standing limitation confirmed repeatedly. The generated client here
+  is a stub (`PrismaClient: any`), so a clean `tsc` in this sandbox
+  never actually verifies Prisma field/model names — only GM's own
+  `npx prisma generate && npx tsc --noEmit` on his machine, against the
+  real generated client, does that. One real miss slipped through this
+  way (`ProductVersion.name` referenced as `Product.name` in the
+  portfolio-by-product analytics endpoint) and was caught immediately by
+  his tsc run, not mine — fixed same-session.
+- Every delivery this session followed the same procedure: zip → his
+  `unzip -d .` → `npx tsc --noEmit` gate → conditional
+  commit/push, with `prisma generate`/`migrate dev` inserted whenever
+  schema changed. Held without exception across roughly twenty
+  deliveries in one session.
+
 ## Current status
 
-See the companion progress tracker (`nexus-efos-progress-tracker.html`) for the full section-by-section snapshot. As of 25 Jul: **2 Built, 20 Partial, 54 Not Started, 23 Vision** out of 99 tracked sections (row count unchanged — PDDS Phase 1+2 deepened §48 Data Architecture rather than moving a new section out of Not Started).
+See the companion progress tracker (`nexus-efos-progress-tracker.html`)
+for the full section-by-section snapshot, and the README for the
+authoritative feature-by-feature detail. As of 8 Aug 2026: the original
+9-phase roadmap is complete, all five Ops Supervisor-named gaps
+(cheque register, customer interactions/complaints, HR attendance/
+performance/disciplinary, internal audit findings, portfolio dashboard)
+are built, Capital Adequacy/RWA/Credit Concentration Risk are built
+against the actual uploaded BOG documents, PDDS Phase 4 security is
+fully enforced (not just schema), and platform-wide UX (role-based
+mobile nav, dashboard redesign, Settings page) is current. What remains
+is a short, genuinely open list, not a backlog of half-finished phases.
 
 ## What's next
 
-1. **PDDS Phase 3** — mandatory audit columns (`created_by`/`updated_by`/`deleted_by`/`version_no`) on every table, full optimistic locking (frontend submits its loaded version, backend rejects on mismatch), and converting the handful of endpoints that currently hard-delete (Next of Kin, Beneficiary, Beneficial Owner, Watchlist entries, Interest Rate Tiers) to soft-deletes.
-2. **PDDS Phase 4 (Security)** — explicitly parked pending the Enterprise Security Specification document; do not build early.
-3. **PDDS Phases 5+6** — per-table field completeness (customer_number, DOB, structured names, branch manager assignment, Loan account numbers) and structural upgrades (normalized Department/Position lookup tables).
-4. **Real KYC document-verification workflow** — still a three-value status flag.
-5. **CDD, beneficial-ownership verification depth, credit scoring** — compliance-grade features with no equivalent yet; lower urgency at current operational scale.
-6. **Approval Workflow configurability** — every wired-in action always requires approval today; no per-institution toggle for which actions need it.
-7. **Guarantors/Collateral, loan penalties, arrears management, restructuring/rescheduling/write-off, dormancy automation, fees/charges** — all flagged in the original EFS analysis, none yet built.
-8. **Scheduled interest posting** — genuinely blocked on job-scheduling infrastructure not existing yet, not a design gap; Real-Time and Batch posting are both fully built.
-9. **Consent management, customer self-service portal, statements** — lower-urgency EFS findings, still open.
-10. **Everything else in the tracker's Not Started list** — Collections, Share Management, Fixed Deposits, Treasury, GL, Payments, and the full AI/BI/Executive Intelligence volumes — untouched throughout.
+1. **Notification multi-channel (SMS/Email/WhatsApp)** — blocked on a
+   provider decision (Twilio, Africa's Talking, Hubtel, etc.) before
+   the integration itself is buildable. Several features already
+   quietly depend on this — complaint customer-notification timestamps,
+   audit-finding communications — recording "should have notified them"
+   as an audit fact, not an actual message sent.
+2. **GitHub Dependabot: 36 vulnerabilities** on the default branch —
+   flagged on every push throughout the whole build, deliberately not
+   investigated per standing instruction. The count hasn't moved. Worth
+   a real pass — the actual advisory list, separating meaningful
+   request-path issues from noisy dev-only tooling flags — before this
+   goes near production.
+3. **Optimistic-locking frontend** — backend genuinely rejects a stale
+   update with a 409 on Customer/Employee/Role; only those three forms
+   are wired on the frontend.
+4. **GDPC returns** — confirmed the actual format sits behind their
+   member-only portal, not publicly available; stays open until that
+   changes.
+5. **CAR/Credit Concentration Risk boundaries, disclosed, not silent
+   gaps**: loan classification day-boundaries beyond the CRD's
+   confirmed >90-day past-due threshold are a convention; "qualifying
+   retail" is a simplified proxy; mortgage-specific past-due treatment
+   isn't applied; the Guidelines' own Pillar II PD/LGD/EAD modeling is
+   explicitly bank-only and correctly not built.
+6. **Everything named as a disclosed gap inline, module by module** —
+   Shift Management and Biometric Integration (HR), Sector Analysis and
+   Officer Performance (Portfolio), full §297 Audit Planning (Internal
+   Audit), inward/outward cheque clearing-house integration into actual
+   money movement — see the README's per-module detail for the complete,
+   current list rather than duplicating it here.
