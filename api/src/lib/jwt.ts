@@ -60,4 +60,24 @@ export function verifyDemoLinkToken(token: string): DemoLinkPayload {
   return jwt.verify(token, DEMO_LINK_SECRET) as DemoLinkPayload;
 }
 
+// MFA-pending tokens — issued after a correct password but before MFA is
+// verified, so login becomes a real two-step exchange rather than a single
+// call that just happens to check more things. Deliberately its own JWT
+// namespace (same reasoning as demo-link tokens above): a leaked/expired
+// MFA-pending token can never be mistaken for or exchanged as a real access
+// token, and it can't be used for anything except finishing this one login.
+const MFA_PENDING_SECRET = process.env.MFA_PENDING_SECRET || "dev-mfa-pending-secret";
+
+export interface MfaPendingPayload {
+  userId: string;
+}
+
+export function signMfaPendingToken(payload: MfaPendingPayload, ttlSeconds: number): string {
+  return jwt.sign(payload, MFA_PENDING_SECRET, { expiresIn: ttlSeconds });
+}
+
+export function verifyMfaPendingToken(token: string): MfaPendingPayload {
+  return jwt.verify(token, MFA_PENDING_SECRET) as MfaPendingPayload;
+}
+
 export { REFRESH_SECRET };

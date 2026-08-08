@@ -3,11 +3,155 @@ import bcrypt from "bcryptjs";
 import { z } from "zod";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma";
-import { signAccessToken, generateRefreshToken, hashRefreshToken, signDemoLinkToken, verifyDemoLinkToken } from "../lib/jwt";
+import {
+  signAccessToken,
+  generateRefreshToken,
+  hashRefreshToken,
+  signDemoLinkToken,
+  verifyDemoLinkToken,
+  signMfaPendingToken,
+  verifyMfaPendingToken,
+} from "../lib/jwt";
 import { requireAuth, AuthedRequest } from "../middleware/auth";
 import { SYSTEM_ROLE_TEMPLATES } from "../seed-data";
+import {
+  PASSWORD_MIN_LENGTH,
+  PASSWORD_HISTORY_DEPTH,
+  FAILED_ATTEMPT_THRESHOLD,
+  MFA_PENDING_TOKEN_TTL_SECONDS,
+  passwordExpiryDate,
+  lockoutExpiryDate,
+  validatePasswordLength,
+  isPasswordReused,
+  encryptSecret,
+  decryptSecret,
+  generateTotpSecretBase32,
+  verifyTotpCode,
+  totpEnrollmentUri,
+  generateBackupCodes,
+  hashBackupCodes,
+  matchAndConsumeBackupCode,
+} from "../lib/security";
 
 export const authRouter = Router();
+
+// -----------------------------------------------------------------------
+// PDDS Phase 4 helpers — shared by /login, /login/mfa, and anywhere else
+// a login attempt reaches a final SUCCESS/FAILED outcome. Kept local to
+// this file since they're tightly coupled to the request/response shape
+// of the login flow specifically, not general-purpose enough for
+// lib/security.ts.
+// -----------------------------------------------------------------------
+// Deliberately a minimal hand-written shape, not Prisma.UserGetPayload<{}>
+// — this sandbox's generated client is a stub (prisma generate can't
+// reach binaries.prisma.sh from here, a standing limitation noted
+// throughout this build), so Prisma's generic payload types aren't
+// reliably exported. This interface only needs the fields these helpers
+// actually touch.
+interface LoginableUser {
+  id: string;
+  institutionId: string;
+  category: "INTERNAL" | "EXTERNAL";
+  fullName: string;
+  email: string;
+  failedLoginCount: number;
+  lockedUntil: Date | null;
+  mustChangePassword: boolean;
+  passwordExpiresAt: Date | null;
+}
+
+async function recordLoginAttempt(
+  userId: string,
+  result: "SUCCESS" | "FAILED_PASSWORD" | "FAILED_MFA" | "LOCKED_OUT" | "FAILED_OTHER",
+  req: { headers: { "user-agent"?: string }; ip?: string },
+  failureReason?: string
+) {
+  await prisma.userLoginHistory.create({
+    data: {
+      userId,
+      result,
+      failureReason,
+      ipAddress: req.ip,
+      userAgent: req.headers["user-agent"],
+    },
+  });
+}
+
+async function registerFailedPassword(user: LoginableUser, req: { headers: { "user-agent"?: string }; ip?: string }) {
+  const nextCount = user.failedLoginCount + 1;
+  const willLock = nextCount >= FAILED_ATTEMPT_THRESHOLD;
+  await prisma.user.update({
+    where: { id: user.id },
+    data: {
+      failedLoginCount: willLock ? 0 : nextCount,
+      lastFailedLoginAt: new Date(),
+      lockedUntil: willLock ? lockoutExpiryDate() : user.lockedUntil,
+    },
+  });
+  await recordLoginAttempt(user.id, willLock ? "LOCKED_OUT" : "FAILED_PASSWORD", req);
+  return willLock;
+}
+
+async function completeSuccessfulLogin(
+  user: LoginableUser,
+  req: { headers: { "user-agent"?: string }; ip?: string },
+  deviceFingerprint?: string
+) {
+  const accessToken = signAccessToken({
+    userId: user.id,
+    institutionId: user.institutionId,
+    category: user.category,
+  });
+  const { raw, hash, expiresAt } = generateRefreshToken();
+
+  await prisma.refreshToken.create({
+    data: {
+      userId: user.id,
+      tokenHash: hash,
+      expiresAt,
+      userAgent: req.headers["user-agent"],
+      ipAddress: req.ip,
+    },
+  });
+
+  await prisma.user.update({
+    where: { id: user.id },
+    data: { failedLoginCount: 0, lastFailedLoginAt: null, lockedUntil: null },
+  });
+
+  if (deviceFingerprint) {
+    await prisma.userDevice.upsert({
+      where: { userId_fingerprint: { userId: user.id, fingerprint: deviceFingerprint } },
+      create: {
+        userId: user.id,
+        fingerprint: deviceFingerprint,
+        lastSeenAt: new Date(),
+        ipAddress: req.ip,
+        userAgent: req.headers["user-agent"],
+      },
+      update: {
+        lastSeenAt: new Date(),
+        ipAddress: req.ip,
+        userAgent: req.headers["user-agent"],
+      },
+    });
+  }
+
+  await prisma.auditLog.create({
+    data: { institutionId: user.institutionId, userId: user.id, action: "auth.login" },
+  });
+  await recordLoginAttempt(user.id, "SUCCESS", req);
+
+  const mustChangePassword =
+    user.mustChangePassword || (user.passwordExpiresAt !== null && user.passwordExpiresAt < new Date());
+
+  return {
+    accessToken,
+    refreshToken: raw,
+    user: { id: user.id, fullName: user.fullName, email: user.email, institutionId: user.institutionId },
+    mustChangePassword,
+  };
+}
 
 // -----------------------------------------------------------------------
 // POST /auth/register-institution
@@ -30,7 +174,7 @@ const registerSchema = z.object({
   ]),
   adminFullName: z.string().min(2),
   adminEmail: z.string().email(),
-  adminPassword: z.string().min(8),
+  adminPassword: z.string().min(PASSWORD_MIN_LENGTH),
   setupKey: z.string(),
 });
 
@@ -52,6 +196,9 @@ authRouter.post("/register-institution", async (req, res) => {
     return res.status(403).json({ error: "Invalid setup key" });
   }
   const { legalName, tradingName, type, adminFullName, adminEmail, adminPassword } = parsed.data;
+
+  const lengthError = validatePasswordLength(adminPassword);
+  if (lengthError) return res.status(400).json({ error: lengthError });
 
   const existing = await prisma.institution.findFirst({ where: { legalName } });
   if (existing) return res.status(409).json({ error: "Institution already registered" });
@@ -109,6 +256,8 @@ authRouter.post("/register-institution", async (req, res) => {
         passwordHash,
         category: "INTERNAL",
         status: "ACTIVE",
+        passwordChangedAt: new Date(),
+        passwordExpiresAt: passwordExpiryDate(),
       },
     });
 
@@ -135,56 +284,116 @@ authRouter.post("/register-institution", async (req, res) => {
 
 // -----------------------------------------------------------------------
 // POST /auth/login
+// PDDS Phase 4 — now a real two-step exchange when MFA is enrolled: a
+// correct password alone returns { mfaRequired: true, mfaPendingToken }
+// instead of tokens; the client completes the login via POST
+// /auth/login/mfa. Lockout (§136.5, disclosed default: 5 attempts / 30
+// min — see docs/security-policy-defaults.md) is checked before the
+// password comparison runs at all.
 // -----------------------------------------------------------------------
 const loginSchema = z.object({
   institutionId: z.string().optional(),
   email: z.string().email(),
   password: z.string(),
+  deviceFingerprint: z.string().optional(),
 });
 
 authRouter.post("/login", async (req, res) => {
   const parsed = loginSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
-  const { email, password, institutionId } = parsed.data;
+  const { email, password, institutionId, deviceFingerprint } = parsed.data;
 
   const user = await prisma.user.findFirst({
     where: { email, ...(institutionId ? { institutionId } : {}) },
   });
   if (!user) return res.status(401).json({ error: "Invalid credentials" });
 
+  if (user.lockedUntil && user.lockedUntil > new Date()) {
+    await recordLoginAttempt(user.id, "LOCKED_OUT", req);
+    const minutesLeft = Math.ceil((user.lockedUntil.getTime() - Date.now()) / 60000);
+    return res.status(423).json({ error: `Account is locked. Try again in ${minutesLeft} minute(s).` });
+  }
+
   const valid = await bcrypt.compare(password, user.passwordHash);
-  if (!valid) return res.status(401).json({ error: "Invalid credentials" });
+  if (!valid) {
+    const lockedNow = await registerFailedPassword(user, req);
+    return res.status(401).json({
+      error: lockedNow
+        ? `Invalid credentials. Too many failed attempts — account is now locked for 30 minutes.`
+        : "Invalid credentials",
+    });
+  }
 
   if (user.status !== "ACTIVE") {
     return res.status(403).json({ error: `Account is ${user.status.toLowerCase()}` });
   }
 
-  const accessToken = signAccessToken({
-    userId: user.id,
-    institutionId: user.institutionId,
-    category: user.category,
-  });
-  const { raw, hash, expiresAt } = generateRefreshToken();
+  if (user.mfaEnabled) {
+    const mfaPendingToken = signMfaPendingToken({ userId: user.id }, MFA_PENDING_TOKEN_TTL_SECONDS);
+    return res.json({ mfaRequired: true, mfaPendingToken });
+  }
 
-  await prisma.refreshToken.create({
-    data: {
-      userId: user.id,
-      tokenHash: hash,
-      expiresAt,
-      userAgent: req.headers["user-agent"],
-      ipAddress: req.ip,
-    },
-  });
+  const result = await completeSuccessfulLogin(user, req, deviceFingerprint);
+  res.json(result);
+});
 
-  await prisma.auditLog.create({
-    data: { institutionId: user.institutionId, userId: user.id, action: "auth.login" },
-  });
+// -----------------------------------------------------------------------
+// POST /auth/login/mfa
+// Second step of login when the account has MFA enrolled. Accepts either
+// a 6-digit TOTP code or a backup code (format XXXXX-XXXXX, single-use,
+// consumed on match). The mfaPendingToken is its own short-lived (2 min)
+// JWT namespace — see lib/jwt.ts — proving the password step already
+// passed, without a server-side session to track in between.
+// -----------------------------------------------------------------------
+const loginMfaSchema = z.object({
+  mfaPendingToken: z.string(),
+  code: z.string().min(6),
+  deviceFingerprint: z.string().optional(),
+});
 
-  res.json({
-    accessToken,
-    refreshToken: raw,
-    user: { id: user.id, fullName: user.fullName, email: user.email, institutionId: user.institutionId },
-  });
+authRouter.post("/login/mfa", async (req, res) => {
+  const parsed = loginMfaSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+  const { mfaPendingToken, code, deviceFingerprint } = parsed.data;
+
+  let userId: string;
+  try {
+    userId = verifyMfaPendingToken(mfaPendingToken).userId;
+  } catch {
+    return res.status(401).json({ error: "MFA challenge expired or invalid. Please log in again." });
+  }
+
+  const user = await prisma.user.findUnique({ where: { id: userId }, include: { mfa: true } });
+  if (!user || !user.mfa || !user.mfa.verifiedAt) {
+    return res.status(400).json({ error: "MFA is not properly configured on this account." });
+  }
+
+  if (user.lockedUntil && user.lockedUntil > new Date()) {
+    return res.status(423).json({ error: "Account is locked." });
+  }
+
+  let mfaValid = false;
+  if (/^\d{6}$/.test(code)) {
+    const secret = decryptSecret(user.mfa.secretEncrypted);
+    mfaValid = await verifyTotpCode(code, secret);
+  } else {
+    const { matched, remaining } = await matchAndConsumeBackupCode(code, user.mfa.backupCodesHashed);
+    if (matched) {
+      mfaValid = true;
+      await prisma.userMfa.update({ where: { userId: user.id }, data: { backupCodesHashed: remaining } });
+    }
+  }
+
+  if (!mfaValid) {
+    const lockedNow = await registerFailedPassword(user, req);
+    await recordLoginAttempt(user.id, "FAILED_MFA", req);
+    return res.status(401).json({
+      error: lockedNow ? "Incorrect code. Too many failed attempts — account is now locked for 30 minutes." : "Incorrect code",
+    });
+  }
+
+  const result = await completeSuccessfulLogin(user, req, deviceFingerprint);
+  res.json(result);
 });
 
 // -----------------------------------------------------------------------
@@ -298,12 +507,15 @@ authRouter.get("/me", requireAuth, async (req: AuthedRequest, res) => {
 // testing; needs a real emailed token before inviting anyone outside the
 // org.
 // -----------------------------------------------------------------------
-const acceptInviteSchema = z.object({ token: z.string().min(10), password: z.string().min(8) });
+const acceptInviteSchema = z.object({ token: z.string().min(10), password: z.string().min(PASSWORD_MIN_LENGTH) });
 
 authRouter.post("/accept-invite", async (req, res) => {
   const parsed = acceptInviteSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
   const { token, password } = parsed.data;
+
+  const lengthError = validatePasswordLength(password);
+  if (lengthError) return res.status(400).json({ error: lengthError });
 
   const user = await prisma.user.findFirst({ where: { inviteToken: token, status: "INVITED" } });
   if (!user) return res.status(404).json({ error: "This invite link is invalid or has already been used" });
@@ -314,11 +526,180 @@ authRouter.post("/accept-invite", async (req, res) => {
   const passwordHash = await bcrypt.hash(password, 12);
   await prisma.user.update({
     where: { id: user.id },
-    data: { passwordHash, status: "ACTIVE", inviteToken: null, inviteTokenExpiresAt: null },
+    data: {
+      passwordHash,
+      status: "ACTIVE",
+      inviteToken: null,
+      inviteTokenExpiresAt: null,
+      passwordChangedAt: new Date(),
+      passwordExpiresAt: passwordExpiryDate(),
+      mustChangePassword: false,
+    },
   });
 
   await prisma.auditLog.create({
     data: { institutionId: user.institutionId, userId: user.id, action: "auth.accept_invite" },
+  });
+
+  res.status(204).send();
+});
+
+// -----------------------------------------------------------------------
+// POST /auth/change-password
+// The genuine gap this whole phase depends on: no self-service password
+// change existed anywhere before this — accept-invite sets the first
+// password, and nothing ever set a second one. Enforces the disclosed
+// length policy and the last-N reuse restriction (PASSWORD_HISTORY_DEPTH)
+// against real history, not just the current hash.
+// -----------------------------------------------------------------------
+const changePasswordSchema = z.object({
+  currentPassword: z.string(),
+  newPassword: z.string().min(PASSWORD_MIN_LENGTH),
+});
+
+authRouter.post("/change-password", requireAuth, async (req: AuthedRequest, res) => {
+  const parsed = changePasswordSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+  const { currentPassword, newPassword } = parsed.data;
+
+  const lengthError = validatePasswordLength(newPassword);
+  if (lengthError) return res.status(400).json({ error: lengthError });
+
+  const user = await prisma.user.findUnique({ where: { id: req.auth!.userId } });
+  if (!user) return res.status(404).json({ error: "User not found" });
+
+  const currentValid = await bcrypt.compare(currentPassword, user.passwordHash);
+  if (!currentValid) return res.status(401).json({ error: "Current password is incorrect" });
+
+  const sameAsCurrent = await bcrypt.compare(newPassword, user.passwordHash);
+  const recentHistory = await prisma.userPasswordHistory.findMany({
+    where: { userId: user.id },
+    orderBy: { createdAt: "desc" },
+    take: PASSWORD_HISTORY_DEPTH,
+  });
+  const reused =
+    sameAsCurrent ||
+    (await isPasswordReused(
+      newPassword,
+      recentHistory.map((h: { passwordHash: string }) => h.passwordHash)
+    ));
+  if (reused) {
+    return res.status(400).json({ error: `New password can't match your current password or your last ${PASSWORD_HISTORY_DEPTH} passwords.` });
+  }
+
+  const newHash = await bcrypt.hash(newPassword, 12);
+  await prisma.$transaction([
+    prisma.userPasswordHistory.create({ data: { userId: user.id, passwordHash: user.passwordHash } }),
+    prisma.user.update({
+      where: { id: user.id },
+      data: {
+        passwordHash: newHash,
+        passwordChangedAt: new Date(),
+        passwordExpiresAt: passwordExpiryDate(),
+        mustChangePassword: false,
+      },
+    }),
+  ]);
+
+  await prisma.auditLog.create({
+    data: { institutionId: user.institutionId, userId: user.id, action: "auth.change_password" },
+  });
+
+  res.status(204).send();
+});
+
+// -----------------------------------------------------------------------
+// POST /auth/mfa/setup
+// Step 1 of enrollment: generates a TOTP secret, stores it encrypted with
+// verifiedAt still null (not yet trusted), returns the plaintext secret +
+// otpauth:// URI for the client to render as a QR code. Blocked if MFA is
+// already verified on this account — disable it first via
+// POST /auth/mfa/disable rather than silently overwriting a working
+// enrollment, which could lock the person out if the new one is never
+// actually confirmed.
+// -----------------------------------------------------------------------
+authRouter.post("/mfa/setup", requireAuth, async (req: AuthedRequest, res) => {
+  const user = await prisma.user.findUnique({ where: { id: req.auth!.userId }, include: { mfa: true } });
+  if (!user) return res.status(404).json({ error: "User not found" });
+  if (user.mfa?.verifiedAt) {
+    return res.status(409).json({ error: "MFA is already enrolled on this account. Disable it before setting up again." });
+  }
+
+  const secret = generateTotpSecretBase32();
+  await prisma.userMfa.upsert({
+    where: { userId: user.id },
+    create: { userId: user.id, secretEncrypted: encryptSecret(secret), backupCodesHashed: [] },
+    update: { secretEncrypted: encryptSecret(secret), backupCodesHashed: [], verifiedAt: null },
+  });
+
+  res.json({ secret, otpauthUri: totpEnrollmentUri(secret, user.email) });
+});
+
+// -----------------------------------------------------------------------
+// POST /auth/mfa/verify
+// Step 2 of enrollment: proves the person actually scanned the secret
+// into a working authenticator app before MFA becomes enforced on login.
+// Backup codes are generated and returned in plaintext exactly once here
+// — only the hashes are ever stored, same as passwords.
+// -----------------------------------------------------------------------
+const mfaVerifySchema = z.object({ code: z.string().length(6) });
+
+authRouter.post("/mfa/verify", requireAuth, async (req: AuthedRequest, res) => {
+  const parsed = mfaVerifySchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+  const user = await prisma.user.findUnique({ where: { id: req.auth!.userId }, include: { mfa: true } });
+  if (!user?.mfa) return res.status(400).json({ error: "Call POST /auth/mfa/setup first." });
+  if (user.mfa.verifiedAt) return res.status(409).json({ error: "MFA is already verified on this account." });
+
+  const secret = decryptSecret(user.mfa.secretEncrypted);
+  const valid = await verifyTotpCode(parsed.data.code, secret);
+  if (!valid) return res.status(401).json({ error: "Incorrect code" });
+
+  const backupCodes = generateBackupCodes();
+  const hashedCodes = await hashBackupCodes(backupCodes);
+
+  await prisma.$transaction([
+    prisma.userMfa.update({
+      where: { userId: user.id },
+      data: { verifiedAt: new Date(), backupCodesHashed: hashedCodes },
+    }),
+    prisma.user.update({ where: { id: user.id }, data: { mfaEnabled: true } }),
+  ]);
+
+  await prisma.auditLog.create({
+    data: { institutionId: user.institutionId, userId: user.id, action: "auth.mfa_enrolled" },
+  });
+
+  res.json({ backupCodes });
+});
+
+// -----------------------------------------------------------------------
+// POST /auth/mfa/disable
+// Requires the current password, not just an authenticated session — MFA
+// is the thing standing between a stolen access token and full account
+// control, so removing it needs the same proof of identity as changing
+// the password does.
+// -----------------------------------------------------------------------
+const mfaDisableSchema = z.object({ password: z.string() });
+
+authRouter.post("/mfa/disable", requireAuth, async (req: AuthedRequest, res) => {
+  const parsed = mfaDisableSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+  const user = await prisma.user.findUnique({ where: { id: req.auth!.userId } });
+  if (!user) return res.status(404).json({ error: "User not found" });
+
+  const valid = await bcrypt.compare(parsed.data.password, user.passwordHash);
+  if (!valid) return res.status(401).json({ error: "Incorrect password" });
+
+  await prisma.$transaction([
+    prisma.userMfa.deleteMany({ where: { userId: user.id } }),
+    prisma.user.update({ where: { id: user.id }, data: { mfaEnabled: false } }),
+  ]);
+
+  await prisma.auditLog.create({
+    data: { institutionId: user.institutionId, userId: user.id, action: "auth.mfa_disabled" },
   });
 
   res.status(204).send();
