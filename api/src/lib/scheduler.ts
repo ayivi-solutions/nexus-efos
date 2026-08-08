@@ -3,6 +3,7 @@ import { prisma } from "./prisma";
 import { calculateArrears } from "./arrears";
 import { nextExecutionDate } from "./standingInstructions";
 import { isBalanced, balanceEffect, generateJournalNumber, findPostablePeriod } from "./generalLedger";
+import { runSavingsInterestAccrualAllInstitutions, runSavingsInterestPostingAllInstitutions } from "../routes/savings-interest.routes";
 
 // doc §77.3 "Arrears calculations are automatic" — taken literally. Runs
 // once daily rather than being computed live on every read, matching how
@@ -192,6 +193,36 @@ async function runRecurringJournals() {
   console.log(`[scheduler] recurring journals: ${due.length} due, ${executed} executed, ${failed} failed, ${Date.now() - startedAt}ms`);
 }
 
+// EFS §52.3 "Interest Posting" / §52.2 "Automate interest calculations,
+// reduce manual intervention" — the accrual half of the previously-named
+// gap ("Scheduled/automated Savings interest posting — currently
+// staff-triggered"). Runs daily across every institution's active,
+// non-suspended savings accounts, same as the existing manual
+// /accrue-all route but institution-agnostic. See
+// docs/scheduled-jobs.md for the disclosed default this pairs with.
+async function runSavingsInterestAccrual() {
+  const startedAt = Date.now();
+  const result = await runSavingsInterestAccrualAllInstitutions();
+  console.log(
+    `[scheduler] savings interest accrual: ${result.accountsProcessed} account(s) processed, ${result.accrualRowsCreated} accrual row(s) created/updated, ${Date.now() - startedAt}ms`
+  );
+}
+
+// The posting half. Disclosed default cadence — monthly, on the 1st — not
+// sourced from any working document (checked directly against EFS §52.3,
+// which names "Interest Posting" as a requirement without specifying a
+// frequency). Chosen because it matches how AVERAGE_DAILY_BALANCE and
+// MINIMUM_MONTHLY_BALANCE already compute per calendar month, and because
+// it's the standard real-world convention for savings interest crediting.
+// See docs/scheduled-jobs.md.
+async function runSavingsInterestPosting() {
+  const startedAt = Date.now();
+  const result = await runSavingsInterestPostingAllInstitutions();
+  console.log(
+    `[scheduler] savings interest posting: ${result.accountsPosted} account(s) posted, GHS ${result.totalPosted} total, batch ${result.batchId}, ${Date.now() - startedAt}ms`
+  );
+}
+
 export function startScheduler() {
   // 01:00 every day, server time — after any prior day's end-of-day
   // activity, before the next business day starts.
@@ -199,10 +230,19 @@ export function startScheduler() {
     runArrearsCheck().catch((err) => console.error("[scheduler] arrears check failed:", err));
     runStandingInstructions().catch((err) => console.error("[scheduler] standing instructions failed:", err));
     runRecurringJournals().catch((err) => console.error("[scheduler] recurring journals failed:", err));
+    runSavingsInterestAccrual().catch((err) => console.error("[scheduler] savings interest accrual failed:", err));
   });
-  console.log("[scheduler] started — arrears check + standing instructions + recurring journals scheduled daily at 01:00");
+  // 02:00 on the 1st of the month — after the same day's 01:00 accrual
+  // run has already captured the final day of the prior month, so
+  // posting never runs against a stale figure.
+  cron.schedule("0 2 1 * *", () => {
+    runSavingsInterestPosting().catch((err) => console.error("[scheduler] savings interest posting failed:", err));
+  });
+  console.log(
+    "[scheduler] started — arrears check + standing instructions + recurring journals + savings interest accrual scheduled daily at 01:00; savings interest posting scheduled monthly at 02:00 on the 1st"
+  );
 }
 
 // Exported so an admin route (or a manual run during testing/pilot setup)
 // can trigger these on demand rather than waiting for the next scheduled run.
-export { runArrearsCheck, runStandingInstructions, runRecurringJournals };
+export { runArrearsCheck, runStandingInstructions, runRecurringJournals, runSavingsInterestAccrual, runSavingsInterestPosting };

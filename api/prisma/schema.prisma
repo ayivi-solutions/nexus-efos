@@ -1529,7 +1529,12 @@ model SavingsInterestPosting {
   totalAmount    Decimal        @map("total_amount") @db.Decimal(14, 2)
   transactionId  String?        @map("transaction_id")
   batchId        String?        @map("batch_id")
-  postedById     String         @map("posted_by_id")
+  // Nullable — same reasoning as SavingsTransaction.recordedById: a null
+  // here means the scheduler posted this automatically (see
+  // docs/scheduled-jobs.md), not a real staff member. Distinguishable
+  // from a genuine data gap by checking batchId, which the scheduler
+  // always sets.
+  postedById     String?        @map("posted_by_id")
   reversedAt     DateTime?      @map("reversed_at")
   reversedById   String?        @map("reversed_by_id")
   reversalReason String?        @map("reversal_reason")

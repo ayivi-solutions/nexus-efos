@@ -199,7 +199,11 @@ savingsInterestRouter.post("/accrue-all", requirePermission("savings.approve"), 
 });
 
 // §52.3 Interest Posting — the balance-affecting, fully-audited step.
-async function postInterestForAccount(accountId: string, institutionId: string, postedById: string, batchId?: string) {
+// postedById is optional: a scheduler-driven automatic run (see
+// docs/scheduled-jobs.md) has no authenticated staff member behind it —
+// distinguishable from a real gap by batchId, which the scheduler always
+// sets and a manual single-account post never does.
+async function postInterestForAccount(accountId: string, institutionId: string, postedById?: string, batchId?: string) {
   const unposted = await prisma.savingsInterestAccrual.findMany({
     where: { accountId, institutionId, posted: false },
     orderBy: { accrualDate: "asc" },
@@ -238,6 +242,68 @@ async function postInterestForAccount(accountId: string, institutionId: string, 
   return result;
 }
 
+// Extracted from the /post-all route so the scheduler (institution-agnostic
+// — see docs/scheduled-jobs.md) can drive the same logic without an
+// authenticated request in scope.
+async function postAllForInstitution(institutionId: string, postedById?: string, batchId?: string) {
+  const accountsWithUnposted = await prisma.savingsInterestAccrual.findMany({
+    where: { institutionId, posted: false },
+    select: { accountId: true },
+    distinct: ["accountId"],
+  });
+
+  let accountsPosted = 0;
+  let totalPosted = 0;
+  for (const { accountId } of accountsWithUnposted) {
+    const result = await postInterestForAccount(accountId, institutionId, postedById, batchId);
+    if (result) {
+      accountsPosted++;
+      totalPosted = round2(totalPosted + Number(result.posting.totalAmount));
+    }
+  }
+  return { accountsPosted, totalPosted };
+}
+
+// Scheduler entry point (docs/scheduled-jobs.md) — daily accrual across
+// every institution's active, non-suspended savings accounts, not scoped
+// to one institution's authenticated request the way the /accrue-all
+// route is.
+export async function runSavingsInterestAccrualAllInstitutions(throughDate: Date = new Date()) {
+  const accounts = await prisma.savingsAccount.findMany({
+    where: { status: "ACTIVE", interestSuspended: false },
+    select: { id: true, institutionId: true },
+  });
+
+  let accountsProcessed = 0;
+  let accrualRowsCreated = 0;
+  for (const acc of accounts) {
+    const result = await runAccrualForAccount(acc.id, acc.institutionId, throughDate);
+    if (result.accruals) {
+      accountsProcessed++;
+      accrualRowsCreated += result.accruals.length;
+    }
+  }
+  return { accountsProcessed, accrualRowsCreated };
+}
+
+// Scheduler entry point — posts every institution's unposted accrued
+// interest. Disclosed default cadence: monthly, on the 1st (see
+// docs/scheduled-jobs.md) — no working document specifies a posting
+// frequency, checked directly against EFS §52.3.
+export async function runSavingsInterestPostingAllInstitutions() {
+  const institutionIds = await prisma.institution.findMany({ select: { id: true } });
+  const batchId = crypto.randomUUID();
+
+  let accountsPosted = 0;
+  let totalPosted = 0;
+  for (const { id: institutionId } of institutionIds) {
+    const result = await postAllForInstitution(institutionId, undefined, batchId);
+    accountsPosted += result.accountsPosted;
+    totalPosted = round2(totalPosted + result.totalPosted);
+  }
+  return { batchId, accountsPosted, totalPosted };
+}
+
 savingsInterestRouter.post("/:accountId/post", requirePermission("savings.approve"), async (req: AuthedRequest, res) => {
   const result = await postInterestForAccount(req.params.accountId, req.auth!.institutionId, req.auth!.userId);
   if (!result) return res.status(400).json({ error: "No unposted accrued interest for this account" });
@@ -252,27 +318,13 @@ savingsInterestRouter.post("/:accountId/post", requirePermission("savings.approv
 // §119 Ledger Posting Management — Batch Posting, a named first-class pattern.
 savingsInterestRouter.post("/post-all", requirePermission("savings.approve"), async (req: AuthedRequest, res) => {
   const batchId = crypto.randomUUID();
-  const accountsWithUnposted = await prisma.savingsInterestAccrual.findMany({
-    where: { institutionId: req.auth!.institutionId, posted: false },
-    select: { accountId: true },
-    distinct: ["accountId"],
-  });
-
-  let accountsPosted = 0;
-  let totalPosted = 0;
-  for (const { accountId } of accountsWithUnposted) {
-    const result = await postInterestForAccount(accountId, req.auth!.institutionId, req.auth!.userId, batchId);
-    if (result) {
-      accountsPosted++;
-      totalPosted = round2(totalPosted + Number(result.posting.totalAmount));
-    }
-  }
+  const result = await postAllForInstitution(req.auth!.institutionId, req.auth!.userId, batchId);
 
   await prisma.auditLog.create({
-    data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "savings.interest_post_all", resource: "savings_account", resourceId: "batch", metadata: { batchId, accountsPosted, totalPosted } },
+    data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "savings.interest_post_all", resource: "savings_account", resourceId: "batch", metadata: { batchId, ...result } },
   });
 
-  res.status(201).json({ batchId, accountsPosted, totalPosted });
+  res.status(201).json({ batchId, ...result });
 });
 
 // §52.3 Interest Reversal where authorised — resets the linked accruals
