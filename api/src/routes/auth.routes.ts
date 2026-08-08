@@ -640,10 +640,18 @@ authRouter.get("/me", requireAuth, async (req: AuthedRequest, res) => {
   for (const ur of user.userRoles) {
     for (const rp of ur.role.rolePermissions) permissionSet.add(rp.permission.code);
   }
+  // Role.category (EXECUTIVE/OPERATIONAL/GOVERNANCE/TECHNICAL/CUSTOMER) —
+  // a real enum, not free-text role names — used by the frontend to
+  // pick a role-relevant 5th mobile bottom-nav slot. Deliberately
+  // returned raw rather than mapped to a nav item here, so the nav
+  // structure itself stays a frontend concern.
+  const roleCategorySet = new Set<string>();
+  for (const ur of user.userRoles) roleCategorySet.add(ur.role.category);
 
   res.json({
     user: { id: user.id, fullName: user.fullName, email: user.email },
     permissions: Array.from(permissionSet),
+    roleCategories: Array.from(roleCategorySet),
   });
 });
 

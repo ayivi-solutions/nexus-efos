@@ -39,6 +39,7 @@ export function AppShell({ active, children }: { active: string; children: React
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [permissions, setPermissions] = useState<string[] | null>(null);
+  const [roleCategories, setRoleCategories] = useState<string[]>([]);
 
   useEffect(() => {
     if (!sessionStorage.getItem("nexus_access_token")) {
@@ -47,7 +48,10 @@ export function AppShell({ active, children }: { active: string; children: React
     }
     api
       .whoAmI()
-      .then((res) => setPermissions(res.permissions))
+      .then((res) => {
+        setPermissions(res.permissions);
+        setRoleCategories(res.roleCategories || []);
+      })
       .catch(() => setPermissions([]));
   }, [router]);
 
@@ -55,12 +59,33 @@ export function AppShell({ active, children }: { active: string; children: React
 
   const visibleNav = permissions === null ? NAV_FULL : NAV_FULL.filter((item) => hasPerm(item.perm));
 
+  // Mobile bottom nav — Dashboard + Customers + Loans + Savings always,
+  // plus one role-relevant 5th slot. Role.category is a real enum
+  // (EXECUTIVE/OPERATIONAL/GOVERNANCE/TECHNICAL/CUSTOMER), not a
+  // free-text role name, so this works for any institution's custom
+  // role names, not just ones literally called "CEO". Priority order
+  // below handles someone holding more than one category of role,
+  // roughly by breadth of concern (EXECUTIVE sees everything, so goes
+  // first). Falls back to Approvals if the person's roles don't map to
+  // any category here (e.g. permissions === null while still loading).
+  const FIFTH_SLOT_BY_CATEGORY: Record<string, string> = {
+    EXECUTIVE: "Approvals",     // cross-cutting sign-off inbox — spans loans, cash transfers, attendance corrections, audit scope
+    GOVERNANCE: "Internal Audit", // compliance/audit officers
+    OPERATIONAL: "Cash & Vault",  // daily teller/branch work — matches the Ops Supervisor doc's own emphasis on daily cash reconciliation
+    TECHNICAL: "Audit Log",       // system administrators — matches their audit.view permission
+    CUSTOMER: "Customer Care",    // customer-facing/service staff
+  };
+  const CATEGORY_PRIORITY = ["EXECUTIVE", "GOVERNANCE", "OPERATIONAL", "TECHNICAL", "CUSTOMER"];
+  const fifthSlotLabel =
+    CATEGORY_PRIORITY.map((c) => FIFTH_SLOT_BY_CATEGORY[c]).find((label) =>
+      roleCategories.some((rc) => FIFTH_SLOT_BY_CATEGORY[rc] === label)
+    ) || "Approvals";
+
+  const CORE_TAB_LABELS = ["Dashboard", "Customers", "Loans", "Savings"];
   const tabItems = [
-    NAV_FULL[0],
-    ...NAV_FULL.slice(1)
-      .filter((item) => hasPerm(item.perm))
-      .slice(0, 3),
-  ];
+    ...CORE_TAB_LABELS.map((label) => NAV_FULL.find((item) => item.label === label)!).filter((item) => hasPerm(item.perm)),
+    NAV_FULL.find((item) => item.label === fifthSlotLabel),
+  ].filter((item): item is (typeof NAV_FULL)[number] => !!item && hasPerm(item.perm));
 
   function go(href: string) {
     setOpen(false);
