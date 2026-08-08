@@ -4,6 +4,7 @@ import { z } from "zod";
 import { prisma } from "../lib/prisma";
 import { requireAuth, AuthedRequest } from "../middleware/auth";
 import { requirePermission } from "../middleware/rbac";
+import { checkVersion, VersionConflictError } from "../lib/optimisticLock";
 
 export const institutionRouter = Router();
 institutionRouter.use(requireAuth);
@@ -43,11 +44,21 @@ institutionRouter.post("/branches", requirePermission("branches.administer"), as
 const updateBranchSchema = z.object({ name: z.string().min(1).optional(), code: z.string().min(1).optional(), region: z.string().optional().nullable() });
 
 institutionRouter.patch("/branches/:id", requirePermission("branches.administer"), async (req: AuthedRequest, res) => {
-  const parsed = updateBranchSchema.safeParse(req.body);
+  const { expectedVersion, ...body } = req.body as { expectedVersion?: number; [key: string]: any };
+  const parsed = updateBranchSchema.safeParse(body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
   const existing = await prisma.branch.findFirst({ where: { id: req.params.id, institutionId: req.auth!.institutionId } });
   if (!existing) return res.status(404).json({ error: "Branch not found" });
+
+  try {
+    await checkVersion(prisma, "branch", existing.id, expectedVersion);
+  } catch (err) {
+    if (err instanceof VersionConflictError) {
+      return res.status(409).json({ error: err.message, currentVersion: err.currentVersion });
+    }
+    throw err;
+  }
 
   const branch = await prisma.branch.update({ where: { id: existing.id }, data: parsed.data });
   await prisma.auditLog.create({

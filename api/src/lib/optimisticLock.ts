@@ -4,10 +4,15 @@
 // current one before applying — meaning two people editing the same
 // record at the same time could silently overwrite each other with no
 // warning. This closes that gap for the genuine free-form multi-field
-// edit endpoints where it actually matters (Customer, Employee, Role) —
-// not Loan or Product, which turned out on inspection to have no general
-// edit endpoint at all, only sequenced status-transition actions already
-// protected by their own status checks.
+// edit endpoints where it actually matters (Customer, Employee, Role,
+// Branch, Business Rule) — not Loan or Product, which turned out on
+// inspection to have no general edit endpoint at all, only sequenced
+// status-transition actions already protected by their own status
+// checks. Same reasoning excludes the narrower single-purpose PATCH
+// actions added later this build (teller limit, collector transfer/
+// availability, customer stage/KYC/CDD, promise-to-pay) — those are
+// one-field, single-purpose updates, not the kind of multi-field form
+// two people plausibly edit at once.
 export class VersionConflictError extends Error {
   currentVersion: number;
   constructor(currentVersion: number) {
@@ -23,7 +28,7 @@ export class VersionConflictError extends Error {
 // protection — see the frontend forms for Customer/Employee/Role.
 export async function checkVersion(
   prisma: any,
-  model: "customer" | "employee" | "role",
+  model: "customer" | "employee" | "role" | "branch" | "businessRule",
   id: string,
   expectedVersion: number | undefined
 ): Promise<void> {

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
-import { useErrorToast } from "@/components/Toast";
+import { useErrorToast, useToast } from "@/components/Toast";
 import { AppShell } from "@/components/AppShell";
 import { GHANA_REGIONS } from "@/lib/ghana-regions";
 
@@ -10,12 +10,14 @@ export default function BranchesPage() {
   const [branches, setBranches] = useState<any[]>([]);
   const [error, setError] = useState<string | null>(null);
   useErrorToast(error);
+  const toast = useToast();
   const [form, setForm] = useState({ name: "", code: "", region: "" });
   const [saving, setSaving] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editForm, setEditForm] = useState({ name: "", code: "", region: "" });
+  const [editingVersion, setEditingVersion] = useState<number | undefined>(undefined);
 
   function load() {
     api.listBranches(showArchived).then((res) => setBranches(res.branches)).catch((err) => setError(err.message));
@@ -37,15 +39,24 @@ export default function BranchesPage() {
   function startEdit(b: any) {
     setEditingId(b.id);
     setEditForm({ name: b.name, code: b.code, region: b.region || "" });
+    setEditingVersion(b.versionNo);
   }
 
   async function saveEdit(id: string) {
     setBusyId(id); setError(null);
     try {
-      await api.updateBranch(id, editForm);
+      await api.updateBranch(id, { ...editForm, expectedVersion: editingVersion });
       setEditingId(null);
       load();
-    } catch (err: any) { setError(err.message || "Could not update branch"); }
+    } catch (err: any) {
+      if (err.message?.includes("changed by someone else")) {
+        toast.error("Someone else updated this branch while you were editing. Reloading the latest version — please redo your changes.");
+        setEditingId(null);
+        load();
+      } else {
+        setError(err.message || "Could not update branch");
+      }
+    }
     finally { setBusyId(null); }
   }
 

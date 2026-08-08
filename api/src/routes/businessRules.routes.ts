@@ -4,6 +4,7 @@ import { prisma } from "../lib/prisma";
 import { requireAuth, AuthedRequest } from "../middleware/auth";
 import { requirePermission } from "../middleware/rbac";
 import { RuleCondition, RuleAction } from "../lib/businessRules";
+import { checkVersion, VersionConflictError } from "../lib/optimisticLock";
 
 // doc §41 Business Rules Framework. Activation goes through the same
 // generic Approval Workflow every other high-stakes action in this app
@@ -90,12 +91,22 @@ businessRulesRouter.post("/", requirePermission("institution.configure"), async 
 // silently change underneath a business owner who approved a specific
 // version. Change an active rule by retiring it and creating a new one.
 businessRulesRouter.patch("/:id", requirePermission("institution.configure"), async (req: AuthedRequest, res) => {
-  const parsed = ruleSchema.partial().safeParse(req.body);
+  const { expectedVersion, ...body } = req.body as { expectedVersion?: number; [key: string]: any };
+  const parsed = ruleSchema.partial().safeParse(body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
   const existing = await prisma.businessRule.findFirst({ where: { id: req.params.id, institutionId: req.auth!.institutionId } });
   if (!existing) return res.status(404).json({ error: "Rule not found" });
   if (existing.status !== "DRAFT") return res.status(400).json({ error: "Only DRAFT rules can be edited — retire this rule and create a new one instead" });
+
+  try {
+    await checkVersion(prisma, "businessRule", existing.id, expectedVersion);
+  } catch (err) {
+    if (err instanceof VersionConflictError) {
+      return res.status(409).json({ error: err.message, currentVersion: err.currentVersion });
+    }
+    throw err;
+  }
 
   const rule = await prisma.businessRule.update({
     where: { id: existing.id },

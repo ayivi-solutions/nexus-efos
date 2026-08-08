@@ -20,10 +20,10 @@
     "express-rate-limit": "^7.5.1",
     "jsonwebtoken": "^9.0.2",
     "multer": "^1.4.5-lts.1",
-    "node-cron": "^3.0.3",
+    "node-cron": "^4.6.0",
     "otplib": "^13.4.1",
     "pdfkit": "^0.15.2",
-    "xlsx": "^0.18.5",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz",
     "zod": "^3.23.8"
   },
   "devDependencies": {
@@ -33,7 +33,6 @@
     "@types/jsonwebtoken": "^9.0.7",
     "@types/multer": "^1.4.11",
     "@types/node": "^20.14.0",
-    "@types/node-cron": "^3.0.11",
     "@types/pdfkit": "^0.17.6",
     "prisma": "^5.20.0",
     "tsx": "^4.19.0",

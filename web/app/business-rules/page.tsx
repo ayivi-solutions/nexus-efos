@@ -35,6 +35,8 @@ export default function BusinessRulesPage() {
   const [form, setForm] = useState(emptyForm);
   const [saving, setSaving] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editingVersion, setEditingVersion] = useState<number | undefined>(undefined);
 
   function load() {
     api.listBusinessRules().then((res) => setRules(res.rules)).catch((err) => setError(err.message));
@@ -59,23 +61,69 @@ export default function BusinessRulesPage() {
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
     setSaving(true); setError(null);
+    const payload = {
+      ...form,
+      priority: Number(form.priority),
+      effectiveDate: form.effectiveDate || undefined,
+      expiryDate: form.expiryDate || undefined,
+      conditions: form.conditions.map((c) => ({ ...c, value: isNaN(Number(c.value)) ? c.value : Number(c.value) })),
+    };
     try {
-      await api.createBusinessRule({
-        ...form,
-        priority: Number(form.priority),
-        effectiveDate: form.effectiveDate || undefined,
-        expiryDate: form.expiryDate || undefined,
-        conditions: form.conditions.map((c) => ({ ...c, value: isNaN(Number(c.value)) ? c.value : Number(c.value) })),
-      });
-      toast.success("Rule created as DRAFT.");
+      if (editingId) {
+        // §41 — editing is only ever permitted for DRAFT rules (backend
+        // enforces this too, not just the frontend hiding the button);
+        // real optimistic-locking, same checkVersion helper Customer/
+        // Employee/Role/Branch already use — a stale edit gets a 409,
+        // not a silent overwrite.
+        await api.updateBusinessRule(editingId, { ...payload, expectedVersion: editingVersion });
+        toast.success("Rule updated.");
+      } else {
+        await api.createBusinessRule(payload);
+        toast.success("Rule created as DRAFT.");
+      }
       setForm(emptyForm);
       setShowForm(false);
+      setEditingId(null);
+      setEditingVersion(undefined);
       load();
     } catch (err: any) {
-      setError(err.message || "Could not create rule");
+      if (err.message?.includes("changed by someone else")) {
+        toast.error("Someone else updated this rule while you were editing. Reloading the latest version — please redo your changes.");
+        setShowForm(false);
+        setEditingId(null);
+        load();
+      } else {
+        setError(err.message || "Could not save rule");
+      }
     } finally {
       setSaving(false);
     }
+  }
+
+  function startEdit(r: any) {
+    setEditingId(r.id);
+    setEditingVersion(r.versionNo);
+    setForm({
+      name: r.name,
+      businessPurpose: r.businessPurpose || "",
+      description: r.description || "",
+      category: r.category,
+      triggerPoint: r.triggerPoint,
+      conditionLogic: r.conditionLogic,
+      priority: String(r.priority),
+      effectiveDate: r.effectiveDate ? r.effectiveDate.slice(0, 10) : "",
+      expiryDate: r.expiryDate ? r.expiryDate.slice(0, 10) : "",
+      conditions: (r.conditions as any[]).map((c) => ({ ...c, value: String(c.value) })),
+      actions: r.actions as any[],
+    });
+    setShowForm(true);
+  }
+
+  function cancelForm() {
+    setShowForm(false);
+    setEditingId(null);
+    setEditingVersion(undefined);
+    setForm(emptyForm);
   }
 
   async function handleRequestActivation(id: string) {
@@ -111,11 +159,12 @@ export default function BusinessRulesPage() {
             <h1 className="font-display font-semibold text-2xl dt:text-3xl text-ink-900">Business Rules</h1>
             <p className="text-text-muted text-sm mt-1">doc §41 — institutional policy, configured here, not embedded in code. Currently evaluated at Loan Initiation.</p>
           </div>
-          <button onClick={() => setShowForm((s) => !s)} className="btn-dark shrink-0">{showForm ? "Cancel" : "+ New rule"}</button>
+          <button onClick={() => (showForm ? cancelForm() : setShowForm(true))} className="btn-dark shrink-0">{showForm ? "Cancel" : "+ New rule"}</button>
         </div>
 
         {showForm && (
           <form onSubmit={handleCreate} className="card p-6 mb-8">
+            {editingId && <div className="text-[13px] text-gold-600 font-medium mb-4">Editing draft rule — only DRAFT rules can be edited.</div>}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
               <label className="block">
                 <span className="block text-[13px] text-text-500 mb-1.5">Rule name</span>
@@ -182,8 +231,8 @@ export default function BusinessRulesPage() {
               {form.actions.length > 1 && <button type="button" onClick={() => setForm((f) => ({ ...f, actions: f.actions.slice(0, -1) }))} className="btn-text text-rose-600">Remove last</button>}
             </div>
 
-            <button type="submit" disabled={saving} className="btn-primary">{saving ? "Creating…" : "Create rule (as Draft)"}</button>
-            <p className="text-text-muted text-xs mt-2">New rules start as Draft — request activation below, which needs a different authorised user to approve before it evaluates against real loans.</p>
+            <button type="submit" disabled={saving} className="btn-primary">{saving ? "Saving…" : editingId ? "Save changes" : "Create rule (as Draft)"}</button>
+            {!editingId && <p className="text-text-muted text-xs mt-2">New rules start as Draft — request activation below, which needs a different authorised user to approve before it evaluates against real loans.</p>}
           </form>
         )}
 
@@ -201,7 +250,10 @@ export default function BusinessRulesPage() {
                   <td><span className={`badge ${STATUS_COLOR[r.status] || ""}`}>{r.status.replaceAll("_", " ")}</span></td>
                   <td className="whitespace-nowrap space-x-2">
                     {r.status === "DRAFT" && (
-                      <button onClick={() => handleRequestActivation(r.id)} disabled={busyId === r.id} className="btn-text text-green-600">Request activation</button>
+                      <>
+                        <button onClick={() => startEdit(r)} disabled={busyId === r.id} className="btn-text text-gold-600">Edit</button>
+                        <button onClick={() => handleRequestActivation(r.id)} disabled={busyId === r.id} className="btn-text text-green-600">Request activation</button>
+                      </>
                     )}
                     {r.status === "ACTIVE" && (
                       <button onClick={() => handleRetire(r.id)} disabled={busyId === r.id} className="btn-text text-rose-600">Retire</button>
