@@ -345,6 +345,15 @@ async function applyApproval(request: { id: string; type: string; targetId: stri
       break;
     }
 
+    // ETAS §78.7 "Every audit shall have an approved scope" — approving
+    // moves PLANNED straight to IN_PROGRESS (skipping a separate manual
+    // APPROVED-click step) since the approval itself is what authorizes
+    // the scope; there's nothing further to do before fieldwork starts.
+    case "AUDIT_ENGAGEMENT_APPROVAL": {
+      await prisma.auditEngagement.update({ where: { id: request.targetId }, data: { status: "IN_PROGRESS" } });
+      break;
+    }
+
     // doc §190.3 "Transfers require authorisation" / "Asset custody is
     // continuously maintained" — the asset's current custodian fields
     // only actually move once approved, not at request time.
@@ -501,6 +510,11 @@ approvalsRouter.post("/:id/reject", requirePermission("institution.configure"), 
       where: { id: request.targetId },
       data: { correctionPending: false, proposedClockInAt: null, proposedClockOutAt: null },
     });
+  }
+  // A rejected audit scope stays PLANNED — the natural next step is
+  // revising the scope and resubmitting, not a terminal dead end.
+  if (request.type === "AUDIT_ENGAGEMENT_APPROVAL") {
+    await prisma.auditEngagement.update({ where: { id: request.targetId }, data: { status: "PLANNED" } });
   }
   // CASH_BALANCING_VARIANCE deliberately has no reject-side handler — a
   // rejected variance stays exactly as VARIANCE_PENDING_APPROVAL, which

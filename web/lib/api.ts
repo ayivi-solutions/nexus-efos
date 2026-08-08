@@ -509,6 +509,30 @@ export const api = {
   resolveDisciplinaryCase: (id: string, actionTaken: string) => request(`/hr/disciplinary-cases/${id}/resolve`, { method: "POST", body: JSON.stringify({ actionTaken }) }),
   closeDisciplinaryCase: (id: string) => request(`/hr/disciplinary-cases/${id}/close`, { method: "POST" }),
 
+  listAuditEngagements: (status?: string) => request(`/internal-audit/engagements${status ? `?status=${status}` : ""}`),
+  createAuditEngagement: (data: { type: string; branchId?: string; leadAuditor: string; scope: string; plannedStartDate: string }) =>
+    request("/internal-audit/engagements", { method: "POST", body: JSON.stringify(data) }),
+  requestAuditEngagementApproval: (id: string) => request(`/internal-audit/engagements/${id}/request-approval`, { method: "POST" }),
+  setAuditEngagementStatus: (id: string, status: string) => request(`/internal-audit/engagements/${id}/status`, { method: "POST", body: JSON.stringify({ status }) }),
+  rateAuditEngagement: (id: string, rating: string) => request(`/internal-audit/engagements/${id}/rate`, { method: "POST", body: JSON.stringify({ rating }) }),
+  closeAuditEngagement: (id: string) => request(`/internal-audit/engagements/${id}/close`, { method: "POST" }),
+
+  listAuditFindings: (filters?: { engagementId?: string; status?: string; overdueOnly?: boolean }) => {
+    const qs = new URLSearchParams();
+    if (filters?.engagementId) qs.set("engagementId", filters.engagementId);
+    if (filters?.status) qs.set("status", filters.status);
+    if (filters?.overdueOnly) qs.set("overdueOnly", "true");
+    const suffix = qs.toString() ? `?${qs.toString()}` : "";
+    return request(`/internal-audit/findings${suffix}`);
+  },
+  registerAuditFinding: (data: { engagementId: string; description: string; riskClassification: string; rootCauseAnalysis?: string; recommendation: string; actionOwnerId?: string; targetRemediationDate?: string }) =>
+    request("/internal-audit/findings", { method: "POST", body: JSON.stringify(data) }),
+  respondToAuditFinding: (id: string, data: { managementResponse: string; actionOwnerId?: string; targetRemediationDate?: string }) =>
+    request(`/internal-audit/findings/${id}/respond`, { method: "POST", body: JSON.stringify(data) }),
+  markAuditFindingImplemented: (id: string) => request(`/internal-audit/findings/${id}/mark-implemented`, { method: "POST" }),
+  verifyAuditFinding: (id: string) => request(`/internal-audit/findings/${id}/verify`, { method: "POST" }),
+  closeAuditFinding: (id: string) => request(`/internal-audit/findings/${id}/close`, { method: "POST" }),
+
   listGLAccounts: () => request("/general-ledger/accounts"),
   createGLAccount: (data: any) => request("/general-ledger/accounts", { method: "POST", body: JSON.stringify(data) }),
   setGLAccountStatus: (id: string, status: "ACTIVE" | "INACTIVE") => request(`/general-ledger/accounts/${id}/status`, { method: "PATCH", body: JSON.stringify({ status }) }),

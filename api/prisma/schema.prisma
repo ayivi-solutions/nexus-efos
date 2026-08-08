@@ -106,6 +106,8 @@ model Institution {
   attendanceRecords       AttendanceRecord[]
   performanceReviews      PerformanceReview[]
   disciplinaryCases       DisciplinaryCase[]
+  auditEngagements        AuditEngagement[]
+  auditFindings           AuditFinding[]
   glAccounts              GLAccount[]
   journals                Journal[]
   fiscalYears             FiscalYear[]
@@ -173,6 +175,7 @@ model Branch {
   savingsAccounts SavingsAccount[]
   employees       Employee[]
   collectionRoutes CollectionRoute[]
+  auditEngagements AuditEngagement[]
 
   archived   Boolean   @default(false)
   archivedAt DateTime? @map("archived_at")
@@ -610,6 +613,7 @@ model Employee {
   performanceReviews     PerformanceReview[]  @relation("EmployeePerformanceReviews")
   performanceReviewsGiven PerformanceReview[] @relation("EmployeePerformanceReviewsGiven")
   disciplinaryCases      DisciplinaryCase[]
+  auditFindingsOwned     AuditFinding[]
 
   status EmploymentStatus @default(ACTIVE)
 
@@ -811,6 +815,163 @@ model DisciplinaryCase {
 
   @@index([institutionId, status], map: "idx_disciplinary_case_institution_status")
   @@map("disciplinary_case")
+  @@schema("nexus")
+}
+
+// ---------------------------------------------------------------------------
+// INTERNAL AUDIT — EFS §298 Audit Findings and Recommendation Management,
+// the linking piece of §299 Audit Follow-Up (Overdue Action Monitoring),
+// and ETAS §78 Audit Entity Architecture (AuditEngagement as aggregate
+// root, real lifecycle, real business rules). Ops Supervisor role
+// schedule: "Ensure Compliance & Audit done monthly by internal auditor."
+//
+// Deliberately scoped to findings + remediation tracking, not the full
+// §297 Audit Planning and Execution — no audit universe, annual
+// risk-based planning, or audit team assignment is built. That's a
+// distinct, larger "plan the audit" concern, not what the gap item
+// (internal audit findings/remediation tracking) actually names. Named
+// as a real, disclosed boundary, not silently dropped.
+// ---------------------------------------------------------------------------
+
+enum AuditEngagementType {
+  INTERNAL
+  EXTERNAL
+  REGULATORY
+  IT
+  FINANCIAL
+
+  @@schema("nexus")
+}
+
+// ETAS §78.6 — the real named lifecycle, used as-is.
+enum AuditEngagementStatus {
+  PLANNED
+  APPROVED
+  IN_PROGRESS
+  UNDER_REVIEW
+  COMPLETED
+  FOLLOW_UP
+  CLOSED
+  ARCHIVED
+
+  @@schema("nexus")
+}
+
+enum AuditRating {
+  SATISFACTORY
+  NEEDS_IMPROVEMENT
+  UNSATISFACTORY
+
+  @@schema("nexus")
+}
+
+// Audit numbers (AUD prefix) generated in internalAudit.routes.ts, same
+// pattern as generateJournalNumber/generateComplaintReference/generateComplaintReference.
+
+model AuditEngagement {
+  id            String                 @id(map: "pk_audit_engagement") @default(uuid())
+  institution   Institution            @relation(fields: [institutionId], references: [id], onDelete: Cascade, map: "fk_audit_engagement_institution")
+  institutionId String                 @map("institution_id")
+  branch        Branch?                @relation(fields: [branchId], references: [id], onDelete: SetNull, map: "fk_audit_engagement_branch")
+  branchId      String?                @map("branch_id") // ETAS §78.4 "Business Unit" — Branch is the closest real scoping concept already in the schema
+
+  auditNumber String              @unique @map("audit_number")
+  type        AuditEngagementType
+  leadAuditor String              @map("lead_auditor") // free text — an external/regulatory auditor may not be an Employee record
+  scope       String // §78.7 "Every audit shall have an approved scope"
+  status      AuditEngagementStatus @default(PLANNED)
+
+  plannedStartDate DateTime  @map("planned_start_date")
+  completionDate   DateTime? @map("completion_date")
+  rating           AuditRating?
+
+  raisedById String   @map("raised_by_id")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  findings AuditFinding[]
+
+  createdById  String?      @map("created_by_id")
+  updatedById  String?      @map("updated_by_id")
+  deletedAt    DateTime?    @map("deleted_at")
+  deletedById  String?      @map("deleted_by_id")
+  versionNo    Int          @default(1) @map("version_no")
+  recordStatus RecordStatus @default(ACTIVE) @map("record_status")
+
+  @@index([institutionId, status], map: "idx_audit_engagement_institution_status")
+  @@map("audit_engagement")
+  @@schema("nexus")
+}
+
+enum AuditFindingRisk {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+
+  @@schema("nexus")
+}
+
+// §299.2 "Implementation Verification" is a real, distinct step named
+// separately from the recommendation simply being marked done — a
+// finding isn't CLOSED just because someone says they fixed it, it needs
+// a separate verification.
+enum AuditFindingStatus {
+  OPEN
+  IN_PROGRESS
+  IMPLEMENTED
+  VERIFIED
+  CLOSED
+
+  @@schema("nexus")
+}
+
+model AuditFinding {
+  id                String          @id(map: "pk_audit_finding") @default(uuid())
+  institution       Institution     @relation(fields: [institutionId], references: [id], onDelete: Cascade, map: "fk_audit_finding_institution")
+  institutionId     String          @map("institution_id")
+  engagement        AuditEngagement @relation(fields: [engagementId], references: [id], onDelete: Cascade, map: "fk_audit_finding_engagement")
+  engagementId      String          @map("engagement_id")
+
+  // §298.3 "Every finding receives a unique reference number"
+  referenceNumber String           @unique @map("reference_number")
+  description     String // §78.7 "Findings shall be supported by documented evidence" — the description is that evidence record; a Document can additionally be attached via the existing Document model's polymorphic-by-convention linkage elsewhere in this codebase, not duplicated here
+  riskClassification AuditFindingRisk @map("risk_classification")
+  rootCauseAnalysis  String?          @map("root_cause_analysis")
+  recommendation     String
+
+  managementResponse String? @map("management_response")
+  // §298.3 "Each recommendation has an accountable owner" / ETAS §78.7
+  // "Corrective actions shall be assigned before audit closure" —
+  // enforced in internalAudit.routes.ts: an engagement cannot move to
+  // CLOSED while any of its findings still has actionOwnerId null.
+  actionOwner   Employee? @relation(fields: [actionOwnerId], references: [id], onDelete: SetNull, map: "fk_audit_finding_action_owner")
+  actionOwnerId String?   @map("action_owner_id")
+
+  targetRemediationDate DateTime? @map("target_remediation_date")
+  // §299.2 "Overdue Action Monitoring" — set by the same daily scheduler
+  // check that flags overdue complaints, disclosed default logic (past
+  // targetRemediationDate, status not yet IMPLEMENTED/VERIFIED/CLOSED),
+  // not a configurable rule engine.
+  overdue Boolean @default(false)
+
+  status     AuditFindingStatus @default(OPEN)
+  verifiedAt   DateTime? @map("verified_at")
+  verifiedById String?   @map("verified_by_id")
+  closedAt     DateTime? @map("closed_at")
+  closedById   String?   @map("closed_by_id")
+
+  raisedById String   @map("raised_by_id")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  createdById  String?      @map("created_by_id")
+  updatedById  String?      @map("updated_by_id")
+  deletedAt    DateTime?    @map("deleted_at")
+  deletedById  String?      @map("deleted_by_id")
+  versionNo    Int          @default(1) @map("version_no")
+  recordStatus RecordStatus @default(ACTIVE) @map("record_status")
+
+  @@index([institutionId, status], map: "idx_audit_finding_institution_status")
+  @@map("audit_finding")
   @@schema("nexus")
 }
 
@@ -1361,6 +1522,7 @@ enum ApprovalRequestType {
   SALARY_STRUCTURE_CHANGE  // doc §208
   PAYROLL_RUN_APPROVAL  // doc §211
   ATTENDANCE_CORRECTION  // doc §201.3 "Corrections require approval"
+  AUDIT_ENGAGEMENT_APPROVAL  // ETAS §78.7 "Every audit shall have an approved scope"
   ASSET_TRANSFER  // doc §190
   ASSET_DISPOSAL  // doc §193
   CUSTOMER_MERGE  // doc §35

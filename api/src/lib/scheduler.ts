@@ -236,6 +236,19 @@ async function runComplaintEscalationCheck() {
   console.log(`[scheduler] complaint escalation check: ${overdue.count} complaint(s) escalated, ${Date.now() - startedAt}ms`);
 }
 
+// EFS §299.2 "Overdue Action Monitoring" — same disclosed-default
+// pattern as complaint escalation: any finding whose
+// targetRemediationDate has passed and isn't yet IMPLEMENTED/VERIFIED/
+// CLOSED gets flagged.
+async function runAuditFindingOverdueCheck() {
+  const startedAt = Date.now();
+  const overdue = await prisma.auditFinding.updateMany({
+    where: { status: { in: ["OPEN", "IN_PROGRESS"] }, overdue: false, targetRemediationDate: { not: null, lt: new Date() } },
+    data: { overdue: true },
+  });
+  console.log(`[scheduler] audit finding overdue check: ${overdue.count} finding(s) flagged overdue, ${Date.now() - startedAt}ms`);
+}
+
 export function startScheduler() {
   // 01:00 every day, server time — after any prior day's end-of-day
   // activity, before the next business day starts.
@@ -245,6 +258,7 @@ export function startScheduler() {
     runRecurringJournals().catch((err) => console.error("[scheduler] recurring journals failed:", err));
     runSavingsInterestAccrual().catch((err) => console.error("[scheduler] savings interest accrual failed:", err));
     runComplaintEscalationCheck().catch((err) => console.error("[scheduler] complaint escalation check failed:", err));
+    runAuditFindingOverdueCheck().catch((err) => console.error("[scheduler] audit finding overdue check failed:", err));
   });
   // 02:00 on the 1st of the month — after the same day's 01:00 accrual
   // run has already captured the final day of the prior month, so
@@ -253,10 +267,10 @@ export function startScheduler() {
     runSavingsInterestPosting().catch((err) => console.error("[scheduler] savings interest posting failed:", err));
   });
   console.log(
-    "[scheduler] started — arrears check + standing instructions + recurring journals + savings interest accrual + complaint escalation check scheduled daily at 01:00; savings interest posting scheduled monthly at 02:00 on the 1st"
+    "[scheduler] started — arrears check + standing instructions + recurring journals + savings interest accrual + complaint escalation check + audit finding overdue check scheduled daily at 01:00; savings interest posting scheduled monthly at 02:00 on the 1st"
   );
 }
 
 // Exported so an admin route (or a manual run during testing/pilot setup)
 // can trigger these on demand rather than waiting for the next scheduled run.
-export { runArrearsCheck, runStandingInstructions, runRecurringJournals, runSavingsInterestAccrual, runSavingsInterestPosting, runComplaintEscalationCheck };
+export { runArrearsCheck, runStandingInstructions, runRecurringJournals, runSavingsInterestAccrual, runSavingsInterestPosting, runComplaintEscalationCheck, runAuditFindingOverdueCheck };
