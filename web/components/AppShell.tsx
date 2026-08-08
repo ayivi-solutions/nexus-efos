@@ -33,6 +33,7 @@ const NAV_FULL: { label: string; icon: string; href: string; perm: string | null
   { label: "Financial Analytics", icon: "📈", href: "/analytics", perm: "reports.view" },
   { label: "Payroll", icon: "💰", href: "/payroll", perm: "institution.configure" },
   { label: "Assets", icon: "💻", href: "/assets", perm: "institution.configure" },
+  { label: "Settings", icon: "⚙", href: "/settings", perm: null },
 ];
 
 export function AppShell({ active, children }: { active: string; children: React.ReactNode }) {

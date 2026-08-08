@@ -628,6 +628,10 @@ authRouter.get("/me", requireAuth, async (req: AuthedRequest, res) => {
       id: true,
       fullName: true,
       email: true,
+      mfaEnabled: true,
+      passwordChangedAt: true,
+      passwordExpiresAt: true,
+      mustChangePassword: true,
       userRoles: {
         where: { OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }] },
         include: { role: { include: { rolePermissions: { include: { permission: true } } } } },
@@ -649,7 +653,13 @@ authRouter.get("/me", requireAuth, async (req: AuthedRequest, res) => {
   for (const ur of user.userRoles) roleCategorySet.add(ur.role.category);
 
   res.json({
-    user: { id: user.id, fullName: user.fullName, email: user.email },
+    user: {
+      id: user.id, fullName: user.fullName, email: user.email,
+      mfaEnabled: user.mfaEnabled,
+      passwordChangedAt: user.passwordChangedAt,
+      passwordExpiresAt: user.passwordExpiresAt,
+      mustChangePassword: user.mustChangePassword,
+    },
     permissions: Array.from(permissionSet),
     roleCategories: Array.from(roleCategorySet),
   });
@@ -857,6 +867,35 @@ authRouter.post("/mfa/disable", requireAuth, async (req: AuthedRequest, res) => 
     data: { institutionId: user.institutionId, userId: user.id, action: "auth.mfa_disabled" },
   });
 
+  res.status(204).send();
+});
+
+// -----------------------------------------------------------------------
+// Trusted devices — self-service list/revoke, the other half of the
+// trust-device checkbox at login (see the login flow above). Without
+// these, a device could be trusted for 30 days with no way for the
+// person to see or undo it themselves.
+// -----------------------------------------------------------------------
+
+authRouter.get("/devices", requireAuth, async (req: AuthedRequest, res) => {
+  const devices = await prisma.userDevice.findMany({
+    where: { userId: req.auth!.userId },
+    orderBy: { lastSeenAt: "desc" },
+  });
+  res.json({ devices });
+});
+
+// "Revoke" removes the device record outright rather than just flipping
+// trusted=false — the person is telling us to forget this device, and a
+// stale untrusted row with old ip/userAgent history serves no purpose
+// once they've asked for it to be gone.
+authRouter.delete("/devices/:id", requireAuth, async (req: AuthedRequest, res) => {
+  const device = await prisma.userDevice.findFirst({ where: { id: req.params.id, userId: req.auth!.userId } });
+  if (!device) return res.status(404).json({ error: "Device not found" });
+  await prisma.userDevice.delete({ where: { id: device.id } });
+  await prisma.auditLog.create({
+    data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "auth.device_revoke", resource: "user_device", resourceId: device.id },
+  });
   res.status(204).send();
 });
 

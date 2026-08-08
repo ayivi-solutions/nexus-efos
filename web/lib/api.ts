@@ -163,6 +163,8 @@ export const api = {
   mfaSetup: () => request("/auth/mfa/setup", { method: "POST" }),
   mfaVerify: (code: string) => request("/auth/mfa/verify", { method: "POST", body: JSON.stringify({ code }) }),
   mfaDisable: (password: string) => request("/auth/mfa/disable", { method: "POST", body: JSON.stringify({ password }) }),
+  listDevices: () => request("/auth/devices"),
+  revokeDevice: (id: string) => request(`/auth/devices/${id}`, { method: "DELETE" }),
   changePassword: (data: { currentPassword: string; newPassword: string }) =>
     request("/auth/change-password", { method: "POST", body: JSON.stringify(data) }),
 
