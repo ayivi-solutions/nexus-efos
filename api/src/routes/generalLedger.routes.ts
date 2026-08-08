@@ -573,25 +573,29 @@ generalLedgerRouter.get("/reports/dashboard", requirePermission("reports.view"),
 // statements (Balance Sheet, Income Statement, Changes in Equity, Trial
 // Balance) already existed from §123 — genuinely new here: Cash Flow
 // Statement (a previously-named gap) and the BOG-required NPL/Liquidity
-// ratios. IFRS 9 expected-credit-loss disclosure (Part D of the guide)
-// and Capital Adequacy Ratio are deliberately NOT built — both need real
-// methodology (PD/LGD/EAD statistical modeling for ECL; Basel-style
-// risk-weighting of assets for CAR) that would mean inventing a
-// methodology rather than following a confirmed one, the same boundary
-// already drawn for tax rates and KYC risk-scoring weights. GDPC filing
-// stays a named gap — the actual return format sits behind their member
-// portal, not publicly available.
+// ratios. IFRS 9 expected-credit-loss disclosure and Capital Adequacy
+// Ratio were previously left unbuilt pending a real methodology — both
+// now built (capitalAdequacy.routes.ts, lib/capitalAdequacy.ts) once GM
+// supplied the actual BOG Capital Requirements Directive and Act 930
+// text, rather than an invented approach. GDPC filing stays a named gap
+// — the actual return format sits behind their member portal, not
+// publicly available.
 // -------------------------------------------------------------------------
 
-// GL account classification for cash flow / liquidity reporting purposes.
+// GL account classification for cash flow / liquidity reporting purposes,
+// and (capitalTier/baselRiskWeightPercent) for Capital Adequacy — see
+// capitalAdequacy.routes.ts, which reads these same fields.
 generalLedgerRouter.post("/accounts/:id/classify", requirePermission("institution.configure"), async (req: AuthedRequest, res) => {
-  const { cashFlowActivity, isLiquidAsset, isVolatileLiability } = req.body as { cashFlowActivity?: string; isLiquidAsset?: boolean; isVolatileLiability?: boolean };
+  const { cashFlowActivity, isLiquidAsset, isVolatileLiability, capitalTier, baselRiskWeightPercent } = req.body as {
+    cashFlowActivity?: string; isLiquidAsset?: boolean; isVolatileLiability?: boolean;
+    capitalTier?: string; baselRiskWeightPercent?: number;
+  };
   const account = await prisma.gLAccount.findFirst({ where: { id: req.params.id, institutionId: req.auth!.institutionId } });
   if (!account) return res.status(404).json({ error: "Account not found" });
 
   const updated = await prisma.gLAccount.update({
     where: { id: account.id },
-    data: { cashFlowActivity: cashFlowActivity as any, isLiquidAsset, isVolatileLiability },
+    data: { cashFlowActivity: cashFlowActivity as any, isLiquidAsset, isVolatileLiability, capitalTier: capitalTier as any, baselRiskWeightPercent },
   });
   res.json({ account: updated });
 });

@@ -579,6 +579,11 @@ export const api = {
   getPortfolioByProduct: () => request("/analytics/portfolio/by-product"),
   getPortfolioConcentration: (limit = 10) => request(`/analytics/portfolio/concentration?limit=${limit}`),
 
+  getCapitalAdequacyLive: () => request("/capital-adequacy/live"),
+  listCapitalAdequacySnapshots: () => request("/capital-adequacy/snapshots"),
+  createCapitalAdequacySnapshot: (asOfDate: string) => request("/capital-adequacy/snapshots", { method: "POST", body: JSON.stringify({ asOfDate }) }),
+  getCreditConcentrationRisk: () => request("/capital-adequacy/concentration"),
+
   listPayrollCalendars: () => request("/payroll/calendars"),
   createPayrollCalendar: (data: any) => request("/payroll/calendars", { method: "POST", body: JSON.stringify(data) }),
   listPayrollPeriods: () => request("/payroll/periods"),

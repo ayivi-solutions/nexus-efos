@@ -212,7 +212,7 @@ export default function GeneralLedgerPage() {
             </form>
             <div className="card overflow-x-auto">
               <table className="w-full min-w-[820px] text-sm table-modern">
-                <thead><tr><th>Code</th><th>Name</th><th>Category</th><th>Balance</th><th>Status</th><th>Cash Flow</th><th>Liquid?</th><th>Volatile Liab?</th><th></th></tr></thead>
+                <thead><tr><th>Code</th><th>Name</th><th>Category</th><th>Balance</th><th>Status</th><th>Cash Flow</th><th>Liquid?</th><th>Volatile Liab?</th><th>Capital Tier</th><th>Basel RW%</th><th></th></tr></thead>
                 <tbody>
                   {accounts.map((a: any) => (
                     <tr key={a.id}>
@@ -222,16 +222,26 @@ export default function GeneralLedgerPage() {
                       <td className="text-text-700">GHS {Number(a.balance).toLocaleString()}</td>
                       <td><span className={`badge ${a.status === "ACTIVE" ? "bg-green-100 text-green-600" : "bg-paper-100 text-text-muted"}`}>{a.status}</span></td>
                       <td>
-                        <select className="input !py-1 !text-[11px]" value={a.cashFlowActivity || ""} onChange={(e) => api.classifyGLAccount(a.id, { cashFlowActivity: e.target.value || undefined, isLiquidAsset: a.isLiquidAsset, isVolatileLiability: a.isVolatileLiability }).then(load)}>
+                        <select className="input !py-1 !text-[11px]" value={a.cashFlowActivity || ""} onChange={(e) => api.classifyGLAccount(a.id, { cashFlowActivity: e.target.value || undefined, isLiquidAsset: a.isLiquidAsset, isVolatileLiability: a.isVolatileLiability, capitalTier: a.capitalTier, baselRiskWeightPercent: a.baselRiskWeightPercent }).then(load)}>
                           <option value="">—</option><option value="OPERATING">Operating</option><option value="INVESTING">Investing</option><option value="FINANCING">Financing</option>
                         </select>
                       </td>
-                      <td className="text-center"><input type="checkbox" checked={!!a.isLiquidAsset} onChange={(e) => api.classifyGLAccount(a.id, { cashFlowActivity: a.cashFlowActivity, isLiquidAsset: e.target.checked, isVolatileLiability: a.isVolatileLiability }).then(load)} /></td>
-                      <td className="text-center"><input type="checkbox" checked={!!a.isVolatileLiability} onChange={(e) => api.classifyGLAccount(a.id, { cashFlowActivity: a.cashFlowActivity, isLiquidAsset: a.isLiquidAsset, isVolatileLiability: e.target.checked }).then(load)} /></td>
+                      <td className="text-center"><input type="checkbox" checked={!!a.isLiquidAsset} onChange={(e) => api.classifyGLAccount(a.id, { cashFlowActivity: a.cashFlowActivity, isLiquidAsset: e.target.checked, isVolatileLiability: a.isVolatileLiability, capitalTier: a.capitalTier, baselRiskWeightPercent: a.baselRiskWeightPercent }).then(load)} /></td>
+                      <td className="text-center"><input type="checkbox" checked={!!a.isVolatileLiability} onChange={(e) => api.classifyGLAccount(a.id, { cashFlowActivity: a.cashFlowActivity, isLiquidAsset: a.isLiquidAsset, isVolatileLiability: e.target.checked, capitalTier: a.capitalTier, baselRiskWeightPercent: a.baselRiskWeightPercent }).then(load)} /></td>
+                      <td>
+                        <select className="input !py-1 !text-[11px]" title="BOG CRD 2018 §73 — which regulatory capital tier this account counts toward" value={a.capitalTier || ""} onChange={(e) => api.classifyGLAccount(a.id, { cashFlowActivity: a.cashFlowActivity, isLiquidAsset: a.isLiquidAsset, isVolatileLiability: a.isVolatileLiability, capitalTier: e.target.value || undefined, baselRiskWeightPercent: a.baselRiskWeightPercent }).then(load)}>
+                          <option value="">—</option><option value="CET1">CET1</option><option value="ADDITIONAL_TIER1">Additional Tier 1</option><option value="TIER2">Tier 2</option>
+                        </select>
+                      </td>
+                      <td>
+                        {a.category === "ASSET" ? (
+                          <input type="number" min={0} max={200} step={5} className="input !py-1 !w-16 !text-[11px]" placeholder="100" title="BOG CRD 2018 Table 2A — risk weight % for this asset (loans are computed automatically, this is for other assets: cash, bank balances, fixed assets, etc.)" value={a.baselRiskWeightPercent ?? ""} onChange={(e) => api.classifyGLAccount(a.id, { cashFlowActivity: a.cashFlowActivity, isLiquidAsset: a.isLiquidAsset, isVolatileLiability: a.isVolatileLiability, capitalTier: a.capitalTier, baselRiskWeightPercent: e.target.value === "" ? undefined : Number(e.target.value) }).then(load)} />
+                        ) : "—"}
+                      </td>
                       <td><button onClick={() => handleToggleAccount(a.id, a.status)} className="btn-text text-gold-600">{a.status === "ACTIVE" ? "Deactivate" : "Activate"}</button></td>
                     </tr>
                   ))}
-                  {accounts.length === 0 && <tr><td colSpan={9} className="text-center text-text-muted text-sm py-8">No accounts created.</td></tr>}
+                  {accounts.length === 0 && <tr><td colSpan={11} className="text-center text-text-muted text-sm py-8">No accounts created.</td></tr>}
                 </tbody>
               </table>
             </div>

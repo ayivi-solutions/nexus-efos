@@ -329,6 +329,34 @@ real customer data.
 - Consent Management: real capture, withdrawal, and permanent history —
   no delete route exists for consent records at all.
 
+**Capital Adequacy** (Act 930 §29 + BOG Capital Requirements Directive,
+2018 + BOG Guidelines on Credit Concentration Risk, 2025 — all three
+built from the actual uploaded source documents, not invented)
+- Real CET1/Tier 1/Total CAR calculation: risk-weighted assets computed
+  from real loan data (BOG CRD Table 2A categories — retail-qualifying-
+  proxy 75%, SME/corporate 100%, past-due unsecured 150%/100%/0% per
+  §142) plus GL accounts tagged with a Basel risk weight for everything
+  else on the balance sheet. Regulatory capital comes from GL accounts
+  tagged by capital tier (CET1/Additional Tier 1/Tier 2), with the same
+  admissibility caps the CRD specifies (AT1 ≤1.5% of RWA, Tier 2 ≤2.0%
+  of RWA).
+- Point-in-time snapshots, not just a live dashboard number — real audit
+  practice needs to show what CAR was on a specific reporting date.
+- NPL ratio against the actual current regulatory ceiling: 5% for
+  microfinance firms specifically (BOG Governor's directive, reported 5
+  Aug 2026), not the general 10% SDI/bank ceiling.
+- Credit concentration risk: HHI, Gini coefficient, and top-N
+  concentration ratios (5/10/20/25/50/75) — the model-free (heuristic)
+  metrics the Guidelines name as legitimate on their own. The formal
+  Pillar II PD/LGD/EAD capital-add-on modeling in the same document is
+  explicitly bank-only and not built.
+- Disclosed, named gaps (not silently dropped): loan classification
+  day-count boundaries beyond the confirmed >90-day past-due threshold
+  are a convention, not from the uploaded CRD; "qualifying retail"
+  status is a simplified proxy (individual customer + loan ≤ GHS
+  500,000 — the one criterion checkable from existing data); mortgage-
+  specific past-due treatment (CRD §144-145) isn't applied.
+
 **Accessibility**
 - WCAG AA color contrast (verified programmatically, not eyeballed),
   screen-reader-announced notifications, keyboard focus indicators,
@@ -478,10 +506,10 @@ invariant — operating + investing + financing must equal the actual
 change in cash, tested before use) and BOG's NPL and Liquidity ratios,
 NPL using BOG's own documented 90-day default definition rather than an
 unconfirmed bucket mapping. Capital Adequacy Ratio and IFRS 9
-expected-credit-loss disclosures deliberately not built — both need
-real methodology decisions (Basel-style risk-weighting; PD/LGD/EAD
-statistical modeling) that shouldn't be invented unilaterally, the same
-discipline already applied to tax rates and KYC risk-scoring weights.
+expected-credit-loss disclosures were left unbuilt at the time pending
+real methodology — both since built (see the Capital Adequacy section
+below) once GM supplied the actual BOG Capital Requirements Directive
+and Act 930 text, rather than an invented approach.
 GDPC returns stay a named gap — the actual format sits behind their
 member-only portal, not publicly available.
 
@@ -504,9 +532,6 @@ open" below for the full list.
   those same three edit forms on the frontend.
 - Notification multi-channel (SMS/Email/WhatsApp) — in-app only today;
   needs a provider decision before the integration itself can be built.
-- Capital Adequacy Ratio and IFRS 9 expected-credit-loss disclosures
-  (Phase 8) — real regulatory-capital and statistical-modeling
-  methodology decisions, not built to avoid inventing them unilaterally.
 - GDPC (Ghana Deposit Protection Corporation) premium/deposit returns —
   confirmed the actual format sits behind their member-only portal, not
   publicly available.

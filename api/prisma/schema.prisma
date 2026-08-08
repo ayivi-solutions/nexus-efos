@@ -108,6 +108,7 @@ model Institution {
   disciplinaryCases       DisciplinaryCase[]
   auditEngagements        AuditEngagement[]
   auditFindings           AuditFinding[]
+  regulatoryCapitalSnapshots RegulatoryCapitalSnapshot[]
   glAccounts              GLAccount[]
   journals                Journal[]
   fiscalYears             FiscalYear[]
@@ -3491,6 +3492,19 @@ enum GLAccountCategory {
   @@schema("nexus")
 }
 
+// BOG Capital Requirements Directive, 2018 §73 — the three tiers of
+// regulatory capital, each with its own admissibility cap relative to
+// Risk-Weighted Assets (Additional Tier 1 capped at 1.5% of RWA within
+// the Tier 1 minimum, Tier 2 capped at 2.0% of RWA within the Total CAR
+// minimum — enforced in lib/capitalAdequacy.ts, not just documented).
+enum GLCapitalTier {
+  CET1
+  ADDITIONAL_TIER1
+  TIER2
+
+  @@schema("nexus")
+}
+
 enum GLAccountStatus {
   ACTIVE
   INACTIVE
@@ -3535,6 +3549,26 @@ model GLAccount {
   isLiquidAsset       Boolean @default(false) @map("is_liquid_asset")
   isVolatileLiability Boolean @default(false) @map("is_volatile_liability")
 
+  // Bank of Ghana Capital Requirements Directive, 2018 (uploaded source
+  // document) §71-75 — Regulatory Capital composition. Optional and
+  // defaults to null, same pattern as isLiquidAsset above: an
+  // institution tags its own chart of accounts once (which EQUITY/
+  // LIABILITY accounts are CET1 vs Additional Tier 1 vs Tier 2
+  // instruments), rather than Claude guessing from account names.
+  // Untagged EQUITY accounts are excluded from the capital calculation
+  // — a visible, checkable gap, not a silent misclassification.
+  capitalTier GLCapitalTier? @map("capital_tier")
+
+  // Same CRD document, Table 2A Risk Weight Categories — for non-loan
+  // ASSET accounts (cash, bank balances, fixed assets, government
+  // securities, etc.). Loans get their risk weight computed
+  // programmatically from real loan data (see lib/capitalAdequacy.ts);
+  // this field covers everything else on the balance sheet. Null means
+  // "not yet classified" — treated as a conservative disclosed default
+  // (100%) in the RWA calculation, flagged in the response rather than
+  // silently assumed.
+  baselRiskWeightPercent Int? @map("basel_risk_weight_percent")
+
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
@@ -3543,6 +3577,90 @@ model GLAccount {
 
   @@unique([institutionId, code], map: "uq_gl_account_institution_code")
   @@map("gl_account")
+  @@schema("nexus")
+}
+
+// ---------------------------------------------------------------------------
+// CAPITAL ADEQUACY — Banks and Specialised Deposit-Taking Institutions Act,
+// 2016 (Act 930) §29: statutory minimum CAR is 10%, BOG may prescribe
+// higher/different ratios per institution category (§29(3)) — kept
+// configurable here, not hardcoded, for that reason. BOG Capital
+// Requirements Directive, 2018 (uploaded source) §71-83 for the full
+// CET1/Tier1/Total CAR structure and Capital Conservation Buffer, and
+// Table 2A for the Standardised Approach risk-weight categories.
+//
+// A point-in-time snapshot, not a live-only dashboard number — real
+// audit/regulatory practice needs to show what CAR was on a specific
+// reporting date without it silently changing if the loan book moves
+// later. See lib/capitalAdequacy.ts for the actual computation.
+// ---------------------------------------------------------------------------
+
+model RegulatoryCapitalSnapshot {
+  id            String      @id(map: "pk_regulatory_capital_snapshot") @default(uuid())
+  institution   Institution @relation(fields: [institutionId], references: [id], onDelete: Cascade, map: "fk_regulatory_capital_snapshot_institution")
+  institutionId String      @map("institution_id")
+
+  asOfDate DateTime @map("as_of_date")
+
+  // Raw tier balances from GLAccount.capitalTier-tagged accounts, before
+  // the AT1/T2 admissibility caps below are applied.
+  rawCet1Capital           Decimal @map("raw_cet1_capital") @db.Decimal(16, 2)
+  rawAdditionalTier1Capital Decimal @map("raw_additional_tier1_capital") @db.Decimal(16, 2)
+  rawTier2Capital           Decimal @map("raw_tier2_capital") @db.Decimal(16, 2)
+
+  // §73 — AT1 admitted only up to 1.5% of RWA, T2 only up to 2.0% of RWA.
+  // These are the actually-admitted figures used in the ratios below.
+  admittedAdditionalTier1Capital Decimal @map("admitted_additional_tier1_capital") @db.Decimal(16, 2)
+  admittedTier2Capital           Decimal @map("admitted_tier2_capital") @db.Decimal(16, 2)
+
+  totalRWA      Decimal @map("total_rwa") @db.Decimal(16, 2)
+  loanRWA       Decimal @map("loan_rwa") @db.Decimal(16, 2)
+  otherAssetRWA Decimal @map("other_asset_rwa") @db.Decimal(16, 2)
+  // How much of otherAssetRWA came from ASSET accounts with no
+  // baselRiskWeightPercent set — the conservative 100% default applied,
+  // surfaced so the gap is visible rather than silently absorbed.
+  unclassifiedAssetBalance Decimal @map("unclassified_asset_balance") @db.Decimal(16, 2)
+
+  cet1Ratio  Decimal @map("cet1_ratio") @db.Decimal(6, 3)
+  tier1Ratio Decimal @map("tier1_ratio") @db.Decimal(6, 3)
+  totalCAR   Decimal @map("total_car") @db.Decimal(6, 3)
+
+  // §73/§75 minimums — disclosed defaults from the CRD's own summary
+  // table (6.5 / 8.0 / 10.0 / CCB1 3.0), stored per-snapshot rather than
+  // hardcoded so a future BOG-prescribed institution-specific ratio
+  // (Act 930 §29(3)) can override without a code change.
+  minCet1Ratio  Decimal @default(6.5) @map("min_cet1_ratio") @db.Decimal(6, 3)
+  minTier1Ratio Decimal @default(8.0) @map("min_tier1_ratio") @db.Decimal(6, 3)
+  minCAR        Decimal @default(10.0) @map("min_car") @db.Decimal(6, 3)
+  ccb1          Decimal @default(3.0) @map("ccb1") @db.Decimal(6, 3)
+
+  // Standard international NPL definition (loans >90 days past due,
+  // matching the CRD §140 past-due threshold) ÷ gross outstanding loans.
+  // nplCeiling default 5.0 is a real, dated, current regulatory figure —
+  // BOG Governor's directive, reported 5 Aug 2026, requiring microfinance
+  // firms specifically to hold NPLs to no more than 5% by Dec 2026 (the
+  // general SDI/bank ceiling is 10%) — not an invented default.
+  nplRatio   Decimal @map("npl_ratio") @db.Decimal(6, 3)
+  nplCeiling Decimal @default(5.0) @map("npl_ceiling") @db.Decimal(6, 3)
+
+  // Full line-item breakdown (per-category RWA, per-tier capital
+  // components, loan classification counts) for audit/reporting —
+  // deliberately not normalized into more tables, same pattern as
+  // SavingsStatement.transactionSnapshot.
+  breakdown Json
+
+  computedById String?  @map("computed_by_id")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  createdById  String?      @map("created_by_id")
+  updatedById  String?      @map("updated_by_id")
+  deletedAt    DateTime?    @map("deleted_at")
+  deletedById  String?      @map("deleted_by_id")
+  versionNo    Int          @default(1) @map("version_no")
+  recordStatus RecordStatus @default(ACTIVE) @map("record_status")
+
+  @@index([institutionId, asOfDate], map: "idx_regulatory_capital_snapshot_institution_date")
+  @@map("regulatory_capital_snapshot")
   @@schema("nexus")
 }
 
