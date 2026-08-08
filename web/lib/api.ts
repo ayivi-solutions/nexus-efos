@@ -423,6 +423,33 @@ export const api = {
   listCashBalancings: () => request("/cash-vault/balancings"),
   recordCashBalancing: (data: any) => request("/cash-vault/balancings", { method: "POST", body: JSON.stringify(data) }),
 
+  listCheques: (filters?: { direction?: string; status?: string }) => {
+    const qs = new URLSearchParams();
+    if (filters?.direction) qs.set("direction", filters.direction);
+    if (filters?.status) qs.set("status", filters.status);
+    const suffix = qs.toString() ? `?${qs.toString()}` : "";
+    return request(`/cheques${suffix}`);
+  },
+  listPendingConfirmationCheques: () => request("/cheques/pending-confirmation"),
+  recordCheque: (data: {
+    direction: "INWARD" | "OUTWARD";
+    chequeNumber: string;
+    bankName: string;
+    chequeDate: string;
+    amount: number;
+    payerName?: string;
+    payeeName?: string;
+    customerId?: string;
+    savingsAccountId?: string;
+    loanId?: string;
+  }) => request("/cheques", { method: "POST", body: JSON.stringify(data) }),
+  confirmCheque: (id: string) => request(`/cheques/${id}/confirm`, { method: "POST" }),
+  submitChequeForClearing: (id: string) => request(`/cheques/${id}/submit-clearing`, { method: "POST" }),
+  clearCheque: (id: string) => request(`/cheques/${id}/clear`, { method: "POST" }),
+  bounceCheque: (id: string, reason: string) => request(`/cheques/${id}/bounce`, { method: "POST", body: JSON.stringify({ reason }) }),
+  stopCheque: (id: string) => request(`/cheques/${id}/stop`, { method: "POST" }),
+  cancelCheque: (id: string) => request(`/cheques/${id}/cancel`, { method: "POST" }),
+
   listGLAccounts: () => request("/general-ledger/accounts"),
   createGLAccount: (data: any) => request("/general-ledger/accounts", { method: "POST", body: JSON.stringify(data) }),
   setGLAccountStatus: (id: string, status: "ACTIVE" | "INACTIVE") => request(`/general-ledger/accounts/${id}/status`, { method: "PATCH", body: JSON.stringify({ status }) }),

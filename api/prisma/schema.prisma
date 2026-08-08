@@ -100,6 +100,7 @@ model Institution {
   cashLedgerEntries       CashLedgerEntry[]
   cashTransfers           CashTransfer[]
   cashBalancings          CashBalancing[]
+  cheques                 Cheque[]
   glAccounts              GLAccount[]
   journals                Journal[]
   fiscalYears             FiscalYear[]
@@ -811,6 +812,7 @@ model Customer {
   consents           CustomerConsent[]
   mergedInto         CustomerMergeRecord[] @relation("MergedCustomer")
   mergesReceived     CustomerMergeRecord[] @relation("PrimaryCustomer")
+  cheques            Cheque[]
 
   // doc §35 — the merge target this customer was consolidated into, if
   // any. Never deleted, only pointed elsewhere and marked MERGED —
@@ -1277,6 +1279,7 @@ model Loan {
   restructures   LoanRestructure[]
   reschedules    LoanReschedule[]
   writeOffs      LoanWriteOff[]
+  cheques        Cheque[]
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -1431,6 +1434,7 @@ model SavingsAccount {
   accountHolders   AccountHolder[]
   interestAccruals SavingsInterestAccrual[]
   interestPostings SavingsInterestPosting[]
+  cheques          Cheque[]
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -2897,6 +2901,93 @@ model CashBalancing {
 
   @@unique([holderType, holderId, balancingDate], map: "uq_cash_balancing_holder_date")
   @@map("cash_balancing")
+  @@schema("nexus")
+}
+
+// doc: Operations Supervisor role schedule (Neighbourhood Microfinance
+// Ltd, June 2026) — "Monitor and confirm outgoing cheques daily and
+// during disbursements." That's the concrete trigger, but built as a
+// standard, complete cheque register for a financial institution, not
+// narrowed to only what that one line names: both directions (a
+// customer depositing a cheque is just as real as the institution
+// issuing one for a disbursement), and a real clearing lifecycle, since
+// any financial institution handling cheques needs both. Not in the ECD/
+// EFS/ETAS/PDDS/ESS at all — checked exhaustively (cheque, check,
+// clearing, drawee, drawer, payee, post-dated, PDC, dishonour, bounced —
+// zero hits across all five documents).
+enum ChequeDirection {
+  INWARD  // a customer depositing a cheque into their account
+  OUTWARD // the institution issuing a cheque (loan disbursement, vendor payment, etc.)
+
+  @@schema("nexus")
+}
+
+enum ChequeStatus {
+  RECEIVED          // inward: physically received, not yet submitted
+  ISSUED            // outward: written/handed out, not yet submitted
+  PENDING_CLEARING  // submitted to the bank, awaiting outcome
+  CLEARED
+  BOUNCED           // dishonoured/returned
+  STOPPED           // outward only: payment stopped before clearing
+  CANCELLED         // voided before ever being submitted
+
+  @@schema("nexus")
+}
+
+model Cheque {
+  id            String          @id(map: "pk_cheque") @default(uuid())
+  institution   Institution     @relation(fields: [institutionId], references: [id], onDelete: Cascade, map: "fk_cheque_institution")
+  institutionId String          @map("institution_id")
+
+  direction     ChequeDirection
+  chequeNumber  String          @map("cheque_number")
+  bankName      String          @map("bank_name") // the drawee bank printed on the cheque
+  // The date on the cheque itself, not the date it was recorded here —
+  // deliberately a single field, since a post-dated cheque is just one
+  // whose chequeDate is in the future; no separate post-dated flag or
+  // feature needed.
+  chequeDate    DateTime        @map("cheque_date")
+  amount        Decimal         @db.Decimal(14, 2)
+
+  payerName     String?         @map("payer_name") // INWARD: who wrote it
+  payeeName     String?         @map("payee_name") // OUTWARD: who it's paid to
+
+  status        ChequeStatus    @default(RECEIVED)
+
+  // Linkage is contextual — populated depending on direction, both optional.
+  customer         Customer?       @relation(fields: [customerId], references: [id], onDelete: SetNull, map: "fk_cheque_customer")
+  customerId       String?         @map("customer_id") // INWARD: whose account it's for
+  savingsAccount   SavingsAccount? @relation(fields: [savingsAccountId], references: [id], onDelete: SetNull, map: "fk_cheque_savings_account")
+  savingsAccountId String?         @map("savings_account_id")
+  loan             Loan?           @relation(fields: [loanId], references: [id], onDelete: SetNull, map: "fk_cheque_loan")
+  loanId           String?         @map("loan_id") // OUTWARD: the disbursement this pays out — the doc's named trigger
+
+  clearingSubmittedAt DateTime? @map("clearing_submitted_at")
+  clearedAt           DateTime? @map("cleared_at")
+  bouncedAt            DateTime? @map("bounced_at")
+  bounceReason         String?   @map("bounce_reason")
+
+  // The doc's actual daily task: "monitor and confirm" — a distinct step
+  // from status changes, since a cheque can be confirmed (checked,
+  // verified as expected) on a given day without its clearing status
+  // having changed yet.
+  confirmedById String?   @map("confirmed_by_id")
+  confirmedAt   DateTime? @map("confirmed_at")
+
+  recordedById String   @map("recorded_by_id")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  // PDDS §13.4 Phase 3 — mandatory audit/version/lifecycle columns.
+  createdById  String?      @map("created_by_id")
+  updatedById  String?      @map("updated_by_id")
+  deletedAt    DateTime?    @map("deleted_at")
+  deletedById  String?      @map("deleted_by_id")
+  versionNo    Int          @default(1) @map("version_no")
+  recordStatus RecordStatus @default(ACTIVE) @map("record_status")
+
+  @@unique([institutionId, chequeNumber, bankName, direction], map: "uq_cheque_institution_number_bank_direction")
+  @@index([institutionId, status], map: "idx_cheque_institution_status")
+  @@map("cheque")
   @@schema("nexus")
 }
 
