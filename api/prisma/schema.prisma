@@ -224,10 +224,26 @@ model User {
   status       UserStatus   @default(INVITED)
   mfaEnabled   Boolean      @default(false) @map("mfa_enabled")
 
-  userRoles     UserRole[]
-  refreshTokens RefreshToken[]
-  auditLogs     AuditLog[]
-  employee      Employee?
+  // PDDS §034/§136, ESS §26 — User security fields (Phase 4). Policy
+  // thresholds enforced against these (lockout count/window, password
+  // expiry window, history depth) are disclosed defaults, not values taken
+  // from any working document — see docs/security-policy-defaults.md.
+  // Nothing here invents an enforced value the platform doesn't disclose.
+  failedLoginCount    Int       @default(0) @map("failed_login_count")
+  lastFailedLoginAt   DateTime? @map("last_failed_login_at")
+  lockedUntil         DateTime? @map("locked_until")
+  passwordChangedAt   DateTime? @map("password_changed_at")
+  passwordExpiresAt   DateTime? @map("password_expires_at")
+  mustChangePassword  Boolean   @default(false) @map("must_change_password")
+
+  userRoles      UserRole[]
+  refreshTokens  RefreshToken[]
+  auditLogs      AuditLog[]
+  employee       Employee?
+  mfa            UserMfa?
+  passwordHistory UserPasswordHistory[]
+  devices         UserDevice[]
+  loginHistory    UserLoginHistory[]
 
   inviteToken          String?   @unique @map("invite_token")
   inviteTokenExpiresAt DateTime? @map("invite_token_expires_at")
@@ -249,6 +265,118 @@ model User {
   recordStatus RecordStatus @default(ACTIVE) @map("record_status")
   @@unique([institutionId, email], map: "uq_user_institution_id_email")
   @@map("user")
+  @@schema("nexus")
+}
+
+// ---------------------------------------------------------------------------
+// USER SECURITY  (PDDS §034 Primary Tables, §136 Authentication & Identity;
+// ESS §26 Identity & Credential Security — Phase 4). The ESS and every other
+// working document name these categories without ever supplying a numeric
+// threshold (checked directly — zero concrete values anywhere in the ESS's
+// 170 sections, or in the ECD/EFS/ETAS). The schema below is built straight
+// from PDDS §034/§136's real table and column definitions; the *policy*
+// values it's enforced against are disclosed OWASP ASVS / NIST 800-63B
+// defaults pending your review, not anything sourced from a document.
+// ---------------------------------------------------------------------------
+
+enum MfaMethod {
+  TOTP // RFC 6238 authenticator app — the only method actually implemented
+  SMS // named for completeness; no SMS provider integration exists yet
+  EMAIL
+
+  @@schema("nexus")
+}
+
+model UserMfa {
+  id     String @id(map: "pk_user_mfa") @default(uuid())
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade, map: "fk_user_mfa_user")
+  userId String @unique @map("user_id")
+
+  method         MfaMethod @default(TOTP)
+  secretEncrypted String   @map("secret_encrypted") // TOTP secret, encrypted at rest — never plaintext (ESS §26.5)
+  backupCodesHashed String[] @map("backup_codes_hashed") // one-time use, hashed like passwords
+  verifiedAt     DateTime? @map("verified_at") // null until the user completes enrollment (scan + confirm code)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  createdById  String?      @map("created_by_id")
+  updatedById  String?      @map("updated_by_id")
+  deletedAt    DateTime?    @map("deleted_at")
+  deletedById  String?      @map("deleted_by_id")
+  versionNo    Int          @default(1) @map("version_no")
+  recordStatus RecordStatus @default(ACTIVE) @map("record_status")
+  @@map("user_mfa")
+  @@schema("nexus")
+}
+
+model UserPasswordHistory {
+  id     String @id(map: "pk_user_password_history") @default(uuid())
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade, map: "fk_user_password_history_user")
+  userId String @map("user_id")
+
+  passwordHash String   @map("password_hash") // same hashing scheme as User.passwordHash, never the live one
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  @@index([userId, createdAt], map: "idx_user_password_history_user_created")
+  @@map("user_password_history")
+  @@schema("nexus")
+}
+
+model UserDevice {
+  id     String @id(map: "pk_user_device") @default(uuid())
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade, map: "fk_user_device_user")
+  userId String @map("user_id")
+
+  fingerprint String  @map("fingerprint") // derived client-side, opaque to the server
+  deviceName  String? @map("device_name")
+  trusted     Boolean @default(false)
+  lastSeenAt  DateTime @map("last_seen_at")
+  ipAddress   String? @map("ip_address")
+  userAgent   String? @map("user_agent")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  createdById  String?      @map("created_by_id")
+  updatedById  String?      @map("updated_by_id")
+  deletedAt    DateTime?    @map("deleted_at")
+  deletedById  String?      @map("deleted_by_id")
+  versionNo    Int          @default(1) @map("version_no")
+  recordStatus RecordStatus @default(ACTIVE) @map("record_status")
+  @@unique([userId, fingerprint], map: "uq_user_device_user_fingerprint")
+  @@map("user_device")
+  @@schema("nexus")
+}
+
+enum LoginResult {
+  SUCCESS
+  FAILED_PASSWORD
+  FAILED_MFA
+  LOCKED_OUT
+  FAILED_OTHER
+
+  @@schema("nexus")
+}
+
+// Deliberately separate from AuditLog: AuditLog is a general mutating-action
+// trail (institution-scoped, one row per action string). Lockout counting,
+// "new device" detection, and login-pattern queries need a narrow,
+// auth-specific table that's fast to query by userId without filtering a
+// general-purpose log by action string every time.
+model UserLoginHistory {
+  id     String @id(map: "pk_user_login_history") @default(uuid())
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade, map: "fk_user_login_history_user")
+  userId String @map("user_id")
+
+  result        LoginResult
+  failureReason String?     @map("failure_reason")
+  ipAddress     String?     @map("ip_address")
+  userAgent     String?     @map("user_agent")
+  createdAt     DateTime    @default(now()) @map("created_at")
+
+  @@index([userId, createdAt], map: "idx_user_login_history_user_created")
+  @@map("user_login_history")
   @@schema("nexus")
 }
 
