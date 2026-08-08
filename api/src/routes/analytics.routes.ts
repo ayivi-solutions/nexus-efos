@@ -107,3 +107,154 @@ analyticsRouter.get("/branch-performance", requirePermission("reports.view"), as
 
   res.json({ periodStart: start, periodEnd: end, branches: rows });
 });
+
+// ---------------------------------------------------------------------
+// EFS §76 Loan Portfolio Management — the Ops Supervisor role
+// schedule's "Ensure Loan Portfolio Management" / "Ensure PAR (Portfolio
+// at Risk) Benchmark adherence" / branch loan targets. §76.3 names 10
+// functional pieces; built here are the ones genuinely computable from
+// data that already exists: Portfolio Monitoring, Portfolio
+// Classification, Exposure Analysis (top borrowers), Product Analysis,
+// Branch Analysis, Portfolio Aging, Portfolio Quality Indicators
+// (PAR30/PAR90 — the textbook microfinance definition, not an invented
+// default), and this whole dashboard collectively is the Executive
+// Dashboard. NOT built, and disclosed here rather than silently
+// dropped: Sector Analysis (no sector classification field exists
+// anywhere on Customer) and Officer Performance (no loan-officer
+// assignment field exists on Loan — assignedCollectorId is for
+// Collections, a different role).
+//
+// All figures use arrearsClassification/daysInArrears as already
+// computed and stored on Loan by the existing daily arrears scheduler
+// job (§77.3) — never recomputed here, so this dashboard and the
+// arrears system can never silently disagree with each other.
+// ---------------------------------------------------------------------
+
+const OUTSTANDING_STATUSES = ["DISBURSED", "ACTIVE", "DEFAULTED"];
+
+interface OutstandingLoan {
+  id: string;
+  principal: unknown;
+  branchId: string | null;
+  productVersionId: string | null;
+  customerId: string;
+  arrearsClassification: string;
+  daysInArrears: number;
+  outstanding: number;
+}
+
+async function outstandingLoansWithBalance(institutionId: string): Promise<OutstandingLoan[]> {
+  const loans = await prisma.loan.findMany({
+    where: { institutionId, status: { in: OUTSTANDING_STATUSES as any } },
+    select: {
+      id: true, principal: true, branchId: true, productVersionId: true, customerId: true,
+      arrearsClassification: true, daysInArrears: true,
+      installments: { select: { principalPaid: true } },
+    },
+  });
+  return loans.map((l: any) => {
+    const principalPaid = l.installments.reduce((s: number, i: any) => s + Number(i.principalPaid), 0);
+    const outstanding = Math.max(0, round2(Number(l.principal) - principalPaid));
+    return { ...l, outstanding };
+  });
+}
+
+function parRatio(loans: OutstandingLoan[], thresholdDays: number) {
+  const total = loans.reduce((s: number, l: OutstandingLoan) => s + l.outstanding, 0);
+  if (total === 0) return 0;
+  const atRisk = loans.filter((l: OutstandingLoan) => l.daysInArrears > thresholdDays).reduce((s: number, l: OutstandingLoan) => s + l.outstanding, 0);
+  return round2((atRisk / total) * 100);
+}
+
+analyticsRouter.get("/portfolio/overview", requirePermission("reports.view"), async (req: AuthedRequest, res) => {
+  const loans = await outstandingLoansWithBalance(req.auth!.institutionId);
+  const totalOutstanding = round2(loans.reduce((s: number, l: OutstandingLoan) => s + l.outstanding, 0));
+
+  res.json({
+    loanCount: loans.length,
+    totalOutstanding,
+    par30: parRatio(loans, 30),
+    par90: parRatio(loans, 90),
+    parDefinition: "Outstanding balance of loans more than N days in arrears, as a percentage of total outstanding portfolio balance — the standard microfinance PAR definition.",
+  });
+});
+
+// §76.3 "Portfolio Aging" — the same arrears buckets §77 already
+// classifies loans into, viewed as a portfolio-wide distribution rather
+// than a per-loan status.
+analyticsRouter.get("/portfolio/aging", requirePermission("reports.view"), async (req: AuthedRequest, res) => {
+  const loans = await outstandingLoansWithBalance(req.auth!.institutionId);
+  const buckets = ["CURRENT", "ARREARS_1_30", "ARREARS_31_60", "ARREARS_61_90", "ARREARS_90_PLUS"];
+  const rows = buckets.map((bucket) => {
+    const inBucket = loans.filter((l: OutstandingLoan) => l.arrearsClassification === bucket);
+    return { bucket, loanCount: inBucket.length, outstanding: round2(inBucket.reduce((s: number, l: OutstandingLoan) => s + l.outstanding, 0)) };
+  });
+  res.json({ buckets: rows });
+});
+
+analyticsRouter.get("/portfolio/by-branch", requirePermission("reports.view"), async (req: AuthedRequest, res) => {
+  const loans = await outstandingLoansWithBalance(req.auth!.institutionId);
+  const branches = await prisma.branch.findMany({ where: { institutionId: req.auth!.institutionId }, select: { id: true, name: true } });
+  const branchName = new Map(branches.map((b: any) => [b.id, b.name]));
+
+  const byBranch = new Map<string, OutstandingLoan[]>();
+  for (const l of loans) {
+    const key = l.branchId || "unassigned";
+    if (!byBranch.has(key)) byBranch.set(key, []);
+    byBranch.get(key)!.push(l);
+  }
+  const rows = Array.from(byBranch.entries()).map(([branchId, ls]: [string, OutstandingLoan[]]) => ({
+    branchId: branchId === "unassigned" ? null : branchId,
+    branchName: branchId === "unassigned" ? "Unassigned" : branchName.get(branchId) || branchId,
+    loanCount: ls.length,
+    outstanding: round2(ls.reduce((s: number, l: OutstandingLoan) => s + l.outstanding, 0)),
+    par30: parRatio(ls, 30),
+  })).sort((a, b) => b.outstanding - a.outstanding);
+
+  res.json({ branches: rows });
+});
+
+analyticsRouter.get("/portfolio/by-product", requirePermission("reports.view"), async (req: AuthedRequest, res) => {
+  const loans = await outstandingLoansWithBalance(req.auth!.institutionId);
+  const versions = await prisma.productVersion.findMany({ where: { product: { institutionId: req.auth!.institutionId } }, select: { id: true, name: true } });
+  const productName = new Map(versions.map((v: any) => [v.id, v.name]));
+
+  const byProduct = new Map<string, OutstandingLoan[]>();
+  for (const l of loans) {
+    const key = l.productVersionId || "unassigned";
+    if (!byProduct.has(key)) byProduct.set(key, []);
+    byProduct.get(key)!.push(l);
+  }
+  const rows = Array.from(byProduct.entries()).map(([productVersionId, ls]: [string, OutstandingLoan[]]) => ({
+    productVersionId: productVersionId === "unassigned" ? null : productVersionId,
+    productName: productVersionId === "unassigned" ? "Unassigned" : productName.get(productVersionId) || productVersionId,
+    loanCount: ls.length,
+    outstanding: round2(ls.reduce((s: number, l: OutstandingLoan) => s + l.outstanding, 0)),
+    par30: parRatio(ls, 30),
+  })).sort((a, b) => b.outstanding - a.outstanding);
+
+  res.json({ products: rows });
+});
+
+// §76.3 "Exposure Analysis" — largest single-customer exposures, the
+// standard concentration-risk view.
+analyticsRouter.get("/portfolio/concentration", requirePermission("reports.view"), async (req: AuthedRequest, res) => {
+  const limit = Math.min(Math.max(Number((req.query as any).limit) || 10, 1), 50);
+  const loans = await outstandingLoansWithBalance(req.auth!.institutionId);
+
+  const byCustomer = new Map<string, number>();
+  for (const l of loans) byCustomer.set(l.customerId, (byCustomer.get(l.customerId) || 0) + l.outstanding);
+
+  const topIds = Array.from(byCustomer.entries()).sort((a, b) => b[1] - a[1]).slice(0, limit);
+  const customers = await prisma.customer.findMany({ where: { id: { in: topIds.map(([id]) => id) } }, select: { id: true, fullName: true } });
+  const nameById = new Map(customers.map((c: any) => [c.id, c.fullName]));
+
+  const totalOutstanding = round2(loans.reduce((s: number, l: OutstandingLoan) => s + l.outstanding, 0));
+  const rows = topIds.map(([customerId, outstanding]) => ({
+    customerId, customerName: nameById.get(customerId) || customerId,
+    outstanding: round2(outstanding),
+    percentOfPortfolio: totalOutstanding > 0 ? round2((outstanding / totalOutstanding) * 100) : 0,
+  }));
+
+  res.json({ topBorrowers: rows, totalOutstanding });
+});

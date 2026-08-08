@@ -573,6 +573,12 @@ export const api = {
   getNetIncomeForecast: (months?: number) => request(`/analytics/forecast/net-income${months ? `?months=${months}` : ""}`),
   getBranchPerformance: () => request("/analytics/branch-performance"),
 
+  getPortfolioOverview: () => request("/analytics/portfolio/overview"),
+  getPortfolioAging: () => request("/analytics/portfolio/aging"),
+  getPortfolioByBranch: () => request("/analytics/portfolio/by-branch"),
+  getPortfolioByProduct: () => request("/analytics/portfolio/by-product"),
+  getPortfolioConcentration: (limit = 10) => request(`/analytics/portfolio/concentration?limit=${limit}`),
+
   listPayrollCalendars: () => request("/payroll/calendars"),
   createPayrollCalendar: (data: any) => request("/payroll/calendars", { method: "POST", body: JSON.stringify(data) }),
   listPayrollPeriods: () => request("/payroll/periods"),
