@@ -111,6 +111,7 @@ model Institution {
   regulatoryCapitalSnapshots RegulatoryCapitalSnapshot[]
   notificationProviderConfigs NotificationProviderConfig[]
   loanGLAccountMappings        LoanGLAccountMapping[]
+  demoLinkTokens                DemoLinkToken[]
   notifications                Notification[]
   glAccounts              GLAccount[]
   journals                Journal[]
@@ -251,6 +252,7 @@ model User {
 
   userRoles      UserRole[]
   refreshTokens  RefreshToken[]
+  demoLinkTokens DemoLinkToken[]
   auditLogs      AuditLog[]
   employee       Employee?
   mfa            UserMfa?
@@ -2204,6 +2206,38 @@ model SavingsTransaction {
 // AUTH SUPPORT
 // ---------------------------------------------------------------------------
 
+// GAP-SEC-002 (Implementation Requirements Traceability & Remediation
+// Register, 9 Aug 2026): the previous demo-link mechanism signed a JWT
+// with the plaintext password AS the payload — anyone holding the link
+// URL could decode it (JWTs are signed, not encrypted; the payload is
+// plain base64, readable without any secret) and get a real, reusable
+// password, valid for a year with no way to revoke it early. Fixed by
+// making the URL an opaque, meaningless token: the password lives here,
+// encrypted at rest with the same AES-256-GCM helper used for MFA
+// secrets, and can only ever be retrieved by a valid call to our own
+// server — never by inspecting the link itself. Real revocation and a
+// much shorter default lifetime (30 days, not 365) via genuine DB state,
+// not just a JWT's baked-in exp claim that can't be revoked early.
+model DemoLinkToken {
+  id            String      @id(map: "pk_demo_link_token") @default(uuid())
+  institution   Institution @relation(fields: [institutionId], references: [id], onDelete: Cascade, map: "fk_demo_link_token_institution")
+  institutionId String      @map("institution_id")
+  user          User        @relation(fields: [userId], references: [id], onDelete: Cascade, map: "fk_demo_link_token_user")
+  userId        String      @map("user_id")
+
+  tokenHash         String  @unique @map("token_hash")
+  passwordEncrypted String  @map("password_encrypted")
+
+  createdById String    @map("created_by_id")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  expiresAt   DateTime  @map("expires_at")
+  revokedAt   DateTime? @map("revoked_at")
+  lastUsedAt  DateTime? @map("last_used_at")
+
+  @@map("demo_link_token")
+  @@schema("nexus")
+}
+
 model RefreshToken {
   id        String    @id(map: "pk_refresh_token") @default(uuid())
   user      User      @relation(fields: [userId], references: [id], onDelete: Cascade, map: "fk_refresh_token_user")
@@ -2214,6 +2248,26 @@ model RefreshToken {
   expiresAt DateTime  @map("expires_at")
   revokedAt DateTime? @map("revoked_at")
   createdAt DateTime  @default(now()) @map("created_at")
+
+  // GAP-IAM-002 fix — rotation and reuse detection. familyId is shared
+  // across every token descended from one original login (set once,
+  // never changed on rotation); expiresAt is carried forward unchanged
+  // too, so a family has a hard absolute lifetime rather than sliding
+  // forward forever on activity — a real, disclosed security choice, not
+  // an oversight. replacedByTokenId is set the moment a token is
+  // rotated away; if a token with replacedByTokenId already set is ever
+  // presented again, that can only mean it leaked and is being replayed
+  // (the legitimate client is already using what it was rotated into) —
+  // treated as theft, revoking the entire family, not just that token.
+  //
+  // dbgenerated, not Prisma-level @default(uuid()): this column was
+  // added to an already-populated table (36 existing rows at the time),
+  // and a Prisma-level default only applies to rows the client creates
+  // going forward — it can't backfill existing ones, so `migrate dev`
+  // correctly refused to run until this was a real database-level
+  // default Postgres itself can evaluate during the ALTER TABLE.
+  familyId          String  @default(dbgenerated("gen_random_uuid()")) @map("family_id")
+  replacedByTokenId String? @map("replaced_by_token_id")
 
   // PDDS §13.4 Phase 3 — mandatory audit/version/lifecycle columns.
   // created_by/updated_by/version_no auto-populated by Prisma middleware

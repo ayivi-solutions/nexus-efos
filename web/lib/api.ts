@@ -80,8 +80,13 @@ async function request(path: string, options: RequestInit = {}, _retried = false
       try {
         const refreshRes = await rawFetch("/auth/refresh", { method: "POST", body: JSON.stringify({ refreshToken }) }, null);
         if (refreshRes.ok) {
-          const { accessToken: newAccessToken } = await refreshRes.json();
+          // GAP-IAM-002: refresh tokens now rotate — the server issues a
+          // new one on every successful refresh and consumes the old
+          // one. Must store the new one or the *next* refresh fails,
+          // since the old token no longer works after this call.
+          const { accessToken: newAccessToken, refreshToken: newRefreshToken } = await refreshRes.json();
           sessionStorage.setItem("nexus_access_token", newAccessToken);
+          if (newRefreshToken) sessionStorage.setItem("nexus_refresh_token", newRefreshToken);
           return request(path, options, true);
         }
       } catch {

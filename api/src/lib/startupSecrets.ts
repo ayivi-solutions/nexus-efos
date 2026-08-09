@@ -28,7 +28,6 @@ interface RequiredSecret {
 const REQUIRED_SECRETS: RequiredSecret[] = [
   { envVar: "JWT_ACCESS_SECRET", purpose: "access token signing" },
   { envVar: "JWT_REFRESH_SECRET", purpose: "refresh token signing" },
-  { envVar: "DEMO_LINK_SECRET", purpose: "demo-link token signing" },
   { envVar: "MFA_PENDING_SECRET", purpose: "MFA-pending token signing" },
   { envVar: "MFA_ENCRYPTION_KEY", purpose: "MFA secret encryption (already fail-closed in lib/security.ts — checked again here so the failure surfaces at boot, not on first MFA enrollment)" },
 ];

@@ -2,13 +2,12 @@ import { Router } from "express";
 import bcrypt from "bcryptjs";
 import { z } from "zod";
 import type { Prisma } from "@prisma/client";
+import crypto from "crypto";
 import { prisma } from "../lib/prisma";
 import {
   signAccessToken,
   generateRefreshToken,
   hashRefreshToken,
-  signDemoLinkToken,
-  verifyDemoLinkToken,
   signMfaPendingToken,
   verifyMfaPendingToken,
 } from "../lib/jwt";
@@ -573,24 +572,66 @@ authRouter.post("/demo-link", requireAuth, async (req: AuthedRequest, res) => {
   const valid = await bcrypt.compare(password, user.passwordHash);
   if (!valid) return res.status(401).json({ error: "That isn't this user's current password" });
 
-  const token = signDemoLinkToken({ email, password });
+  // GAP-SEC-002 fix: the URL now carries an opaque random token, not a
+  // JWT with the password baked into its (unencrypted, trivially
+  // decodable) payload. The password itself is encrypted at rest here
+  // and only ever decrypted server-side, by the resolve endpoint below,
+  // after checking the token is still valid and unrevoked.
+  const rawToken = crypto.randomBytes(32).toString("hex");
+  await prisma.demoLinkToken.create({
+    data: {
+      institutionId: req.auth!.institutionId,
+      userId: user.id,
+      tokenHash: hashRefreshToken(rawToken),
+      passwordEncrypted: encryptSecret(password),
+      createdById: req.auth!.userId,
+      expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 days, not 365 — real, disclosed, and revocable below regardless
+    },
+  });
+
   const webBase = process.env.WEB_APP_URL || "http://localhost:3100";
-  res.json({ url: `${webBase}/login?demo=${token}` });
+  res.json({ url: `${webBase}/login?demo=${rawToken}` });
 });
 
 // -----------------------------------------------------------------------
 // GET /auth/demo-link/:token
 // Public — resolves a demo link back into the credentials it carries, for
 // the login page to pre-fill. Never issues a session directly; the person
-// still has to press Sign In, same as any other login.
+// still has to press Sign In, same as any other login (including MFA if
+// the demo institution requires it).
 // -----------------------------------------------------------------------
 authRouter.get("/demo-link/:token", async (req, res) => {
-  try {
-    const { email, password } = verifyDemoLinkToken(req.params.token);
-    res.json({ email, password });
-  } catch {
-    res.status(410).json({ error: "This demo link is invalid or has expired" });
+  const record = await prisma.demoLinkToken.findUnique({
+    where: { tokenHash: hashRefreshToken(req.params.token) },
+    include: { user: { select: { email: true } } },
+  });
+  if (!record || record.revokedAt || record.expiresAt < new Date()) {
+    return res.status(410).json({ error: "This demo link is invalid or has expired" });
   }
+
+  await prisma.demoLinkToken.update({ where: { id: record.id }, data: { lastUsedAt: new Date() } });
+
+  res.json({ email: record.user.email, password: decryptSecret(record.passwordEncrypted) });
+});
+
+// GAP-SEC-002 — real revocation, per the acceptance criterion ("revocation
+// and expiry must terminate access immediately"). A JWT's baked-in exp
+// claim couldn't be revoked early; this is genuine DB state checked on
+// every resolve.
+authRouter.get("/demo-link", requireAuth, async (req: AuthedRequest, res) => {
+  const links = await prisma.demoLinkToken.findMany({
+    where: { institutionId: req.auth!.institutionId },
+    include: { user: { select: { email: true, fullName: true } } },
+    orderBy: { createdAt: "desc" },
+  });
+  res.json({ links: links.map((l: any) => ({ id: l.id, userEmail: l.user.email, userName: l.user.fullName, createdAt: l.createdAt, expiresAt: l.expiresAt, revokedAt: l.revokedAt, lastUsedAt: l.lastUsedAt })) });
+});
+
+authRouter.post("/demo-link/:id/revoke", requireAuth, async (req: AuthedRequest, res) => {
+  const record = await prisma.demoLinkToken.findFirst({ where: { id: req.params.id, institutionId: req.auth!.institutionId } });
+  if (!record) return res.status(404).json({ error: "Demo link not found" });
+  await prisma.demoLinkToken.update({ where: { id: record.id }, data: { revokedAt: new Date() } });
+  res.status(204).send();
 });
 
 // -----------------------------------------------------------------------
@@ -603,17 +644,63 @@ authRouter.post("/refresh", async (req, res) => {
   const hash = hashRefreshToken(refreshToken);
   const stored = await prisma.refreshToken.findUnique({ where: { tokenHash: hash }, include: { user: true } });
 
-  if (!stored || stored.revokedAt || stored.expiresAt < new Date()) {
+  if (!stored) return res.status(401).json({ error: "Refresh token invalid or expired" });
+
+  // GAP-IAM-002 fix (reuse detection): this token was already rotated
+  // away — the legitimate client is already using the token it was
+  // rotated into. Being presented again can only mean it leaked and is
+  // being replayed from a stale copy. Revoke the entire family, not
+  // just this one token, and log it as a real security event.
+  if (stored.replacedByTokenId) {
+    await prisma.refreshToken.updateMany({ where: { familyId: stored.familyId, revokedAt: null }, data: { revokedAt: new Date() } });
+    await prisma.auditLog.create({
+      data: { institutionId: stored.user.institutionId, userId: stored.userId, action: "auth.refresh_token_reuse_detected", resource: "refresh_token", resourceId: stored.id },
+    });
     return res.status(401).json({ error: "Refresh token invalid or expired" });
   }
 
+  if (stored.revokedAt || stored.expiresAt < new Date()) {
+    return res.status(401).json({ error: "Refresh token invalid or expired" });
+  }
+
+  // GAP-IAM-002 fix (current-state re-check): a stored, unrevoked
+  // refresh token used to be sufficient on its own. Suspend already
+  // revokes tokens directly (see /users/:id/suspend), but lockout and
+  // password expiry don't touch the tokens table at all — without this,
+  // a locked-out or password-expired user could keep minting fresh
+  // access tokens indefinitely from an old refresh token that was never
+  // itself revoked.
+  const user = stored.user;
+  if (user.status !== "ACTIVE") {
+    return res.status(401).json({ error: "Refresh token invalid or expired" });
+  }
+  if (user.lockedUntil && user.lockedUntil > new Date()) {
+    return res.status(401).json({ error: "Refresh token invalid or expired" });
+  }
+  if (user.mustChangePassword) {
+    return res.status(401).json({ error: "Password change required — please sign in again" });
+  }
+
+  // GAP-IAM-002 fix (rotation): the old refresh token is consumed here,
+  // a new one takes its place in the same family with the same absolute
+  // expiry — the frontend must store the returned refreshToken and use
+  // it for the next refresh, the old one no longer works after this.
+  const { raw: newRawToken, hash: newHash } = generateRefreshToken();
+  const newToken = await prisma.refreshToken.create({
+    data: {
+      userId: user.id, tokenHash: newHash, familyId: stored.familyId, expiresAt: stored.expiresAt,
+      userAgent: req.headers["user-agent"], ipAddress: req.ip,
+    },
+  });
+  await prisma.refreshToken.update({ where: { id: stored.id }, data: { revokedAt: new Date(), replacedByTokenId: newToken.id } });
+
   const accessToken = signAccessToken({
-    userId: stored.user.id,
-    institutionId: stored.user.institutionId,
-    category: stored.user.category,
+    userId: user.id,
+    institutionId: user.institutionId,
+    category: user.category,
   });
 
-  res.json({ accessToken });
+  res.json({ accessToken, refreshToken: newRawToken });
 });
 
 // -----------------------------------------------------------------------
