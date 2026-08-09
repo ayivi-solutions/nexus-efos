@@ -56,6 +56,8 @@ export default function LoanDetailPage() {
   const [collateralForm, setCollateralForm] = useState({ type: "LAND", description: "", ownerName: "", estimatedValue: "", valuationDate: "" });
   const [restructures, setRestructures] = useState<any[]>([]);
   const [restructureForm, setRestructureForm] = useState({ newPrincipal: "", newRate: "", newTermMonths: "", reason: "" });
+  const [vaults, setVaults] = useState<any[]>([]);
+  const [disburseVaultId, setDisburseVaultId] = useState("");
   const [reschedules, setReschedules] = useState<any[]>([]);
   const [rescheduleForm, setRescheduleForm] = useState({ shiftDays: "", reason: "" });
   const [writeOffs, setWriteOffs] = useState<any[]>([]);
@@ -76,6 +78,7 @@ export default function LoanDetailPage() {
   useEffect(() => {
     load();
     api.listCustomers().then((res) => setCustomers(res.customers)).catch(() => {});
+    api.listVaults().then((res) => setVaults(res.vaults.filter((v: any) => v.status === "OPEN"))).catch(() => {});
   }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function handleRecordPromise(e: React.FormEvent) {
@@ -257,12 +260,16 @@ export default function LoanDetailPage() {
   }
 
   async function handleAction(action: "approve" | "reject" | "disburse") {
+    if (action === "disburse" && !disburseVaultId) {
+      setError("Select a vault to disburse from first — disbursement must draw from a real, identified cash source.");
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
       if (action === "approve") await api.approveLoan(id);
       if (action === "reject") await api.rejectLoan(id);
-      if (action === "disburse") await api.disburseLoan(id);
+      if (action === "disburse") await api.disburseLoan(id, disburseVaultId);
       load();
     } catch (err: any) {
       setError(err.message || "Action failed");
@@ -392,7 +399,15 @@ export default function LoanDetailPage() {
                   </>
                 )}
                 {loan.status === "APPROVED" && (
-                  <button onClick={() => handleAction("disburse")} disabled={busy} className="btn-primary">Disburse</button>
+                  <div className="flex items-center gap-2">
+                    <select className="input !py-2 !w-48" value={disburseVaultId} onChange={(e) => setDisburseVaultId(e.target.value)}>
+                      <option value="">Disburse from vault…</option>
+                      {vaults.map((v: any) => (
+                        <option key={v.id} value={v.id}>{v.name} (GHS {Number(v.balance).toLocaleString()})</option>
+                      ))}
+                    </select>
+                    <button onClick={() => handleAction("disburse")} disabled={busy || !disburseVaultId} className="btn-primary">Disburse</button>
+                  </div>
                 )}
                 {(loan.status === "DISBURSED" || loan.status === "ACTIVE") && (
                   <div className="flex items-center gap-2">

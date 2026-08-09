@@ -26,14 +26,33 @@ export default function LoansPage() {
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ customerId: "", productVersionId: "", principal: "", termMonths: "" });
   const [saving, setSaving] = useState(false);
+  const [showGLMapping, setShowGLMapping] = useState(false);
+  const [glMappings, setGlMappings] = useState<any>({ mappings: [], purposes: [], accounts: [] });
+  const [mappingForm, setMappingForm] = useState({ purpose: "", glAccountId: "" });
+  const [mappingBusy, setMappingBusy] = useState(false);
 
   function load() {
     api.listLoans().then((res) => setLoans(res.loans)).catch((err) => setError(err.message));
     api.listCustomers().then((res) => setCustomers(res.customers)).catch(() => {});
     api.listProducts("LOAN").then((res) => setProducts(res.products.filter((p: any) => p.status === "ACTIVE"))).catch(() => {});
+    api.listLoanGLMappings().then(setGlMappings).catch(() => {});
   }
 
   useEffect(() => { load(); }, []);
+
+  async function handleSetMapping(e: React.FormEvent) {
+    e.preventDefault();
+    setMappingBusy(true);
+    try {
+      await api.setLoanGLMapping(mappingForm.purpose, mappingForm.glAccountId);
+      setMappingForm({ purpose: "", glAccountId: "" });
+      load();
+    } catch (err: any) {
+      setError(err.message || "Could not save mapping");
+    } finally {
+      setMappingBusy(false);
+    }
+  }
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
@@ -61,10 +80,43 @@ export default function LoansPage() {
       <div className="p-5 dt:p-10 overflow-x-auto">
         <div className="flex items-center justify-between mb-8 gap-3">
           <h1 className="font-display font-semibold text-2xl dt:text-3xl text-ink-900">Loans</h1>
-          <button onClick={() => setShowForm((s) => !s)} className="btn-dark shrink-0">
-            {showForm ? "Cancel" : "+ New loan"}
-          </button>
+          <div className="flex gap-2 shrink-0">
+            <button onClick={() => setShowGLMapping((s) => !s)} className="btn-dark">
+              {showGLMapping ? "Hide GL Mapping" : "GL Mapping"}
+            </button>
+            <button onClick={() => setShowForm((s) => !s)} className="btn-dark">
+              {showForm ? "Cancel" : "+ New loan"}
+            </button>
+          </div>
         </div>
+
+        {showGLMapping && (
+          <div className="mb-8">
+            <p className="text-[12.5px] text-text-muted mb-4">Real accounts a loan disbursement debits/credits. Both purposes must be mapped before any loan can be disbursed — GAP-FIN-003: disbursement is a real financial transaction now, not just a status change, so it hard-blocks without this configured rather than proceeding with a silent accounting gap.</p>
+            <form onSubmit={handleSetMapping} className="card p-4 mb-6 flex flex-wrap items-end gap-3">
+              <select required className="input" value={mappingForm.purpose} onChange={(e) => setMappingForm((f) => ({ ...f, purpose: e.target.value }))}>
+                <option value="">Purpose…</option>
+                {glMappings.purposes.map((p: string) => (<option key={p} value={p}>{p}</option>))}
+              </select>
+              <select required className="input" value={mappingForm.glAccountId} onChange={(e) => setMappingForm((f) => ({ ...f, glAccountId: e.target.value }))}>
+                <option value="">GL Account…</option>
+                {glMappings.accounts.map((a: any) => (<option key={a.id} value={a.id}>{a.code} — {a.name}</option>))}
+              </select>
+              <button type="submit" disabled={mappingBusy} className="btn-primary">Save Mapping</button>
+            </form>
+            <div className="card overflow-x-auto">
+              <table className="w-full text-sm table-modern">
+                <thead><tr><th>Purpose</th><th>Mapped Account</th></tr></thead>
+                <tbody>
+                  {glMappings.purposes.map((p: string) => {
+                    const m = glMappings.mappings.find((x: any) => x.purpose === p);
+                    return (<tr key={p}><td className="text-text-900">{p}</td><td className="text-text-700">{m?.account ? `${m.account.code} — ${m.account.name}` : <span className="text-rose-600">Not mapped</span>}</td></tr>);
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
 
         {showForm && (
           <form onSubmit={handleCreate} className="card p-6 mb-8">

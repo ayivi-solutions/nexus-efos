@@ -295,7 +295,7 @@ export const api = {
     request("/loans", { method: "POST", body: JSON.stringify(data) }),
   approveLoan: (id: string) => request(`/loans/${id}/approve`, { method: "POST" }),
   rejectLoan: (id: string) => request(`/loans/${id}/reject`, { method: "POST" }),
-  disburseLoan: (id: string) => request(`/loans/${id}/disburse`, { method: "POST" }),
+  disburseLoan: (id: string, vaultId: string) => request(`/loans/${id}/disburse`, { method: "POST", body: JSON.stringify({ vaultId }) }),
   recordRepayment: (id: string, amount: number) => request(`/loans/${id}/repayments`, { method: "POST", body: JSON.stringify({ amount }) }),
 
   listPromisesToPay: (loanId: string) => request(`/loans/${loanId}/promises-to-pay`),
@@ -663,6 +663,8 @@ export const api = {
   createAssetVerification: (data: any) => request("/assets/verifications", { method: "POST", body: JSON.stringify(data) }),
   listAssetGLMappings: () => request("/assets/gl-mappings"),
   setAssetGLMapping: (purpose: string, glAccountId: string) => request("/assets/gl-mappings", { method: "POST", body: JSON.stringify({ purpose, glAccountId }) }),
+  listLoanGLMappings: () => request("/loans/gl-mappings"),
+  setLoanGLMapping: (purpose: string, glAccountId: string) => request("/loans/gl-mappings", { method: "POST", body: JSON.stringify({ purpose, glAccountId }) }),
   getAssetRegisterReport: () => request("/assets/reports/register"),
   getAssetValuationReport: () => request("/assets/reports/valuation"),
   getAssetLifecycleReport: () => request("/assets/reports/lifecycle"),

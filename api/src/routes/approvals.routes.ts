@@ -25,18 +25,30 @@ approvalsRouter.get("/", requirePermission("institution.configure"), async (req:
 // Applies the payload of an approved request against its target. Each case
 // mirrors exactly what the direct-apply code path would have done had
 // approval not been required.
-async function applyApproval(request: { id: string; type: string; targetId: string; institutionId: string; requestedById: string; payload: any }, approvedById: string) {
+//
+// GAP-WF-001/GAP-FIN-004/GAP-FIN-005 fix: this function used to call the
+// global `prisma` directly throughout, meaning its writes were never part
+// of the same transaction as the approval-request's own PENDING→APPROVED
+// state transition — a crash between "business effect applied" and
+// "approval marked resolved" could leave the request stuck pending and
+// re-appliable, or (for CASH_TRANSFER/JOURNAL_POSTING specifically) leave
+// a half-completed money movement or a partially-posted journal. Every
+// case now takes `tx`, the caller's transaction client, so the entire
+// approval — business effect and state transition together — commits or
+// rolls back as one unit. See the call site below for the outer
+// transaction and Serializable isolation.
+async function applyApproval(tx: any, request: { id: string; type: string; targetId: string; institutionId: string; requestedById: string; payload: any }, approvedById: string) {
   const payload = request.payload as any;
 
   switch (request.type) {
     case "CUSTOMER_STATUS_CHANGE":
-      await prisma.customer.update({ where: { id: request.targetId }, data: { status: payload.status } });
+      await tx.customer.update({ where: { id: request.targetId }, data: { status: payload.status } });
       break;
     case "CUSTOMER_PROFILE_UPDATE":
-      await prisma.customer.update({ where: { id: request.targetId }, data: { ...payload, status: "ACTIVE" } });
+      await tx.customer.update({ where: { id: request.targetId }, data: { ...payload, status: "ACTIVE" } });
       break;
     case "ACCOUNT_HOLDER_ADD":
-      await prisma.accountHolder.create({
+      await tx.accountHolder.create({
         data: {
           institutionId: request.institutionId,
           customerId: payload.customerId,
@@ -48,10 +60,10 @@ async function applyApproval(request: { id: string; type: string; targetId: stri
       });
       break;
     case "PRODUCT_ACTIVATION":
-      await prisma.product.update({ where: { id: request.targetId }, data: { status: "ACTIVE" } });
+      await tx.product.update({ where: { id: request.targetId }, data: { status: "ACTIVE" } });
       break;
     case "BUSINESS_RULE_ACTIVATION":
-      await prisma.businessRule.update({ where: { id: request.targetId }, data: { status: "ACTIVE" } });
+      await tx.businessRule.update({ where: { id: request.targetId }, data: { status: "ACTIVE" } });
       break;
 
     // doc §72 Loan Restructuring — pending installments are superseded
@@ -61,17 +73,17 @@ async function applyApproval(request: { id: string; type: string; targetId: stri
     // disbursement uses, starting today. Already-paid installments are
     // left untouched.
     case "LOAN_RESTRUCTURE": {
-      const restructure = await prisma.loanRestructure.findUniqueOrThrow({ where: { id: request.targetId } });
-      await prisma.loanInstallment.updateMany({
+      const restructure = await tx.loanRestructure.findUniqueOrThrow({ where: { id: request.targetId } });
+      await tx.loanInstallment.updateMany({
         where: { loanId: restructure.loanId, status: { in: ["PENDING", "PARTIALLY_PAID"] } },
         data: { deletedAt: new Date() },
       });
       const schedule = generateSchedule(Number(restructure.newPrincipal), Number(restructure.newRate), restructure.newTermMonths, "FLAT", new Date());
-      await prisma.loanInstallment.createMany({
+      await tx.loanInstallment.createMany({
         data: schedule.map((s) => ({ loanId: restructure.loanId, installmentNumber: s.installmentNumber, dueDate: s.dueDate, principalDue: s.principalDue, interestDue: s.interestDue, totalDue: round2(s.principalDue + s.interestDue) })),
       });
-      await prisma.loan.update({ where: { id: restructure.loanId }, data: { principal: restructure.newPrincipal, interestRate: restructure.newRate, termMonths: restructure.newTermMonths } });
-      await prisma.loanRestructure.update({ where: { id: restructure.id }, data: { appliedAt: new Date() } });
+      await tx.loan.update({ where: { id: restructure.loanId }, data: { principal: restructure.newPrincipal, interestRate: restructure.newRate, termMonths: restructure.newTermMonths } });
+      await tx.loanRestructure.update({ where: { id: restructure.id }, data: { appliedAt: new Date() } });
       break;
     }
 
@@ -79,14 +91,14 @@ async function applyApproval(request: { id: string; type: string; targetId: stri
     // only the due dates of not-yet-fully-paid installments shift,
     // principal/rate/term are untouched.
     case "LOAN_RESCHEDULE": {
-      const reschedule = await prisma.loanReschedule.findUniqueOrThrow({ where: { id: request.targetId } });
-      const installments = await prisma.loanInstallment.findMany({ where: { loanId: reschedule.loanId, status: { in: ["PENDING", "PARTIALLY_PAID"] } } });
+      const reschedule = await tx.loanReschedule.findUniqueOrThrow({ where: { id: request.targetId } });
+      const installments = await tx.loanInstallment.findMany({ where: { loanId: reschedule.loanId, status: { in: ["PENDING", "PARTIALLY_PAID"] } } });
       for (const inst of installments) {
         const newDate = new Date(inst.dueDate);
         newDate.setDate(newDate.getDate() + reschedule.shiftDays);
-        await prisma.loanInstallment.update({ where: { id: inst.id }, data: { dueDate: newDate } });
+        await tx.loanInstallment.update({ where: { id: inst.id }, data: { dueDate: newDate } });
       }
-      await prisma.loanReschedule.update({ where: { id: reschedule.id }, data: { appliedAt: new Date() } });
+      await tx.loanReschedule.update({ where: { id: reschedule.id }, data: { appliedAt: new Date() } });
       break;
     }
 
@@ -95,9 +107,9 @@ async function applyApproval(request: { id: string; type: string; targetId: stri
     // so the historical record of what was actually owed stays intact for
     // any future recovery tracking.
     case "LOAN_WRITE_OFF": {
-      const writeOff = await prisma.loanWriteOff.findUniqueOrThrow({ where: { id: request.targetId } });
-      await prisma.loan.update({ where: { id: writeOff.loanId }, data: { status: "WRITTEN_OFF" } });
-      await prisma.loanWriteOff.update({ where: { id: writeOff.id }, data: { appliedAt: new Date() } });
+      const writeOff = await tx.loanWriteOff.findUniqueOrThrow({ where: { id: request.targetId } });
+      await tx.loan.update({ where: { id: writeOff.loanId }, data: { status: "WRITTEN_OFF" } });
+      await tx.loanWriteOff.update({ where: { id: writeOff.id }, data: { appliedAt: new Date() } });
       break;
     }
 
@@ -105,7 +117,7 @@ async function applyApproval(request: { id: string; type: string; targetId: stri
     // the variance as reconciled; the actual cash figures were already
     // recorded honestly at settlement time, this just closes the loop.
     case "COLLECTION_VARIANCE_ADJUSTMENT": {
-      await prisma.collectionSettlement.update({
+      await tx.collectionSettlement.update({
         where: { id: request.targetId },
         data: { status: "RECONCILED", reconciledById: approvedById, reconciledAt: new Date() },
       });
@@ -113,7 +125,7 @@ async function applyApproval(request: { id: string; type: string; targetId: stri
     }
 
     case "COMMISSION_PAYMENT": {
-      await prisma.commissionRecord.update({ where: { id: request.targetId }, data: { status: "PAID", paidAt: new Date() } });
+      await tx.commissionRecord.update({ where: { id: request.targetId }, data: { status: "PAID", paidAt: new Date() } });
       break;
     }
 
@@ -124,40 +136,40 @@ async function applyApproval(request: { id: string; type: string; targetId: stri
     // at request time, since time may have passed and other activity may
     // have moved cash in the meantime.
     case "CASH_TRANSFER": {
-      const transfer = await prisma.cashTransfer.findUniqueOrThrow({ where: { id: request.targetId } });
+      const transfer = await tx.cashTransfer.findUniqueOrThrow({ where: { id: request.targetId } });
       const amount = Number(transfer.amount);
 
       async function currentBalance(type: string, id: string) {
-        if (type === "VAULT") return Number((await prisma.vault.findUniqueOrThrow({ where: { id } })).balance);
-        return Number((await prisma.teller.findUniqueOrThrow({ where: { id } })).currentHolding);
+        if (type === "VAULT") return Number((await tx.vault.findUniqueOrThrow({ where: { id } })).balance);
+        return Number((await tx.teller.findUniqueOrThrow({ where: { id } })).currentHolding);
       }
       async function applyDelta(type: string, id: string, delta: number) {
         if (type === "VAULT") {
-          const v = await prisma.vault.update({ where: { id }, data: { balance: { increment: delta } } });
+          const v = await tx.vault.update({ where: { id }, data: { balance: { increment: delta } } });
           return Number(v.balance);
         }
-        const t = await prisma.teller.update({ where: { id }, data: { currentHolding: { increment: delta } } });
+        const t = await tx.teller.update({ where: { id }, data: { currentHolding: { increment: delta } } });
         return Number(t.currentHolding);
       }
 
       const sourceBalance = await currentBalance(transfer.fromType, transfer.fromId);
       if (sourceBalance < amount) {
-        await prisma.cashTransfer.update({ where: { id: transfer.id }, data: { status: "REJECTED" } });
+        await tx.cashTransfer.update({ where: { id: transfer.id }, data: { status: "REJECTED" } });
         break;
       }
 
       const newSourceBalance = await applyDelta(transfer.fromType, transfer.fromId, -amount);
       const newDestBalance = await applyDelta(transfer.toType, transfer.toId, amount);
 
-      await prisma.cashLedgerEntry.create({ data: { institutionId: transfer.institutionId, holderType: transfer.fromType, holderId: transfer.fromId, type: "TRANSFER_OUT", amount, balanceAfter: newSourceBalance, notes: transfer.reason, recordedById: approvedById } });
-      await prisma.cashLedgerEntry.create({ data: { institutionId: transfer.institutionId, holderType: transfer.toType, holderId: transfer.toId, type: "TRANSFER_IN", amount, balanceAfter: newDestBalance, notes: transfer.reason, recordedById: approvedById } });
+      await tx.cashLedgerEntry.create({ data: { institutionId: transfer.institutionId, holderType: transfer.fromType, holderId: transfer.fromId, type: "TRANSFER_OUT", amount, balanceAfter: newSourceBalance, notes: transfer.reason, recordedById: approvedById } });
+      await tx.cashLedgerEntry.create({ data: { institutionId: transfer.institutionId, holderType: transfer.toType, holderId: transfer.toId, type: "TRANSFER_IN", amount, balanceAfter: newDestBalance, notes: transfer.reason, recordedById: approvedById } });
 
-      await prisma.cashTransfer.update({ where: { id: transfer.id }, data: { status: "COMPLETED", approvedById, completedAt: new Date() } });
+      await tx.cashTransfer.update({ where: { id: transfer.id }, data: { status: "COMPLETED", approvedById, completedAt: new Date() } });
       break;
     }
 
     case "CASH_BALANCING_VARIANCE": {
-      await prisma.cashBalancing.update({ where: { id: request.targetId }, data: { status: "RECONCILED", reconciledById: approvedById, reconciledAt: new Date() } });
+      await tx.cashBalancing.update({ where: { id: request.targetId }, data: { status: "RECONCILED", reconciledById: approvedById, reconciledAt: new Date() } });
       break;
     }
 
@@ -168,15 +180,15 @@ async function applyApproval(request: { id: string; type: string; targetId: stri
     // either check fails now, the journal is rejected rather than posted
     // with stale validation.
     case "JOURNAL_POSTING": {
-      const journal = await prisma.journal.findUniqueOrThrow({ where: { id: request.targetId }, include: { lines: { include: { account: true } } } });
+      const journal = await tx.journal.findUniqueOrThrow({ where: { id: request.targetId }, include: { lines: { include: { account: true } } } });
 
-      const stillBalanced = isBalanced(journal.lines.map((l) => ({ debit: Number(l.debit), credit: Number(l.credit) })));
-      const allActive = journal.lines.every((l) => l.account.status === "ACTIVE");
+      const stillBalanced = isBalanced(journal.lines.map((l: any) => ({ debit: Number(l.debit), credit: Number(l.credit) })));
+      const allActive = journal.lines.every((l: any) => l.account.status === "ACTIVE");
       // §120.3 "Closed periods prevent unauthorised postings" — re-checked
       // here too, not just at creation, since the period could have
       // closed in the time between drafting the journal and its posting
       // being approved.
-      const period = await findPostablePeriod(prisma, journal.institutionId, journal.postingDate);
+      const period = await findPostablePeriod(tx, journal.institutionId, journal.postingDate);
       const periodStillOpen = !!period && period.status === "OPEN";
 
       if (!stillBalanced || !allActive || !periodStillOpen) {
@@ -184,26 +196,26 @@ async function applyApproval(request: { id: string; type: string; targetId: stri
         if (!stillBalanced) reasons.push("debits no longer equal credits");
         if (!allActive) reasons.push("one or more accounts became inactive");
         if (!periodStillOpen) reasons.push(period ? `the financial period is now ${period.status}` : "no financial period covers this posting date");
-        await prisma.journal.update({ where: { id: journal.id }, data: { status: "REJECTED", rejectionReason: reasons.join("; ") } });
+        await tx.journal.update({ where: { id: journal.id }, data: { status: "REJECTED", rejectionReason: reasons.join("; ") } });
         break;
       }
 
       for (const line of journal.lines) {
         const effect = balanceEffect(line.account.category as any, Number(line.debit), Number(line.credit));
-        await prisma.gLAccount.update({ where: { id: line.accountId }, data: { balance: { increment: effect } } });
+        await tx.gLAccount.update({ where: { id: line.accountId }, data: { balance: { increment: effect } } });
       }
 
-      await prisma.journal.update({ where: { id: journal.id }, data: { status: "POSTED", postedById: approvedById, postedAt: new Date() } });
+      await tx.journal.update({ where: { id: journal.id }, data: { status: "POSTED", postedById: approvedById, postedAt: new Date() } });
       break;
     }
 
     case "FINANCIAL_PERIOD_REOPEN": {
-      await prisma.financialPeriod.update({ where: { id: request.targetId }, data: { status: "OPEN", reopenedById: approvedById, reopenedAt: new Date() } });
+      await tx.financialPeriod.update({ where: { id: request.targetId }, data: { status: "OPEN", reopenedById: approvedById, reopenedAt: new Date() } });
       break;
     }
 
     case "RECURRING_JOURNAL_ACTIVATION": {
-      await prisma.recurringJournal.update({ where: { id: request.targetId }, data: { status: "ACTIVE" } });
+      await tx.recurringJournal.update({ where: { id: request.targetId }, data: { status: "ACTIVE" } });
       break;
     }
 
@@ -215,11 +227,11 @@ async function applyApproval(request: { id: string; type: string; targetId: stri
     // by the exact same isBalanced/balanceEffect engine every other
     // journal in the app uses — not a separate, parallel implementation.
     case "INTER_BRANCH_TRANSFER": {
-      const transfer = await prisma.interBranchTransfer.findUniqueOrThrow({ where: { id: request.targetId } });
-      const fromSettlement = await prisma.branchSettlementAccount.findUniqueOrThrow({ where: { branchId: transfer.fromBranchId }, include: { glAccount: true } });
-      const toSettlement = await prisma.branchSettlementAccount.findUniqueOrThrow({ where: { branchId: transfer.toBranchId }, include: { glAccount: true } });
-      const fromAccount = await prisma.gLAccount.findUniqueOrThrow({ where: { id: transfer.fromGLAccountId } });
-      const toAccount = await prisma.gLAccount.findUniqueOrThrow({ where: { id: transfer.toGLAccountId } });
+      const transfer = await tx.interBranchTransfer.findUniqueOrThrow({ where: { id: request.targetId } });
+      const fromSettlement = await tx.branchSettlementAccount.findUniqueOrThrow({ where: { branchId: transfer.fromBranchId }, include: { glAccount: true } });
+      const toSettlement = await tx.branchSettlementAccount.findUniqueOrThrow({ where: { branchId: transfer.toBranchId }, include: { glAccount: true } });
+      const fromAccount = await tx.gLAccount.findUniqueOrThrow({ where: { id: transfer.fromGLAccountId } });
+      const toAccount = await tx.gLAccount.findUniqueOrThrow({ where: { id: transfer.toGLAccountId } });
 
       const amount = Number(transfer.amount);
       const lines = [
@@ -230,11 +242,11 @@ async function applyApproval(request: { id: string; type: string; targetId: stri
       ];
 
       if (!isBalanced(lines)) {
-        await prisma.interBranchTransfer.update({ where: { id: transfer.id }, data: { status: "REJECTED" } });
+        await tx.interBranchTransfer.update({ where: { id: transfer.id }, data: { status: "REJECTED" } });
         break;
       }
 
-      const journal = await prisma.journal.create({
+      const journal = await tx.journal.create({
         data: {
           institutionId: transfer.institutionId, journalNumber: generateJournalNumber(), type: "AUTOMATIC",
           description: `Inter-branch transfer: ${transfer.description}`, status: "POSTED", postedAt: new Date(),
@@ -245,10 +257,10 @@ async function applyApproval(request: { id: string; type: string; targetId: stri
 
       for (const line of lines) {
         const effect = balanceEffect(line.category as any, line.debit, line.credit);
-        await prisma.gLAccount.update({ where: { id: line.accountId }, data: { balance: { increment: effect } } });
+        await tx.gLAccount.update({ where: { id: line.accountId }, data: { balance: { increment: effect } } });
       }
 
-      await prisma.interBranchTransfer.update({ where: { id: transfer.id }, data: { status: "POSTED", journalId: journal.id } });
+      await tx.interBranchTransfer.update({ where: { id: transfer.id }, data: { status: "POSTED", journalId: journal.id } });
       break;
     }
 
@@ -256,12 +268,12 @@ async function applyApproval(request: { id: string; type: string; targetId: stri
     // marks this structure ACTIVE and supersedes whatever was previously
     // active for the same employee, never deleting it.
     case "SALARY_STRUCTURE_CHANGE": {
-      const structure = await prisma.employeeSalaryStructure.findUniqueOrThrow({ where: { id: request.targetId } });
-      await prisma.employeeSalaryStructure.updateMany({
+      const structure = await tx.employeeSalaryStructure.findUniqueOrThrow({ where: { id: request.targetId } });
+      await tx.employeeSalaryStructure.updateMany({
         where: { employeeId: structure.employeeId, institutionId: structure.institutionId, status: "ACTIVE" },
         data: { status: "SUPERSEDED" },
       });
-      await prisma.employeeSalaryStructure.update({ where: { id: structure.id }, data: { status: "ACTIVE", approvedById } });
+      await tx.employeeSalaryStructure.update({ where: { id: structure.id }, data: { status: "ACTIVE", approvedById } });
       break;
     }
 
@@ -275,24 +287,24 @@ async function applyApproval(request: { id: string; type: string; targetId: stri
     // accounting configuration gap) but accrualJournalId stays null —
     // a real, visible, checkable state rather than a silent failure.
     case "PAYROLL_RUN_APPROVAL": {
-      const run = await prisma.payrollRun.findUniqueOrThrow({ where: { id: request.targetId } });
+      const run = await tx.payrollRun.findUniqueOrThrow({ where: { id: request.targetId } });
 
-      const mappings = await prisma.payrollGLAccountMapping.findMany({ where: { institutionId: run.institutionId } });
+      const mappings = await tx.payrollGLAccountMapping.findMany({ where: { institutionId: run.institutionId } });
       const accountIdByPurpose: Record<string, string> = Object.fromEntries(mappings.map((m: any) => [m.purpose, m.glAccountId]));
       const hasAllMappings = REQUIRED_ACCRUAL_PURPOSES.every((p) => accountIdByPurpose[p]);
 
       let accrualJournalId: string | null = null;
 
       if (hasAllMappings) {
-        const period = await prisma.payrollPeriod.findUnique({ where: { id: run.payrollPeriodId } });
+        const period = await tx.payrollPeriod.findUnique({ where: { id: run.payrollPeriodId } });
         const postingDate = period?.endDate || new Date();
-        const glPeriod = await findPostablePeriod(prisma, run.institutionId, postingDate);
+        const glPeriod = await findPostablePeriod(tx, run.institutionId, postingDate);
 
         if (glPeriod && glPeriod.status === "OPEN") {
           // Real per-entry totals, not the run-level aggregate alone —
           // PAYE/SSNIT/Tier2/other-deductions must come from the actual
           // entries to be correct, the run only stores gross/net/total-deductions combined.
-          const entries = await prisma.payrollEntry.findMany({ where: { payrollRunId: run.id } });
+          const entries = await tx.payrollEntry.findMany({ where: { payrollRunId: run.id } });
           const totalPaye = entries.reduce((s: number, e: any) => s + Number(e.paye), 0);
           const totalSsnitEmployee = entries.reduce((s: number, e: any) => s + Number(e.ssnitEmployee), 0);
           const totalSsnitEmployerTier1 = entries.reduce((s: number, e: any) => s + Number(e.ssnitEmployerTier1), 0);
@@ -305,10 +317,10 @@ async function applyApproval(request: { id: string; type: string; targetId: stri
           );
 
           if (isBalanced(realLines)) {
-            const accountRecords = await prisma.gLAccount.findMany({ where: { id: { in: realLines.map((l) => l.accountId) } } });
-            const accountById = new Map(accountRecords.map((a: any) => [a.id, a]));
+            const accountRecords = await tx.gLAccount.findMany({ where: { id: { in: realLines.map((l) => l.accountId) } } });
+            const accountById = new Map<string, any>(accountRecords.map((a: any) => [a.id, a]));
 
-            const journal = await prisma.journal.create({
+            const journal = await tx.journal.create({
               data: {
                 institutionId: run.institutionId, journalNumber: generateJournalNumber(), type: "AUTOMATIC",
                 description: `Payroll accrual — ${period?.name || "period"}`, status: "POSTED", postingDate, postedAt: new Date(), postedById: approvedById, createdById: approvedById,
@@ -318,14 +330,14 @@ async function applyApproval(request: { id: string; type: string; targetId: stri
             for (const line of realLines) {
               const account = accountById.get(line.accountId);
               const effect = balanceEffect(account!.category as any, line.debit, line.credit);
-              await prisma.gLAccount.update({ where: { id: line.accountId }, data: { balance: { increment: effect } } });
+              await tx.gLAccount.update({ where: { id: line.accountId }, data: { balance: { increment: effect } } });
             }
             accrualJournalId = journal.id;
           }
         }
       }
 
-      await prisma.payrollRun.update({ where: { id: run.id }, data: { status: "APPROVED", approvedById, approvedAt: new Date(), accrualJournalId } });
+      await tx.payrollRun.update({ where: { id: run.id }, data: { status: "APPROVED", approvedById, approvedAt: new Date(), accrualJournalId } });
       break;
     }
 
@@ -333,8 +345,8 @@ async function applyApproval(request: { id: string; type: string; targetId: stri
     // become the record's real clockInAt/clockOutAt once approved; the
     // original clock-in/out is never overwritten before that.
     case "ATTENDANCE_CORRECTION": {
-      const record = await prisma.attendanceRecord.findUniqueOrThrow({ where: { id: request.targetId } });
-      await prisma.attendanceRecord.update({
+      const record = await tx.attendanceRecord.findUniqueOrThrow({ where: { id: request.targetId } });
+      await tx.attendanceRecord.update({
         where: { id: record.id },
         data: {
           clockInAt: record.proposedClockInAt ?? record.clockInAt,
@@ -350,7 +362,7 @@ async function applyApproval(request: { id: string; type: string; targetId: stri
     // APPROVED-click step) since the approval itself is what authorizes
     // the scope; there's nothing further to do before fieldwork starts.
     case "AUDIT_ENGAGEMENT_APPROVAL": {
-      await prisma.auditEngagement.update({ where: { id: request.targetId }, data: { status: "IN_PROGRESS" } });
+      await tx.auditEngagement.update({ where: { id: request.targetId }, data: { status: "IN_PROGRESS" } });
       break;
     }
 
@@ -358,9 +370,9 @@ async function applyApproval(request: { id: string; type: string; targetId: stri
     // continuously maintained" — the asset's current custodian fields
     // only actually move once approved, not at request time.
     case "ASSET_TRANSFER": {
-      const transfer = await prisma.assetTransfer.findUniqueOrThrow({ where: { id: request.targetId } });
-      await prisma.asset.update({ where: { id: transfer.assetId }, data: { currentEmployeeId: transfer.toEmployeeId, currentDepartmentId: transfer.toDepartmentId, currentBranchId: transfer.toBranchId } });
-      await prisma.assetTransfer.update({ where: { id: transfer.id }, data: { status: "APPROVED", transferredAt: new Date() } });
+      const transfer = await tx.assetTransfer.findUniqueOrThrow({ where: { id: request.targetId } });
+      await tx.asset.update({ where: { id: transfer.assetId }, data: { currentEmployeeId: transfer.toEmployeeId, currentDepartmentId: transfer.toDepartmentId, currentBranchId: transfer.toBranchId } });
+      await tx.assetTransfer.update({ where: { id: transfer.id }, data: { status: "APPROVED", transferredAt: new Date() } });
       break;
     }
 
@@ -371,23 +383,23 @@ async function applyApproval(request: { id: string; type: string; targetId: stri
     // visible-gap-not-silent-failure pattern as Payroll and asset
     // depreciation.
     case "ASSET_DISPOSAL": {
-      const disposal = await prisma.assetDisposal.findUniqueOrThrow({ where: { id: request.targetId } });
-      const asset = await prisma.asset.findUniqueOrThrow({ where: { id: disposal.assetId } });
+      const disposal = await tx.assetDisposal.findUniqueOrThrow({ where: { id: request.targetId } });
+      const asset = await tx.asset.findUniqueOrThrow({ where: { id: disposal.assetId } });
 
       let journalId: string | null = null;
-      const mappings = await prisma.assetGLAccountMapping.findMany({ where: { institutionId: disposal.institutionId, purpose: { in: ["Fixed Asset", "Accumulated Depreciation", "Cash/Bank (Disposal Proceeds)", "Gain on Disposal", "Loss on Disposal"] } } });
+      const mappings = await tx.assetGLAccountMapping.findMany({ where: { institutionId: disposal.institutionId, purpose: { in: ["Fixed Asset", "Accumulated Depreciation", "Cash/Bank (Disposal Proceeds)", "Gain on Disposal", "Loss on Disposal"] } } });
       const accountIdByPurpose: Record<string, string> = Object.fromEntries(mappings.map((m: any) => [m.purpose, m.glAccountId]));
       const hasRequired = accountIdByPurpose["Fixed Asset"] && accountIdByPurpose["Accumulated Depreciation"];
 
       if (hasRequired) {
-        const glPeriod = await findPostablePeriod(prisma, disposal.institutionId, new Date());
+        const glPeriod = await findPostablePeriod(tx, disposal.institutionId, new Date());
         if (glPeriod && glPeriod.status === "OPEN") {
           const lines = buildAssetDisposalLines(Number(asset.acquisitionCost), Number(asset.accumulatedDepreciation), Number(disposal.saleProceeds || 0), accountIdByPurpose);
           if (isBalanced(lines)) {
-            const accountRecords = await prisma.gLAccount.findMany({ where: { id: { in: lines.map((l) => l.accountId) } } });
-            const accountById = new Map(accountRecords.map((a: any) => [a.id, a]));
+            const accountRecords = await tx.gLAccount.findMany({ where: { id: { in: lines.map((l) => l.accountId) } } });
+            const accountById = new Map<string, any>(accountRecords.map((a: any) => [a.id, a]));
 
-            const journal = await prisma.journal.create({
+            const journal = await tx.journal.create({
               data: {
                 institutionId: disposal.institutionId, journalNumber: generateJournalNumber(), type: "AUTOMATIC",
                 description: `Asset disposal — ${asset.assetCode} — ${disposal.disposalType}`, status: "POSTED", postingDate: new Date(), postedAt: new Date(), postedById: approvedById, createdById: approvedById,
@@ -397,15 +409,15 @@ async function applyApproval(request: { id: string; type: string; targetId: stri
             for (const line of lines) {
               const account = accountById.get(line.accountId);
               const effect = balanceEffect(account!.category as any, line.debit, line.credit);
-              await prisma.gLAccount.update({ where: { id: line.accountId }, data: { balance: { increment: effect } } });
+              await tx.gLAccount.update({ where: { id: line.accountId }, data: { balance: { increment: effect } } });
             }
             journalId = journal.id;
           }
         }
       }
 
-      await prisma.assetDisposal.update({ where: { id: disposal.id }, data: { status: "APPROVED", approvedById, journalId } });
-      await prisma.asset.update({ where: { id: asset.id }, data: { status: "DISPOSED", disposedAt: disposal.disposalDate, disposalReason: disposal.reason } });
+      await tx.assetDisposal.update({ where: { id: disposal.id }, data: { status: "APPROVED", approvedById, journalId } });
+      await tx.asset.update({ where: { id: asset.id }, data: { status: "DISPOSED", disposedAt: disposal.disposalDate, disposalReason: disposal.reason } });
       break;
     }
 
@@ -413,21 +425,22 @@ async function applyApproval(request: { id: string; type: string; targetId: stri
     // real, atomic reassignment across all 10 customer-referencing
     // models happens here, only now, inside a single transaction.
     case "CUSTOMER_MERGE": {
-      const mergeRecord = await prisma.customerMergeRecord.findUniqueOrThrow({ where: { id: request.targetId } });
-      const reassignedRecords = await prisma.$transaction(async (tx: any) => {
-        return executeCustomerMerge(tx, mergeRecord.primaryCustomerId, mergeRecord.mergedCustomerId);
-      });
-      await prisma.customerMergeRecord.update({ where: { id: mergeRecord.id }, data: { status: "APPROVED", approvedById, mergedAt: new Date(), reassignedRecords: reassignedRecords as any } });
+      const mergeRecord = await tx.customerMergeRecord.findUniqueOrThrow({ where: { id: request.targetId } });
+      // No longer a nested tx.$transaction — this now runs inside
+      // the same outer transaction as the approval-request state
+      // transition (GAP-WF-001), not a separate one.
+      const reassignedRecords = await executeCustomerMerge(tx, mergeRecord.primaryCustomerId, mergeRecord.mergedCustomerId);
+      await tx.customerMergeRecord.update({ where: { id: mergeRecord.id }, data: { status: "APPROVED", approvedById, mergedAt: new Date(), reassignedRecords: reassignedRecords as any } });
       break;
     }
 
     case "SAVINGS_RESTRICTION_CREATE": {
-      await prisma.savingsRestriction.update({ where: { id: request.targetId }, data: { status: "ACTIVE", approvedById, activatedAt: new Date() } });
+      await tx.savingsRestriction.update({ where: { id: request.targetId }, data: { status: "ACTIVE", approvedById, activatedAt: new Date() } });
       break;
     }
 
     case "SAVINGS_RESTRICTION_REMOVE": {
-      await prisma.savingsRestriction.update({ where: { id: request.targetId }, data: { status: "REMOVED", removedById: approvedById, removedAt: new Date() } });
+      await tx.savingsRestriction.update({ where: { id: request.targetId }, data: { status: "REMOVED", removedById: approvedById, removedAt: new Date() } });
       break;
     }
     // BUSINESS_RULE_TRIGGERED needs no apply-side effect — it's a pure
@@ -435,7 +448,7 @@ async function applyApproval(request: { id: string; type: string; targetId: stri
     // approving it just resolves the record so disbursement is unblocked.
     case "AML_ADJUDICATION":
       // Approving = false positive, clear the customer.
-      await prisma.customer.update({
+      await tx.customer.update({
         where: { id: request.targetId },
         data: { status: payload.previousStatus || "REGISTERED", watchlistFlag: false },
       });
@@ -445,23 +458,52 @@ async function applyApproval(request: { id: string; type: string; targetId: stri
 
 approvalsRouter.post("/:id/approve", requirePermission("institution.configure"), async (req: AuthedRequest, res) => {
   const { resolutionNote } = req.body as { resolutionNote?: string };
-  const request = await prisma.approvalRequest.findFirst({ where: { id: req.params.id, institutionId: req.auth!.institutionId } });
-  if (!request) return res.status(404).json({ error: "Approval request not found" });
-  if (request.status !== "PENDING") return res.status(400).json({ error: "This request has already been resolved" });
-  if (request.requestedById === req.auth!.userId) {
+  const existing = await prisma.approvalRequest.findFirst({ where: { id: req.params.id, institutionId: req.auth!.institutionId } });
+  if (!existing) return res.status(404).json({ error: "Approval request not found" });
+  if (existing.status !== "PENDING") return res.status(400).json({ error: "This request has already been resolved" });
+  if (existing.requestedById === req.auth!.userId) {
     return res.status(403).json({ error: "Segregation of duties: cannot approve a request you submitted yourself" });
   }
 
-  await applyApproval(request, req.auth!.userId);
+  // GAP-WF-001 fix: the request used to be checked as PENDING, then
+  // applyApproval() ran completely separately, then the request was
+  // marked APPROVED as a third, independent write. Two simultaneous
+  // approvals of the same request could both pass the PENDING check
+  // before either wrote anything, both apply the business effect, and
+  // both then mark it approved — a double execution. Now: one Serializable
+  // transaction, with an atomic guarded claim (status=PENDING lives in
+  // the SAME update statement as the write, the same pattern GAP-FIN-001
+  // uses for savings withdrawals) so only one of two racing approvals can
+  // ever win the claim. If it does, the business effect and the audit
+  // evidence commit together with it; if anything downstream fails, the
+  // claim itself rolls back too — the request stays genuinely PENDING,
+  // not stuck in a half-applied state.
+  try {
+    await prisma.$transaction(
+      async (tx: any) => {
+        const claim = await tx.approvalRequest.updateMany({
+          where: { id: existing.id, status: "PENDING" },
+          data: { status: "APPROVED", resolvedById: req.auth!.userId, resolvedAt: new Date(), resolutionNote },
+        });
+        if (claim.count === 0) {
+          throw Object.assign(new Error("This request has already been resolved"), { httpStatus: 400 });
+        }
 
-  await prisma.approvalRequest.update({
-    where: { id: request.id },
-    data: { status: "APPROVED", resolvedById: req.auth!.userId, resolvedAt: new Date(), resolutionNote },
-  });
+        await applyApproval(tx, existing, req.auth!.userId);
 
-  await prisma.auditLog.create({
-    data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "approval.approve", resource: "approval_request", resourceId: request.id, metadata: { type: request.type, targetId: request.targetId } },
-  });
+        await tx.auditLog.create({
+          data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "approval.approve", resource: "approval_request", resourceId: existing.id, metadata: { type: existing.type, targetId: existing.targetId } },
+        });
+      },
+      { isolationLevel: "Serializable" }
+    );
+  } catch (err: any) {
+    if (err.httpStatus === 400) return res.status(400).json({ error: err.message });
+    if (err.code === "P2034" || err.meta?.code === "40001") {
+      return res.status(409).json({ error: "This request was resolved by another action at the same moment. Please retry." });
+    }
+    throw err;
+  }
 
   res.json({ ok: true });
 });
@@ -475,38 +517,52 @@ approvalsRouter.post("/:id/reject", requirePermission("institution.configure"), 
     return res.status(403).json({ error: "Segregation of duties: cannot reject a request you submitted yourself" });
   }
 
-  const payload = request.payload as any;
-  if ((request.type === "CUSTOMER_STATUS_CHANGE" || request.type === "CUSTOMER_PROFILE_UPDATE") && payload.previousStatus) {
-    await prisma.customer.update({ where: { id: request.targetId }, data: { status: payload.previousStatus } });
+  // GAP-WF-001 fix, same reasoning as /approve above: an atomic guarded
+  // claim inside a Serializable transaction, so two simultaneous rejects
+  // (or a reject racing an approve) can't both apply their side effects.
+  try {
+    await prisma.$transaction(
+      async (tx: any) => {
+        const claim = await tx.approvalRequest.updateMany({
+          where: { id: request.id, status: "PENDING" },
+          data: { status: "REJECTED", resolvedById: req.auth!.userId, resolvedAt: new Date(), resolutionNote },
+        });
+        if (claim.count === 0) {
+          throw Object.assign(new Error("This request has already been resolved"), { httpStatus: 400 });
+        }
+
+        const payload = request.payload as any;
+        if ((request.type === "CUSTOMER_STATUS_CHANGE" || request.type === "CUSTOMER_PROFILE_UPDATE") && payload.previousStatus) {
+          await tx.customer.update({ where: { id: request.targetId }, data: { status: payload.previousStatus } });
   }
   // doc §32 Product Lifecycle — a rejected activation reverts the product
   // back to DRAFT rather than leaving it stuck in PENDING_APPROVAL forever.
   if (request.type === "PRODUCT_ACTIVATION") {
-    await prisma.product.update({ where: { id: request.targetId }, data: { status: "DRAFT" } });
+    await tx.product.update({ where: { id: request.targetId }, data: { status: "DRAFT" } });
   }
   if (request.type === "BUSINESS_RULE_ACTIVATION") {
-    await prisma.businessRule.update({ where: { id: request.targetId }, data: { status: "DRAFT" } });
+    await tx.businessRule.update({ where: { id: request.targetId }, data: { status: "DRAFT" } });
   }
   if (request.type === "COMMISSION_PAYMENT") {
-    await prisma.commissionRecord.update({ where: { id: request.targetId }, data: { status: "PENDING" } });
+    await tx.commissionRecord.update({ where: { id: request.targetId }, data: { status: "PENDING" } });
   }
   if (request.type === "SAVINGS_RESTRICTION_CREATE") {
     // A rejected creation never took effect — REMOVED is the closest
     // accurate terminal state rather than leaving it stuck mid-workflow.
-    await prisma.savingsRestriction.update({ where: { id: request.targetId }, data: { status: "REMOVED", removalReason: "Creation request rejected" } });
+    await tx.savingsRestriction.update({ where: { id: request.targetId }, data: { status: "REMOVED", removalReason: "Creation request rejected" } });
   }
   if (request.type === "SAVINGS_RESTRICTION_REMOVE") {
     // A rejected removal means the restriction stays exactly as it was —
     // still ACTIVE.
-    await prisma.savingsRestriction.update({ where: { id: request.targetId }, data: { removalRequestedById: null } });
+    await tx.savingsRestriction.update({ where: { id: request.targetId }, data: { removalRequestedById: null } });
   }
   if (request.type === "CASH_TRANSFER") {
-    await prisma.cashTransfer.update({ where: { id: request.targetId }, data: { status: "REJECTED" } });
+    await tx.cashTransfer.update({ where: { id: request.targetId }, data: { status: "REJECTED" } });
   }
   // Rejected correction — clear the pending proposal, the original
   // clock-in/out stands untouched.
   if (request.type === "ATTENDANCE_CORRECTION") {
-    await prisma.attendanceRecord.update({
+    await tx.attendanceRecord.update({
       where: { id: request.targetId },
       data: { correctionPending: false, proposedClockInAt: null, proposedClockOutAt: null },
     });
@@ -514,7 +570,7 @@ approvalsRouter.post("/:id/reject", requirePermission("institution.configure"), 
   // A rejected audit scope stays PLANNED — the natural next step is
   // revising the scope and resubmitting, not a terminal dead end.
   if (request.type === "AUDIT_ENGAGEMENT_APPROVAL") {
-    await prisma.auditEngagement.update({ where: { id: request.targetId }, data: { status: "PLANNED" } });
+    await tx.auditEngagement.update({ where: { id: request.targetId }, data: { status: "PLANNED" } });
   }
   // CASH_BALANCING_VARIANCE deliberately has no reject-side handler — a
   // rejected variance stays exactly as VARIANCE_PENDING_APPROVAL, which
@@ -526,38 +582,46 @@ approvalsRouter.post("/:id/reject", requirePermission("institution.configure"), 
     // next step is fixing whatever the approver objected to and
     // resubmitting — unlike a cash variance, there's no reason to force
     // the account and journal to stay locked out of correction.
-    await prisma.journal.update({ where: { id: request.targetId }, data: { status: "DRAFT" } });
+    await tx.journal.update({ where: { id: request.targetId }, data: { status: "DRAFT" } });
   }
   if (request.type === "RECURRING_JOURNAL_ACTIVATION") {
-    await prisma.recurringJournal.update({ where: { id: request.targetId }, data: { status: "DRAFT" } });
+    await tx.recurringJournal.update({ where: { id: request.targetId }, data: { status: "DRAFT" } });
   }
   if (request.type === "SALARY_STRUCTURE_CHANGE") {
-    await prisma.employeeSalaryStructure.update({ where: { id: request.targetId }, data: { status: "DRAFT" } });
+    await tx.employeeSalaryStructure.update({ where: { id: request.targetId }, data: { status: "DRAFT" } });
   }
   if (request.type === "PAYROLL_RUN_APPROVAL") {
-    await prisma.payrollRun.update({ where: { id: request.targetId }, data: { status: "PROCESSED" } });
+    await tx.payrollRun.update({ where: { id: request.targetId }, data: { status: "PROCESSED" } });
   }
   if (request.type === "ASSET_TRANSFER") {
-    await prisma.assetTransfer.update({ where: { id: request.targetId }, data: { status: "REJECTED" } });
+    await tx.assetTransfer.update({ where: { id: request.targetId }, data: { status: "REJECTED" } });
   }
   if (request.type === "ASSET_DISPOSAL") {
-    await prisma.assetDisposal.update({ where: { id: request.targetId }, data: { status: "REJECTED" } });
+    await tx.assetDisposal.update({ where: { id: request.targetId }, data: { status: "REJECTED" } });
   }
   if (request.type === "CUSTOMER_MERGE") {
-    await prisma.customerMergeRecord.update({ where: { id: request.targetId }, data: { status: "REJECTED" } });
+    await tx.customerMergeRecord.update({ where: { id: request.targetId }, data: { status: "REJECTED" } });
   }
   if (request.type === "INTER_BRANCH_TRANSFER") {
-    await prisma.interBranchTransfer.update({ where: { id: request.targetId }, data: { status: "REJECTED" } });
+    await tx.interBranchTransfer.update({ where: { id: request.targetId }, data: { status: "REJECTED" } });
   }
 
-  await prisma.approvalRequest.update({
-    where: { id: request.id },
-    data: { status: "REJECTED", resolvedById: req.auth!.userId, resolvedAt: new Date(), resolutionNote },
-  });
-
-  await prisma.auditLog.create({
-    data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "approval.reject", resource: "approval_request", resourceId: request.id, metadata: { type: request.type, targetId: request.targetId } },
-  });
+        // The claim above already set status/resolvedById/resolvedAt/
+        // resolutionNote atomically — only the audit evidence remains,
+        // inside the same transaction as everything else.
+        await tx.auditLog.create({
+          data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "approval.reject", resource: "approval_request", resourceId: request.id, metadata: { type: request.type, targetId: request.targetId } },
+        });
+      },
+      { isolationLevel: "Serializable" }
+    );
+  } catch (err: any) {
+    if (err.httpStatus === 400) return res.status(400).json({ error: err.message });
+    if (err.code === "P2034" || err.meta?.code === "40001") {
+      return res.status(409).json({ error: "This request was resolved by another action at the same moment. Please retry." });
+    }
+    throw err;
+  }
 
   res.json({ ok: true });
 });

@@ -7,8 +7,16 @@ export interface AccessTokenPayload {
   category: "INTERNAL" | "EXTERNAL";
 }
 
-const ACCESS_SECRET = process.env.JWT_ACCESS_SECRET || "dev-access-secret";
-const REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || "dev-refresh-secret";
+// GAP-SEC-001 fix: these fallbacks now only apply outside production
+// (gated by NODE_ENV, not just by whether the env var happens to be
+// set) — defense in depth alongside validateProductionSecrets() in
+// lib/startupSecrets.ts, which runs at boot before the server accepts
+// any traffic. Even if module import order ever changed, a production
+// process can no longer silently sign tokens with a string that's
+// sitting in plain sight in this file.
+const isProd = process.env.NODE_ENV === "production";
+const ACCESS_SECRET = process.env.JWT_ACCESS_SECRET || (isProd ? "" : "dev-access-secret");
+const REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || (isProd ? "" : "dev-refresh-secret");
 const ACCESS_TTL = process.env.ACCESS_TOKEN_TTL || "15m";
 const REFRESH_TTL_DAYS = Number(process.env.REFRESH_TOKEN_TTL_DAYS || 30);
 
@@ -41,7 +49,7 @@ export function hashRefreshToken(raw: string): string {
 // and vice versa. See auth.routes.ts POST/GET /auth/demo-link and the
 // isDemo gate on Institution in schema.prisma for the rest of the safety
 // story — this file only handles the sign/verify mechanics.
-const DEMO_LINK_SECRET = process.env.DEMO_LINK_SECRET || "dev-demo-link-secret";
+const DEMO_LINK_SECRET = process.env.DEMO_LINK_SECRET || (isProd ? "" : "dev-demo-link-secret");
 
 export interface DemoLinkPayload {
   email: string;
@@ -66,7 +74,7 @@ export function verifyDemoLinkToken(token: string): DemoLinkPayload {
 // namespace (same reasoning as demo-link tokens above): a leaked/expired
 // MFA-pending token can never be mistaken for or exchanged as a real access
 // token, and it can't be used for anything except finishing this one login.
-const MFA_PENDING_SECRET = process.env.MFA_PENDING_SECRET || "dev-mfa-pending-secret";
+const MFA_PENDING_SECRET = process.env.MFA_PENDING_SECRET || (isProd ? "" : "dev-mfa-pending-secret");
 
 export interface MfaPendingPayload {
   userId: string;

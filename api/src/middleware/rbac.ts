@@ -22,8 +22,16 @@ export function requirePermission(permissionCode: string) {
       where: {
         userId: req.auth.userId,
         startsAt: { lte: now },
-        OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
-        ...(branchId ? { OR: [{ branchId }, { branchId: null }] } : {}),
+        // GAP-IAM-001 fix: two top-level OR keys in one object literal
+        // collide — the branch-scope OR silently overwrote the expiry OR
+        // whenever branchId was present, so an expired delegated role
+        // scoped to a branch passed every permission check. Both
+        // conditions now live inside an explicit AND array, so neither
+        // can ever displace the other.
+        AND: [
+          { OR: [{ expiresAt: null }, { expiresAt: { gt: now } }] },
+          ...(branchId ? [{ OR: [{ branchId }, { branchId: null }] }] : []),
+        ],
       },
       include: {
         role: {

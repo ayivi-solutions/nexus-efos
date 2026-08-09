@@ -1,4 +1,11 @@
 import "dotenv/config";
+import { validateProductionSecrets } from "./lib/startupSecrets";
+
+// GAP-SEC-001: runs before anything else touches a secret, and before
+// app.listen() — a misconfigured production deploy fails immediately
+// instead of silently accepting traffic with weak or default secrets.
+validateProductionSecrets();
+
 import { app } from "./app";
 import { syncPermissionsAndRoles } from "./lib/syncPermissionsAndRoles";
 import { startScheduler } from "./lib/scheduler";

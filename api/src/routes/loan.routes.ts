@@ -7,6 +7,7 @@ import { round2, generateSchedule, allocateRepayment } from "../lib/loanSchedule
 import { assessCredit } from "../lib/creditAssessment";
 import { matchRules, executeMatchedRules } from "../lib/businessRules";
 import { runArrearsCheck } from "../lib/scheduler";
+import { isBalanced, balanceEffect, findPostablePeriod, generateJournalNumber } from "../lib/generalLedger";
 
 export const loanRouter = Router();
 loanRouter.use(requireAuth);
@@ -18,6 +19,40 @@ loanRouter.get("/", requirePermission("reports.view"), async (req: AuthedRequest
     orderBy: { createdAt: "desc" },
   });
   res.json({ loans });
+});
+
+// -----------------------------------------------------------------------
+// GAP-FIN-003 — configuration for the real GL accounts a loan
+// disbursement debits/credits. Same shape and pattern as Payroll's and
+// Asset's GL mapping endpoints (purpose -> glAccountId, upsert by
+// institution+purpose), not a new convention. Registered here, before
+// GET /:id, deliberately — Express matches routes in registration order,
+// and a single-segment path like /gl-mappings would otherwise be
+// swallowed by /:id treating "gl-mappings" as an id value.
+// -----------------------------------------------------------------------
+const ALL_LOAN_GL_PURPOSES = ["Loan Receivable", "Cash/Bank (Disbursement)"];
+
+loanRouter.get("/gl-mappings", requirePermission("institution.configure"), async (req: AuthedRequest, res) => {
+  const mappings = await prisma.loanGLAccountMapping.findMany({ where: { institutionId: req.auth!.institutionId } });
+  const glAccounts = await prisma.gLAccount.findMany({ where: { institutionId: req.auth!.institutionId, status: "ACTIVE" }, select: { id: true, code: true, name: true } });
+  const accountById = new Map(glAccounts.map((a: any) => [a.id, a]));
+  res.json({ mappings: mappings.map((m: any) => ({ ...m, account: accountById.get(m.glAccountId) || null })), purposes: ALL_LOAN_GL_PURPOSES, accounts: glAccounts });
+});
+
+loanRouter.post("/gl-mappings", requirePermission("institution.configure"), async (req: AuthedRequest, res) => {
+  const { purpose, glAccountId } = req.body as { purpose?: string; glAccountId?: string };
+  if (!purpose || !glAccountId) return res.status(400).json({ error: "purpose and glAccountId are required" });
+
+  const account = await prisma.gLAccount.findFirst({ where: { id: glAccountId, institutionId: req.auth!.institutionId } });
+  if (!account) return res.status(404).json({ error: "GL account not found" });
+
+  const mapping = await prisma.loanGLAccountMapping.upsert({
+    where: { institutionId_purpose: { institutionId: req.auth!.institutionId, purpose } },
+    create: { institutionId: req.auth!.institutionId, purpose, glAccountId },
+    update: { glAccountId },
+  });
+  await prisma.auditLog.create({ data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "loan_gl_mapping.set", resource: "loan_gl_account_mapping", resourceId: mapping.id, metadata: { purpose, glAccountId } } });
+  res.status(201).json({ mapping });
 });
 
 loanRouter.get("/:id", requirePermission("reports.view"), async (req: AuthedRequest, res) => {
@@ -231,9 +266,16 @@ loanRouter.post("/:id/reject", requirePermission("loans.reject"), async (req: Au
 });
 
 loanRouter.post("/:id/disburse", requirePermission("loans.approve"), async (req: AuthedRequest, res) => {
+  const { vaultId } = req.body as { vaultId?: string };
+  if (!vaultId) return res.status(400).json({ error: "vaultId is required — disbursement must draw from a real, identified cash source" });
+
   const loan = await prisma.loan.findFirst({ where: { id: req.params.id, institutionId: req.auth!.institutionId } });
   if (!loan) return res.status(404).json({ error: "Loan not found" });
   if (loan.status !== "APPROVED") return res.status(400).json({ error: "Loan must be APPROVED before disbursement" });
+
+  const vault = await prisma.vault.findFirst({ where: { id: vaultId, institutionId: req.auth!.institutionId } });
+  if (!vault) return res.status(404).json({ error: "Vault not found" });
+  if (vault.status !== "OPEN") return res.status(400).json({ error: "Vault must be open to disburse cash from it" });
 
   // doc §41 Business Rules Framework — a REQUIRE_ADDITIONAL_APPROVAL action
   // has real teeth: disbursement is blocked while any business-rule-triggered
@@ -258,29 +300,106 @@ loanRouter.post("/:id/disburse", requirePermission("loans.approve"), async (req:
     return res.status(400).json({ error: `Disbursement blocked by business rule ${disburseBlockingRule.rule.ruleCode}: ${disburseBlockingRule.rule.name}` });
   }
 
-  const disbursedAt = new Date();
-  const schedule = generateSchedule(
-    Number(loan.principal),
-    Number(loan.interestRate),
-    loan.termMonths,
-    loan.interestMethod,
-    disbursedAt
-  );
+  // GAP-FIN-003 fix. Previously this endpoint flipped the loan to
+  // DISBURSED and created the installment schedule with no actual cash
+  // movement or accounting effect bound to that state — the loan LOOKED
+  // disbursed without any authoritative money having moved. The
+  // register's own acceptance criterion for this gap is explicit: "Loan
+  // status must remain non-disbursed unless and until monetary movement
+  // and accounting entries commit successfully; rollback must preserve
+  // pre-disbursement state" — a hard block, not the softer "proceed with
+  // a disclosed gap" pattern used for Payroll/Asset accrual mappings,
+  // because there is no honest way to disburse real customer cash from
+  // nowhere. Both required mappings ("Loan Receivable", "Cash/Bank
+  // (Disbursement)") and an open financial period are required up front.
+  const mappings = await prisma.loanGLAccountMapping.findMany({ where: { institutionId: req.auth!.institutionId } });
+  const accountIdByPurpose: Record<string, string> = Object.fromEntries(mappings.map((m: any) => [m.purpose, m.glAccountId]));
+  const receivableAccountId = accountIdByPurpose["Loan Receivable"];
+  const cashAccountId = accountIdByPurpose["Cash/Bank (Disbursement)"];
+  if (!receivableAccountId || !cashAccountId) {
+    return res.status(400).json({ error: "Loan disbursement GL account mapping is not configured (\"Loan Receivable\" and \"Cash/Bank (Disbursement)\" both required) — configure this before disbursing, real cash cannot move without a real accounting effect." });
+  }
 
-  const updated = await prisma.$transaction(async (tx) => {
-    const u = await tx.loan.update({ where: { id: loan.id }, data: { status: "DISBURSED", disbursedAt } });
-    await tx.loanInstallment.createMany({
-      data: schedule.map((s) => ({
-        loanId: loan.id,
-        installmentNumber: s.installmentNumber,
-        dueDate: s.dueDate,
-        principalDue: s.principalDue,
-        interestDue: s.interestDue,
-        totalDue: round2(s.principalDue + s.interestDue),
-      })),
-    });
-    return u;
-  });
+  const disbursedAt = new Date();
+  const glPeriod = await findPostablePeriod(prisma, req.auth!.institutionId, disbursedAt);
+  if (!glPeriod || glPeriod.status !== "OPEN") {
+    return res.status(400).json({ error: glPeriod ? `The financial period covering today is ${glPeriod.status}, not open` : "No financial period covers today's date" });
+  }
+
+  const [receivableAccount, cashAccount] = await Promise.all([
+    prisma.gLAccount.findUniqueOrThrow({ where: { id: receivableAccountId } }),
+    prisma.gLAccount.findUniqueOrThrow({ where: { id: cashAccountId } }),
+  ]);
+  const principal = Number(loan.principal);
+  const journalLines = [
+    { accountId: receivableAccountId, category: receivableAccount.category, debit: principal, credit: 0 },
+    { accountId: cashAccountId, category: cashAccount.category, debit: 0, credit: principal },
+  ];
+  if (!isBalanced(journalLines)) {
+    // Can only happen if principal is somehow zero/negative — a real
+    // defensive check, not expected in normal operation.
+    return res.status(400).json({ error: "Disbursement journal would not balance — check the loan principal" });
+  }
+
+  const schedule = generateSchedule(principal, Number(loan.interestRate), loan.termMonths, loan.interestMethod, disbursedAt);
+
+  let updated, journalId, vaultBalanceAfter;
+  try {
+    [updated, journalId, vaultBalanceAfter] = await prisma.$transaction(
+      async (tx: any) => {
+        // Same atomic guarded pattern as GAP-FIN-001's savings withdrawal
+        // and GAP-FIN-004's cash transfer — the sufficient-funds check
+        // lives in the same statement as the decrement itself, so two
+        // concurrent disbursements drawing on the same vault can't both
+        // succeed against funds that only cover one of them.
+        const guardedVault = await tx.vault.updateMany({
+          where: { id: vaultId, balance: { gte: principal } },
+          data: { balance: { decrement: principal } },
+        });
+        if (guardedVault.count === 0) {
+          throw Object.assign(new Error("Vault has insufficient balance for this disbursement"), { httpStatus: 400 });
+        }
+        const freshVault = await tx.vault.findUniqueOrThrow({ where: { id: vaultId } });
+
+        await tx.cashLedgerEntry.create({
+          data: { institutionId: req.auth!.institutionId, holderType: "VAULT", holderId: vaultId, type: "TRANSFER_OUT", amount: principal, balanceAfter: freshVault.balance, notes: `Loan disbursement — ${loan.id}`, recordedById: req.auth!.userId },
+        });
+
+        const journal = await tx.journal.create({
+          data: {
+            institutionId: req.auth!.institutionId, journalNumber: generateJournalNumber(), type: "AUTOMATIC",
+            description: `Loan disbursement — loan ${loan.id}`, status: "POSTED", postingDate: disbursedAt, postedAt: new Date(), postedById: req.auth!.userId, createdById: req.auth!.userId,
+            lines: { create: journalLines.map((l) => ({ accountId: l.accountId, debit: l.debit, credit: l.credit })) },
+          },
+        });
+        for (const line of journalLines) {
+          const effect = balanceEffect(line.category as any, line.debit, line.credit);
+          await tx.gLAccount.update({ where: { id: line.accountId }, data: { balance: { increment: effect } } });
+        }
+
+        const u = await tx.loan.update({ where: { id: loan.id }, data: { status: "DISBURSED", disbursedAt } });
+        await tx.loanInstallment.createMany({
+          data: schedule.map((s) => ({
+            loanId: loan.id,
+            installmentNumber: s.installmentNumber,
+            dueDate: s.dueDate,
+            principalDue: s.principalDue,
+            interestDue: s.interestDue,
+            totalDue: round2(s.principalDue + s.interestDue),
+          })),
+        });
+
+        return [u, journal.id, freshVault.balance];
+      },
+      { isolationLevel: "Serializable" }
+    );
+  } catch (err: any) {
+    if (err.httpStatus === 400) return res.status(400).json({ error: err.message });
+    if (err.code === "P2034" || err.meta?.code === "40001") {
+      return res.status(409).json({ error: "This vault was updated by another transaction at the same moment. Please retry." });
+    }
+    throw err;
+  }
 
   await prisma.auditLog.create({
     data: {
@@ -289,7 +408,7 @@ loanRouter.post("/:id/disburse", requirePermission("loans.approve"), async (req:
       action: "loan.disburse",
       resource: "loan",
       resourceId: loan.id,
-      metadata: { interestMethod: loan.interestMethod, installments: schedule.length },
+      metadata: { interestMethod: loan.interestMethod, installments: schedule.length, vaultId, journalId, principal, vaultBalanceAfter },
     },
   });
 
@@ -304,39 +423,78 @@ loanRouter.post("/:id/repayments", requirePermission("collections.record"), asyn
   const parsed = repaymentSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
-  const loan = await prisma.loan.findFirst({
+  // GAP-FIN-002 fix: the previous version created the repayment record,
+  // then updated each installment one at a time in an un-transacted
+  // loop, then updated the loan status separately — a mid-operation
+  // failure could leave a repayment recorded with only partial or no
+  // allocation applied. It also read installments once, before any of
+  // this started, so two concurrent repayments against the same loan
+  // could both allocate against the same stale installment state and
+  // one would silently overwrite the other's effect.
+  //
+  // Now: one Serializable transaction. Installments are re-read inside
+  // the transaction (not the copy fetched by the initial existence
+  // check below), and Serializable isolation means Postgres itself will
+  // abort one of two truly concurrent conflicting transactions with a
+  // serialization failure rather than let them both silently commit
+  // against the same stale state — caught below and returned as a 409
+  // so the caller knows to retry, not a generic 500.
+  const loanExists = await prisma.loan.findFirst({
     where: { id: req.params.id, institutionId: req.auth!.institutionId },
-    include: { installments: { orderBy: { installmentNumber: "asc" } } },
+    select: { id: true },
   });
-  if (!loan) return res.status(404).json({ error: "Loan not found" });
+  if (!loanExists) return res.status(404).json({ error: "Loan not found" });
 
-  const repayment = await prisma.loanRepayment.create({
-    data: { loanId: loan.id, amount: parsed.data.amount, recordedById: req.auth!.userId },
-  });
+  let repayment, allPaid;
+  try {
+    [repayment, allPaid] = await prisma.$transaction(
+      async (tx: any) => {
+        const loan = await tx.loan.findUniqueOrThrow({
+          where: { id: loanExists.id },
+          include: { installments: { orderBy: { installmentNumber: "asc" } } },
+        });
 
-  const installmentStates = loan.installments.map((inst) => ({
-    id: inst.id,
-    interestDue: Number(inst.interestDue),
-    principalDue: Number(inst.principalDue),
-    interestPaid: Number(inst.interestPaid),
-    principalPaid: Number(inst.principalPaid),
-    status: inst.status,
-  }));
-  const updates = allocateRepayment(installmentStates, parsed.data.amount);
-  for (const u of updates) {
-    await prisma.loanInstallment.update({
-      where: { id: u.id },
-      data: { interestPaid: u.newInterestPaid, principalPaid: u.newPrincipalPaid, status: u.newStatus },
-    });
-  }
+        const r = await tx.loanRepayment.create({
+          data: { loanId: loan.id, amount: parsed.data.amount, recordedById: req.auth!.userId },
+        });
 
-  const allInstallments = await prisma.loanInstallment.findMany({ where: { loanId: loan.id } });
-  const allPaid = allInstallments.length > 0 && allInstallments.every((i) => i.status === "PAID");
+        const installmentStates = loan.installments.map((inst: any) => ({
+          id: inst.id,
+          interestDue: Number(inst.interestDue),
+          principalDue: Number(inst.principalDue),
+          interestPaid: Number(inst.interestPaid),
+          principalPaid: Number(inst.principalPaid),
+          status: inst.status,
+        }));
+        const updates = allocateRepayment(installmentStates, parsed.data.amount);
+        for (const u of updates) {
+          await tx.loanInstallment.update({
+            where: { id: u.id },
+            data: { interestPaid: u.newInterestPaid, principalPaid: u.newPrincipalPaid, status: u.newStatus },
+          });
+        }
 
-  if (allPaid) {
-    await prisma.loan.update({ where: { id: loan.id }, data: { status: "CLOSED" } });
-  } else if (loan.status === "DISBURSED") {
-    await prisma.loan.update({ where: { id: loan.id }, data: { status: "ACTIVE" } });
+        const allInstallments = await tx.loanInstallment.findMany({ where: { loanId: loan.id } });
+        const closed = allInstallments.length > 0 && allInstallments.every((i: any) => i.status === "PAID");
+
+        if (closed) {
+          await tx.loan.update({ where: { id: loan.id }, data: { status: "CLOSED" } });
+        } else if (loan.status === "DISBURSED") {
+          await tx.loan.update({ where: { id: loan.id }, data: { status: "ACTIVE" } });
+        }
+
+        return [r, closed];
+      },
+      { isolationLevel: "Serializable" }
+    );
+  } catch (err: any) {
+    // Postgres serialization_failure — one of two genuinely concurrent
+    // repayments against the same loan lost the race. Not a bug, the
+    // isolation level working as intended; the caller should retry.
+    if (err.code === "P2034" || err.meta?.code === "40001") {
+      return res.status(409).json({ error: "This loan was updated by another repayment at the same moment. Please retry." });
+    }
+    throw err;
   }
 
   await prisma.auditLog.create({
@@ -345,7 +503,7 @@ loanRouter.post("/:id/repayments", requirePermission("collections.record"), asyn
       userId: req.auth!.userId,
       action: "loan.repayment_recorded",
       resource: "loan",
-      resourceId: loan.id,
+      resourceId: loanExists.id,
       metadata: { amount: parsed.data.amount, loanClosed: allPaid },
     },
   });

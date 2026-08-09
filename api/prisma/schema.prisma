@@ -110,6 +110,7 @@ model Institution {
   auditFindings           AuditFinding[]
   regulatoryCapitalSnapshots RegulatoryCapitalSnapshot[]
   notificationProviderConfigs NotificationProviderConfig[]
+  loanGLAccountMappings        LoanGLAccountMapping[]
   notifications                Notification[]
   glAccounts              GLAccount[]
   journals                Journal[]
@@ -4421,6 +4422,29 @@ model PayrollGLAccountMapping {
 
   @@unique([institutionId, purpose], map: "uq_payroll_gl_mapping_institution_purpose")
   @@map("payroll_gl_account_mapping")
+  @@schema("nexus")
+}
+
+// GAP-FIN-003 (Implementation Requirements Traceability & Remediation
+// Register, 9 Aug 2026): "A loan shall not be represented as financially
+// disbursed until the authoritative monetary movement and required
+// accounting effects are committed." Same purpose-mapping pattern as
+// Payroll/Asset above, but unlike those two, disbursement genuinely
+// blocks — proceeding to move real customer cash out of the vault
+// without the accounting effect committing is not an acceptable
+// disclosed gap the way an unconfigured payroll accrual mapping is.
+model LoanGLAccountMapping {
+  id            String      @id(map: "pk_loan_gl_account_mapping") @default(uuid())
+  institution   Institution @relation(fields: [institutionId], references: [id], onDelete: Cascade, map: "fk_loan_gl_account_mapping_institution")
+  institutionId String      @map("institution_id")
+
+  purpose     String // "Loan Receivable" | "Cash/Bank (Disbursement)"
+  glAccountId String @map("gl_account_id")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@unique([institutionId, purpose], map: "uq_loan_gl_mapping_institution_purpose")
+  @@map("loan_gl_account_mapping")
   @@schema("nexus")
 }
 

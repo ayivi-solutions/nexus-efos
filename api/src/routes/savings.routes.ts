@@ -215,20 +215,31 @@ savingsRouter.post("/:id/deposit", requirePermission("savings.initiate"), async 
   const restrictionError = await checkRestriction(account.id, "CREDIT");
   if (restrictionError) return res.status(400).json({ error: restrictionError });
 
-  const newBalance = Number(account.balance) + parsed.data.amount;
-
-  const [updated, txn] = await prisma.$transaction([
-    prisma.savingsAccount.update({ where: { id: account.id }, data: { balance: newBalance, ledgerBalance: newBalance } }),
-    prisma.savingsTransaction.create({
+  // GAP-FIN-001 fix: the previous version read account.balance outside
+  // any lock, computed an absolute new value in JS, then wrote it —
+  // two concurrent deposits could both read the same starting balance
+  // and one would silently overwrite the other's effect. Prisma's
+  // `increment` compiles to `balance = balance + amount` in SQL, an
+  // atomic read-modify-write at the database level, not a two-step
+  // application-level race. balanceAfter for the transaction record is
+  // read back from the row the atomic update actually produced, not
+  // recomputed in JS, so it can never disagree with the real balance.
+  const [updated, txn] = await prisma.$transaction(async (tx: any) => {
+    const acct = await tx.savingsAccount.update({
+      where: { id: account.id },
+      data: { balance: { increment: parsed.data.amount }, ledgerBalance: { increment: parsed.data.amount } },
+    });
+    const t = await tx.savingsTransaction.create({
       data: {
         accountId: account.id,
         type: "DEPOSIT",
         amount: parsed.data.amount,
-        balanceAfter: newBalance,
+        balanceAfter: acct.balance,
         recordedById: req.auth!.userId,
       },
-    }),
-  ]);
+    });
+    return [acct, t];
+  });
 
   await prisma.auditLog.create({
     data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "savings.deposit", resource: "savings_account", resourceId: account.id, metadata: { amount: parsed.data.amount } },
@@ -245,26 +256,51 @@ savingsRouter.post("/:id/withdraw", requirePermission("savings.approve"), async 
     where: { id: req.params.id, institutionId: req.auth!.institutionId },
   });
   if (!account) return res.status(404).json({ error: "Account not found" });
-  if (Number(account.balance) < parsed.data.amount) {
-    return res.status(400).json({ error: "Insufficient balance" });
-  }
+
   const restrictionError = await checkRestriction(account.id, "DEBIT");
   if (restrictionError) return res.status(400).json({ error: restrictionError });
 
-  const newBalance = Number(account.balance) - parsed.data.amount;
-
-  const [updated, txn] = await prisma.$transaction([
-    prisma.savingsAccount.update({ where: { id: account.id }, data: { balance: newBalance, ledgerBalance: newBalance } }),
-    prisma.savingsTransaction.create({
-      data: {
-        accountId: account.id,
-        type: "WITHDRAWAL",
-        amount: parsed.data.amount,
-        balanceAfter: newBalance,
-        recordedById: req.auth!.userId,
-      },
-    }),
-  ]);
+  // GAP-FIN-001 fix — the real concurrency-safe part: updateMany's WHERE
+  // clause carries the sufficient-funds guard (balance >= amount) into
+  // the SAME atomic statement as the decrement itself. The database can
+  // only apply the decrement if the guard is still true at the moment
+  // the row is actually locked and written, so two concurrent
+  // withdrawals against insufficient combined funds can never both
+  // succeed — the second one's guard fails against the balance the
+  // first one already committed, count comes back 0, and it's rejected
+  // as insufficient funds rather than racing past a stale in-memory read.
+  let updated, txn;
+  try {
+    [updated, txn] = await prisma.$transaction(async (tx: any) => {
+      const guardedUpdate = await tx.savingsAccount.updateMany({
+        where: { id: account.id, balance: { gte: parsed.data.amount } },
+        data: { balance: { decrement: parsed.data.amount }, ledgerBalance: { decrement: parsed.data.amount } },
+      });
+      if (guardedUpdate.count === 0) {
+        throw Object.assign(new Error("Insufficient balance"), { httpStatus: 400 });
+      }
+      const acct = await tx.savingsAccount.findUniqueOrThrow({ where: { id: account.id } });
+      const t = await tx.savingsTransaction.create({
+        data: {
+          accountId: account.id,
+          type: "WITHDRAWAL",
+          amount: parsed.data.amount,
+          balanceAfter: acct.balance,
+          recordedById: req.auth!.userId,
+        },
+      });
+      return [acct, t];
+    });
+  } catch (err: any) {
+    // Express 4 does not auto-catch async rejections — this route must
+    // handle its own errors or a failed transaction hangs the request
+    // instead of returning a response. httpStatus distinguishes the
+    // expected "someone else's concurrent withdrawal already used the
+    // funds" case (400, same message as before this fix) from a genuine
+    // unexpected failure (500).
+    if (err.httpStatus === 400) return res.status(400).json({ error: err.message });
+    throw err;
+  }
 
   await prisma.auditLog.create({
     data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "savings.withdraw", resource: "savings_account", resourceId: account.id, metadata: { amount: parsed.data.amount } },
