@@ -213,7 +213,7 @@ export default function SettingsPage() {
         {/* Trusted / recent devices */}
         <div className="card p-5">
           <h2 className="font-display font-semibold text-base text-ink-900 mb-1">Devices</h2>
-          <p className="text-[12.5px] text-text-muted mb-4">Trust is based on a browser-supplied identifier, not a hardware-backed guarantee — clearing your browser storage resets it. Trusted devices skip the two-factor step at login for 30 days; password is still required every time regardless.</p>
+          <p className="text-[12.5px] text-text-muted mb-4">Trust is based on a browser-supplied identifier, not a hardware-backed guarantee — clearing your browser storage resets it. Trusted devices skip the two-factor step at login for 30 days; password is still required every time regardless. A device trusted before two-factor was ever verified on it won&apos;t satisfy a two-factor requirement added later — it&apos;ll be asked to re-verify.</p>
           <div className="divide-y divide-paper-100">
             {devices.map((d: any) => {
               const isTrusted = d.trusted && d.trustedUntil && new Date(d.trustedUntil) > new Date();
@@ -224,6 +224,7 @@ export default function SettingsPage() {
                     <div className="text-[11.5px] text-text-muted">
                       Last seen {new Date(d.lastSeenAt).toLocaleDateString()}
                       {isTrusted && ` · trusted until ${new Date(d.trustedUntil).toLocaleDateString()}`}
+                      {isTrusted && !d.mfaVerifiedAt && " · not two-factor verified"}
                       {d.ipAddress && ` · ${d.ipAddress}`}
                     </div>
                   </div>

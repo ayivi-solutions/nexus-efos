@@ -353,6 +353,15 @@ model UserDevice {
   // itself be the mechanism that bypasses MFA for the first time.
   trusted     Boolean   @default(false)
   trustedUntil DateTime? @map("trusted_until")
+  // GAP-IAM-003 fix: proves the assurance level under which trust was
+  // actually granted, not just that a "trusted" flag is currently set.
+  // Null means trust was granted at a moment MFA wasn't required for
+  // this user at all (no MFA check happened to prove) — if a role's
+  // requireMfa is later raised, a trust record with this still null
+  // can no longer satisfy that policy on its own, and the device must
+  // genuinely re-verify. Set only immediately after a real MFA code
+  // check succeeds, never just because "trusted" is being written.
+  mfaVerifiedAt DateTime? @map("mfa_verified_at")
   lastSeenAt  DateTime @map("last_seen_at")
   ipAddress   String? @map("ip_address")
   userAgent   String? @map("user_agent")

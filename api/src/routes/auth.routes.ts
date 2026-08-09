@@ -79,12 +79,24 @@ async function userHasRoleRequiringMfa(userId: string): Promise<boolean> {
 // device-identity guarantee (client-supplied fingerprint, unattested).
 // Password is still required regardless of trust — only the MFA step is
 // skipped. See the trust-model caveats on UserDevice in schema.prisma.
+//
+// GAP-IAM-003 fix: policy-aware, not just a boolean+expiry check. A
+// device trusted while MFA wasn't required for this user can't silently
+// keep skipping MFA once a role starts requiring it — mfaVerifiedAt is
+// the record's actual proof of assurance, checked fresh against the
+// CURRENT policy on every call, not trusted from whenever trust was
+// originally granted.
 async function isDeviceTrusted(userId: string, fingerprint: string | undefined): Promise<boolean> {
   if (!fingerprint) return false;
   const device = await prisma.userDevice.findUnique({
     where: { userId_fingerprint: { userId, fingerprint } },
   });
-  return !!device?.trusted && !!device.trustedUntil && device.trustedUntil > new Date();
+  if (!device?.trusted || !device.trustedUntil || device.trustedUntil <= new Date()) return false;
+
+  if ((await userHasRoleRequiringMfa(userId)) && !device.mfaVerifiedAt) {
+    return false;
+  }
+  return true;
 }
 
 async function recordLoginAttempt(
@@ -123,7 +135,8 @@ async function completeSuccessfulLogin(
   user: LoginableUser,
   req: { headers: { "user-agent"?: string }; ip?: string },
   deviceFingerprint?: string,
-  trustDevice?: boolean
+  trustDevice?: boolean,
+  mfaWasVerifiedThisSession?: boolean
 ) {
   const accessToken = signAccessToken({
     userId: user.id,
@@ -153,9 +166,18 @@ async function completeSuccessfulLogin(
     // required at all) has just been satisfied or wasn't required. A
     // device can never bootstrap trust without having passed MFA at least
     // once when MFA was actually required.
+    //
+    // GAP-IAM-003 fix: mfaVerifiedAt is only ever set when this specific
+    // call is known to follow a real MFA code check
+    // (mfaWasVerifiedThisSession), not just because trust is being
+    // written. On an update, an existing real verification timestamp is
+    // never cleared just because THIS particular login happened to skip
+    // MFA via an already-trusted device — only ever advanced forward on
+    // an actual fresh verification.
     const trustFields = trustDevice
       ? { trusted: true, trustedUntil: deviceTrustExpiryDate() }
       : {};
+    const mfaVerifiedFields = mfaWasVerifiedThisSession ? { mfaVerifiedAt: new Date() } : {};
     await prisma.userDevice.upsert({
       where: { userId_fingerprint: { userId: user.id, fingerprint: deviceFingerprint } },
       create: {
@@ -165,12 +187,14 @@ async function completeSuccessfulLogin(
         ipAddress: req.ip,
         userAgent: req.headers["user-agent"],
         ...trustFields,
+        ...mfaVerifiedFields,
       },
       update: {
         lastSeenAt: new Date(),
         ipAddress: req.ip,
         userAgent: req.headers["user-agent"],
         ...trustFields,
+        ...mfaVerifiedFields,
       },
     });
   }
@@ -385,7 +409,11 @@ authRouter.post("/login", async (req, res) => {
     }
   }
 
-  const result = await completeSuccessfulLogin(user, req, deviceFingerprint, trustDevice);
+  // GAP-IAM-003: no MFA check happened in this specific request (either
+  // skipped via an already-trusted device, or genuinely not required at
+  // all) — mfaWasVerifiedThisSession=false, so a fresh trustDevice grant
+  // here records mfaVerifiedAt as null, honestly.
+  const result = await completeSuccessfulLogin(user, req, deviceFingerprint, trustDevice, false);
   res.json(result);
 });
 
@@ -445,7 +473,11 @@ authRouter.post("/login/mfa", async (req, res) => {
     });
   }
 
-  const result = await completeSuccessfulLogin(user, req, deviceFingerprint, trustDevice);
+  // GAP-IAM-003: a real MFA code was just checked and passed above —
+  // mfaWasVerifiedThisSession=true, so a trustDevice grant here honestly
+  // records mfaVerifiedAt, proving this trust record can satisfy an MFA
+  // policy later.
+  const result = await completeSuccessfulLogin(user, req, deviceFingerprint, trustDevice, true);
   res.json(result);
 });
 
@@ -538,7 +570,7 @@ authRouter.post("/mfa/verify-required", async (req, res) => {
   // session. trustDevice deliberately not accepted here: trust can only
   // ever be granted once a device has already been through a genuinely
   // repeat MFA success, not on the very first enrollment.
-  const result = await completeSuccessfulLogin(updatedUser, req, deviceFingerprint, false);
+  const result = await completeSuccessfulLogin(updatedUser, req, deviceFingerprint, false, true);
   res.json({ ...result, backupCodes });
 });
 

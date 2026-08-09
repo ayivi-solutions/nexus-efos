@@ -1,6 +1,8 @@
 import express from "express";
 import cors from "cors";
+import helmet from "helmet";
 import rateLimit from "express-rate-limit";
+import { requestCorrelation } from "./middleware/requestCorrelation";
 import { authRouter } from "./routes/auth.routes";
 import { institutionRouter } from "./routes/institution.routes";
 import { roleRouter } from "./routes/role.routes";
@@ -34,6 +36,24 @@ import { assetRouter } from "./routes/asset.routes";
 
 export const app = express();
 
+// GAP-SEC-003 fix. Real ID first, before anything else touches the
+// request, so it's available to every downstream handler and error path.
+app.use(requestCorrelation);
+
+// This is a pure JSON API with no HTML rendering of its own (the
+// frontend is a fully separate Next.js app) — contentSecurityPolicy is
+// safe to leave at Helmet's strict default rather than needing a
+// permissive script-src/style-src the way an HTML-serving app would.
+// crossOriginResourcePolicy relaxed to same-site rather than Helmet's
+// default same-origin, since the web app calls this API from a
+// different origin (WEB_ORIGIN) — same-origin would block every
+// legitimate cross-origin fetch from the actual frontend.
+app.use(
+  helmet({
+    crossOriginResourcePolicy: { policy: "cross-origin" },
+  })
+);
+
 app.use(cors({ origin: process.env.WEB_ORIGIN || "http://localhost:3100", credentials: true }));
 app.use(express.json());
 
@@ -49,6 +69,35 @@ const apiLimiter = rateLimit({
   message: { error: "Too many requests — please slow down and try again shortly." },
 });
 app.use("/v1", apiLimiter);
+
+// GAP-SEC-003 fix — endpoint-specific limits. The blanket 300-per-15-min
+// limiter above is shared by every route, which is far too generous for
+// authentication specifically: 300 login attempts in 15 minutes is
+// trivially enough to brute-force a weak password against one account.
+// This is deliberately layered ON TOP of the existing account-lockout
+// mechanism, not a replacement for it — they cover different attack
+// shapes. Lockout stops repeated attempts against ONE account regardless
+// of source IP; this stops one IP hammering MANY accounts (or password-
+// spraying) before any single account's lockout threshold would trip.
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 20, // per IP, per window — real headroom for a person mistyping a password a few times, nowhere near enough for a brute-force attempt
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Too many attempts from this address — please wait before trying again." },
+});
+// Express's app.use(path, ...) prefix-matches, so /v1/auth/login also
+// covers /v1/auth/login/mfa automatically — no separate line needed
+// (and adding one would double-count against the same limiter's shared
+// counter for that path, since Express would run both matching
+// middlewares for a single request).
+app.use("/v1/auth/login", authLimiter);
+app.use("/v1/auth/mfa/setup-required", authLimiter);
+app.use("/v1/auth/mfa/verify-required", authLimiter);
+app.use("/v1/auth/refresh", authLimiter);
+app.use("/v1/auth/register-institution", authLimiter);
+app.use("/v1/auth/accept-invite", authLimiter);
+app.use("/v1/auth/change-password", authLimiter);
 
 app.get("/health", (_req, res) => res.json({ status: "ok", service: "nexus-efos-api" }));
 
