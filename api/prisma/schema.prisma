@@ -4448,6 +4448,45 @@ model LoanGLAccountMapping {
   @@schema("nexus")
 }
 
+// GAP-SCH-001 (Implementation Requirements Traceability & Remediation
+// Register, 9 Aug 2026): "Every API process starts node-cron jobs; no
+// distributed claim/lock or durable worker ownership found" — if this
+// app ever scales to more than one Railway instance, every instance
+// independently fires the same scheduled jobs at the same moment (double
+// interest accrual, double arrears reclassification, etc.). Fixed with a
+// database-backed claim rather than standing up a whole separate worker
+// service: the unique index below IS the distributed lock. Two processes
+// racing to claim the same (jobType, runDate) can't both succeed — one
+// INSERT wins, the other hits the unique constraint and skips. No new
+// infrastructure, just Postgres doing what it already does.
+enum ScheduledJobStatus {
+  CLAIMED
+  COMPLETED
+  FAILED
+
+  @@schema("nexus")
+}
+
+model ScheduledJobRun {
+  id String @id(map: "pk_scheduled_job_run") @default(uuid())
+
+  jobType             String // e.g. "ARREARS_CHECK", "SAVINGS_INTEREST_ACCRUAL"
+  runDate             DateTime // normalized to midnight — the calendar day this run corresponds to, not a timestamp
+  executionId         String   @default(uuid()) @map("execution_id")
+  claimedByProcessId  String   @map("claimed_by_process_id") // hostname+pid+uuid, identifies which instance won the claim
+  claimedAt           DateTime @default(now()) @map("claimed_at")
+
+  status      ScheduledJobStatus @default(CLAIMED)
+  completedAt DateTime?          @map("completed_at")
+  error       String?
+
+  // The lock itself — not institution-scoped, since each job function
+  // already processes every institution in one batch per run.
+  @@unique([jobType, runDate], map: "uq_scheduled_job_run_type_date")
+  @@map("scheduled_job_run")
+  @@schema("nexus")
+}
+
 // doc §186-195 Asset Management. §187.3 "Asset codes are unique" /
 // "Disposed assets cannot be reassigned" / "Historical asset records
 // remain available" / "Every asset modification is audited" — all

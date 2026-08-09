@@ -1,9 +1,43 @@
 import cron from "node-cron";
+import os from "os";
+import crypto from "crypto";
 import { prisma } from "./prisma";
 import { calculateArrears } from "./arrears";
 import { nextExecutionDate } from "./standingInstructions";
 import { isBalanced, balanceEffect, generateJournalNumber, findPostablePeriod } from "./generalLedger";
 import { runSavingsInterestAccrualAllInstitutions, runSavingsInterestPostingAllInstitutions } from "../routes/savings-interest.routes";
+
+// GAP-SCH-001 fix — the distributed claim. See the schema comment on
+// ScheduledJobRun for the full reasoning. PROCESS_ID is generated once
+// per process at module load, not per call, so every claim this process
+// makes is attributable to the same running instance.
+const PROCESS_ID = `${os.hostname()}-${process.pid}-${crypto.randomUUID()}`;
+
+async function claimAndRun(jobType: string, fn: () => Promise<void>) {
+  const runDate = new Date();
+  runDate.setHours(0, 0, 0, 0);
+
+  let claim;
+  try {
+    claim = await prisma.scheduledJobRun.create({
+      data: { jobType, runDate, claimedByProcessId: PROCESS_ID },
+    });
+  } catch (err: any) {
+    if (err.code === "P2002") {
+      console.log(`[scheduler] ${jobType}: already claimed by another instance for ${runDate.toISOString().slice(0, 10)}, skipping`);
+      return;
+    }
+    throw err;
+  }
+
+  try {
+    await fn();
+    await prisma.scheduledJobRun.update({ where: { id: claim.id }, data: { status: "COMPLETED", completedAt: new Date() } });
+  } catch (err: any) {
+    await prisma.scheduledJobRun.update({ where: { id: claim.id }, data: { status: "FAILED", completedAt: new Date(), error: String(err.message || err) } });
+    throw err;
+  }
+}
 
 // doc §77.3 "Arrears calculations are automatic" — taken literally. Runs
 // once daily rather than being computed live on every read, matching how
@@ -253,21 +287,21 @@ export function startScheduler() {
   // 01:00 every day, server time — after any prior day's end-of-day
   // activity, before the next business day starts.
   cron.schedule("0 1 * * *", () => {
-    runArrearsCheck().catch((err) => console.error("[scheduler] arrears check failed:", err));
-    runStandingInstructions().catch((err) => console.error("[scheduler] standing instructions failed:", err));
-    runRecurringJournals().catch((err) => console.error("[scheduler] recurring journals failed:", err));
-    runSavingsInterestAccrual().catch((err) => console.error("[scheduler] savings interest accrual failed:", err));
-    runComplaintEscalationCheck().catch((err) => console.error("[scheduler] complaint escalation check failed:", err));
-    runAuditFindingOverdueCheck().catch((err) => console.error("[scheduler] audit finding overdue check failed:", err));
+    claimAndRun("ARREARS_CHECK", runArrearsCheck).catch((err) => console.error("[scheduler] arrears check failed:", err));
+    claimAndRun("STANDING_INSTRUCTIONS", runStandingInstructions).catch((err) => console.error("[scheduler] standing instructions failed:", err));
+    claimAndRun("RECURRING_JOURNALS", runRecurringJournals).catch((err) => console.error("[scheduler] recurring journals failed:", err));
+    claimAndRun("SAVINGS_INTEREST_ACCRUAL", runSavingsInterestAccrual).catch((err) => console.error("[scheduler] savings interest accrual failed:", err));
+    claimAndRun("COMPLAINT_ESCALATION_CHECK", runComplaintEscalationCheck).catch((err) => console.error("[scheduler] complaint escalation check failed:", err));
+    claimAndRun("AUDIT_FINDING_OVERDUE_CHECK", runAuditFindingOverdueCheck).catch((err) => console.error("[scheduler] audit finding overdue check failed:", err));
   });
   // 02:00 on the 1st of the month — after the same day's 01:00 accrual
   // run has already captured the final day of the prior month, so
   // posting never runs against a stale figure.
   cron.schedule("0 2 1 * *", () => {
-    runSavingsInterestPosting().catch((err) => console.error("[scheduler] savings interest posting failed:", err));
+    claimAndRun("SAVINGS_INTEREST_POSTING", runSavingsInterestPosting).catch((err) => console.error("[scheduler] savings interest posting failed:", err));
   });
   console.log(
-    "[scheduler] started — arrears check + standing instructions + recurring journals + savings interest accrual + complaint escalation check + audit finding overdue check scheduled daily at 01:00; savings interest posting scheduled monthly at 02:00 on the 1st"
+    "[scheduler] started (distributed-claim guarded, process " + PROCESS_ID + ") — arrears check + standing instructions + recurring journals + savings interest accrual + complaint escalation check + audit finding overdue check scheduled daily at 01:00; savings interest posting scheduled monthly at 02:00 on the 1st"
   );
 }
 
