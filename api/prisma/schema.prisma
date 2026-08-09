@@ -111,6 +111,7 @@ model Institution {
   regulatoryCapitalSnapshots RegulatoryCapitalSnapshot[]
   notificationProviderConfigs NotificationProviderConfig[]
   loanGLAccountMappings        LoanGLAccountMapping[]
+  savingsGLAccountMappings     SavingsGLAccountMapping[]
   demoLinkTokens                DemoLinkToken[]
   notifications                Notification[]
   glAccounts              GLAccount[]
@@ -4508,6 +4509,29 @@ model LoanGLAccountMapping {
 
   @@unique([institutionId, purpose], map: "uq_loan_gl_mapping_institution_purpose")
   @@map("loan_gl_account_mapping")
+  @@schema("nexus")
+}
+
+// GAP-GL-001 (Implementation Requirements Traceability & Remediation
+// Register, 9 Aug 2026): "automatic Savings/Loans/Cash-Vault to GL
+// posting is acknowledged as not yet wired consistently." Loans got
+// this earlier the same day (GAP-FIN-003, LoanGLAccountMapping) —
+// Savings gets the same pattern here. "Customer Deposits Liability" is
+// the correct accounting side, not "Customer Deposits" alone — a
+// savings deposit increases what the institution OWES the customer
+// (a liability), it does not increase an asset the institution owns.
+model SavingsGLAccountMapping {
+  id            String      @id(map: "pk_savings_gl_account_mapping") @default(uuid())
+  institution   Institution @relation(fields: [institutionId], references: [id], onDelete: Cascade, map: "fk_savings_gl_account_mapping_institution")
+  institutionId String      @map("institution_id")
+
+  purpose     String // "Cash/Bank (Savings)" | "Customer Deposits Liability"
+  glAccountId String @map("gl_account_id")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@unique([institutionId, purpose], map: "uq_savings_gl_mapping_institution_purpose")
+  @@map("savings_gl_account_mapping")
   @@schema("nexus")
 }
 

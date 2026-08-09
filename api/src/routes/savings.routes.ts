@@ -8,6 +8,7 @@ import { matchRules, executeMatchedRules } from "../lib/businessRules";
 import { nextExecutionDate } from "../lib/standingInstructions";
 import { runStandingInstructions } from "../lib/scheduler";
 import { generateStatementPdf } from "../lib/savingsStatementPdf";
+import { isBalanced, balanceEffect, findPostablePeriod, generateJournalNumber } from "../lib/generalLedger";
 
 export const savingsRouter = Router();
 savingsRouter.use(requireAuth);
@@ -19,6 +20,40 @@ savingsRouter.get("/", requirePermission("reports.view"), async (req: AuthedRequ
     orderBy: { createdAt: "desc" },
   });
   res.json({ accounts });
+});
+
+// -----------------------------------------------------------------------
+// GAP-GL-001 — configuration for the real GL accounts a savings deposit
+// or withdrawal debits/credits. Same shape and pattern as Loan/Payroll/
+// Asset GL mapping endpoints. Registered here, before GET /:id,
+// deliberately — Express matches routes in registration order, and a
+// single-segment path like /gl-mappings would otherwise be swallowed by
+// /:id treating "gl-mappings" as an id value (a real bug caught and
+// fixed the same way earlier today, in loan.routes.ts).
+// -----------------------------------------------------------------------
+const ALL_SAVINGS_GL_PURPOSES = ["Cash/Bank (Savings)", "Customer Deposits Liability"];
+
+savingsRouter.get("/gl-mappings", requirePermission("institution.configure"), async (req: AuthedRequest, res) => {
+  const mappings = await prisma.savingsGLAccountMapping.findMany({ where: { institutionId: req.auth!.institutionId } });
+  const glAccounts = await prisma.gLAccount.findMany({ where: { institutionId: req.auth!.institutionId, status: "ACTIVE" }, select: { id: true, code: true, name: true } });
+  const accountById = new Map(glAccounts.map((a: any) => [a.id, a]));
+  res.json({ mappings: mappings.map((m: any) => ({ ...m, account: accountById.get(m.glAccountId) || null })), purposes: ALL_SAVINGS_GL_PURPOSES, accounts: glAccounts });
+});
+
+savingsRouter.post("/gl-mappings", requirePermission("institution.configure"), async (req: AuthedRequest, res) => {
+  const { purpose, glAccountId } = req.body as { purpose?: string; glAccountId?: string };
+  if (!purpose || !glAccountId) return res.status(400).json({ error: "purpose and glAccountId are required" });
+
+  const account = await prisma.gLAccount.findFirst({ where: { id: glAccountId, institutionId: req.auth!.institutionId } });
+  if (!account) return res.status(404).json({ error: "GL account not found" });
+
+  const mapping = await prisma.savingsGLAccountMapping.upsert({
+    where: { institutionId_purpose: { institutionId: req.auth!.institutionId, purpose } },
+    create: { institutionId: req.auth!.institutionId, purpose, glAccountId },
+    update: { glAccountId },
+  });
+  await prisma.auditLog.create({ data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "savings_gl_mapping.set", resource: "savings_gl_account_mapping", resourceId: mapping.id, metadata: { purpose, glAccountId } } });
+  res.status(201).json({ mapping });
 });
 
 savingsRouter.get("/:id", requirePermission("reports.view"), async (req: AuthedRequest, res) => {
@@ -215,34 +250,84 @@ savingsRouter.post("/:id/deposit", requirePermission("savings.initiate"), async 
   const restrictionError = await checkRestriction(account.id, "CREDIT");
   if (restrictionError) return res.status(400).json({ error: restrictionError });
 
-  // GAP-FIN-001 fix: the previous version read account.balance outside
-  // any lock, computed an absolute new value in JS, then wrote it —
-  // two concurrent deposits could both read the same starting balance
-  // and one would silently overwrite the other's effect. Prisma's
-  // `increment` compiles to `balance = balance + amount` in SQL, an
-  // atomic read-modify-write at the database level, not a two-step
-  // application-level race. balanceAfter for the transaction record is
-  // read back from the row the atomic update actually produced, not
-  // recomputed in JS, so it can never disagree with the real balance.
+  // GAP-GL-001 fix: a deposit used to move the account balance with no
+  // accounting effect bound to it at all — the same "looks like it
+  // happened but no real accounting entry exists" gap loan disbursement
+  // had (GAP-FIN-003), extended to the highest-volume transaction type
+  // in the whole platform. Hard-blocks if unconfigured, same reasoning
+  // as loan disbursement: there's no honest way to record a deposit
+  // without a real accounting effect. A deposit increases what the
+  // institution owes the customer (a liability), not an asset it owns —
+  // Debit Cash/Bank, Credit Customer Deposits Liability.
+  const mappings = await prisma.savingsGLAccountMapping.findMany({ where: { institutionId: req.auth!.institutionId } });
+  const accountIdByPurpose: Record<string, string> = Object.fromEntries(mappings.map((m: any) => [m.purpose, m.glAccountId]));
+  const cashAccountId = accountIdByPurpose["Cash/Bank (Savings)"];
+  const depositsLiabilityAccountId = accountIdByPurpose["Customer Deposits Liability"];
+  if (!cashAccountId || !depositsLiabilityAccountId) {
+    return res.status(400).json({ error: "Savings GL account mapping is not configured (\"Cash/Bank (Savings)\" and \"Customer Deposits Liability\" both required) — configure this before recording deposits, real cash cannot move without a real accounting effect." });
+  }
+
+  const postingDate = new Date();
+  const glPeriod = await findPostablePeriod(prisma, req.auth!.institutionId, postingDate);
+  if (!glPeriod || glPeriod.status !== "OPEN") {
+    return res.status(400).json({ error: glPeriod ? `The financial period covering today is ${glPeriod.status}, not open` : "No financial period covers today's date" });
+  }
+
+  const [cashAccount, depositsLiabilityAccount] = await Promise.all([
+    prisma.gLAccount.findUniqueOrThrow({ where: { id: cashAccountId } }),
+    prisma.gLAccount.findUniqueOrThrow({ where: { id: depositsLiabilityAccountId } }),
+  ]);
+  const amount = parsed.data.amount;
+  const journalLines = [
+    { accountId: cashAccountId, category: cashAccount.category, debit: amount, credit: 0 },
+    { accountId: depositsLiabilityAccountId, category: depositsLiabilityAccount.category, debit: 0, credit: amount },
+  ];
+  if (!isBalanced(journalLines)) {
+    return res.status(400).json({ error: "Deposit journal would not balance — check the deposit amount" });
+  }
+
+  // GAP-FIN-001 fix (kept from earlier today): the previous version read
+  // account.balance outside any lock, computed an absolute new value in
+  // JS, then wrote it — two concurrent deposits could both read the same
+  // starting balance and one would silently overwrite the other's
+  // effect. Prisma's `increment` compiles to `balance = balance + amount`
+  // in SQL, an atomic read-modify-write at the database level, not a
+  // two-step application-level race. balanceAfter for the transaction
+  // record is read back from the row the atomic update actually
+  // produced, not recomputed in JS, so it can never disagree with the
+  // real balance.
   const [updated, txn] = await prisma.$transaction(async (tx: any) => {
     const acct = await tx.savingsAccount.update({
       where: { id: account.id },
-      data: { balance: { increment: parsed.data.amount }, ledgerBalance: { increment: parsed.data.amount } },
+      data: { balance: { increment: amount }, ledgerBalance: { increment: amount } },
     });
     const t = await tx.savingsTransaction.create({
       data: {
         accountId: account.id,
         type: "DEPOSIT",
-        amount: parsed.data.amount,
+        amount,
         balanceAfter: acct.balance,
         recordedById: req.auth!.userId,
       },
     });
+
+    const journal = await tx.journal.create({
+      data: {
+        institutionId: req.auth!.institutionId, journalNumber: generateJournalNumber(), type: "AUTOMATIC",
+        description: `Savings deposit — account ${account.accountNumber}`, status: "POSTED", postingDate, postedAt: new Date(), postedById: req.auth!.userId, createdById: req.auth!.userId,
+        lines: { create: journalLines.map((l) => ({ accountId: l.accountId, debit: l.debit, credit: l.credit })) },
+      },
+    });
+    for (const line of journalLines) {
+      const effect = balanceEffect(line.category as any, line.debit, line.credit);
+      await tx.gLAccount.update({ where: { id: line.accountId }, data: { balance: { increment: effect } } });
+    }
+
     return [acct, t];
   });
 
   await prisma.auditLog.create({
-    data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "savings.deposit", resource: "savings_account", resourceId: account.id, metadata: { amount: parsed.data.amount } },
+    data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "savings.deposit", resource: "savings_account", resourceId: account.id, metadata: { amount } },
   });
 
   res.status(201).json({ account: updated, transaction: txn });
@@ -260,21 +345,54 @@ savingsRouter.post("/:id/withdraw", requirePermission("savings.approve"), async 
   const restrictionError = await checkRestriction(account.id, "DEBIT");
   if (restrictionError) return res.status(400).json({ error: restrictionError });
 
-  // GAP-FIN-001 fix — the real concurrency-safe part: updateMany's WHERE
-  // clause carries the sufficient-funds guard (balance >= amount) into
-  // the SAME atomic statement as the decrement itself. The database can
-  // only apply the decrement if the guard is still true at the moment
-  // the row is actually locked and written, so two concurrent
-  // withdrawals against insufficient combined funds can never both
-  // succeed — the second one's guard fails against the balance the
-  // first one already committed, count comes back 0, and it's rejected
-  // as insufficient funds rather than racing past a stale in-memory read.
+  // GAP-GL-001 fix: reverse of the deposit entry — a withdrawal reduces
+  // what the institution owes the customer (Debit Customer Deposits
+  // Liability) and reduces its own cash (Credit Cash/Bank). Same hard
+  // block if unconfigured as deposit and loan disbursement — no real
+  // cash movement without a real accounting effect bound to it.
+  const mappings = await prisma.savingsGLAccountMapping.findMany({ where: { institutionId: req.auth!.institutionId } });
+  const accountIdByPurpose: Record<string, string> = Object.fromEntries(mappings.map((m: any) => [m.purpose, m.glAccountId]));
+  const cashAccountId = accountIdByPurpose["Cash/Bank (Savings)"];
+  const depositsLiabilityAccountId = accountIdByPurpose["Customer Deposits Liability"];
+  if (!cashAccountId || !depositsLiabilityAccountId) {
+    return res.status(400).json({ error: "Savings GL account mapping is not configured (\"Cash/Bank (Savings)\" and \"Customer Deposits Liability\" both required) — configure this before recording withdrawals, real cash cannot move without a real accounting effect." });
+  }
+
+  const postingDate = new Date();
+  const glPeriod = await findPostablePeriod(prisma, req.auth!.institutionId, postingDate);
+  if (!glPeriod || glPeriod.status !== "OPEN") {
+    return res.status(400).json({ error: glPeriod ? `The financial period covering today is ${glPeriod.status}, not open` : "No financial period covers today's date" });
+  }
+
+  const [cashAccount, depositsLiabilityAccount] = await Promise.all([
+    prisma.gLAccount.findUniqueOrThrow({ where: { id: cashAccountId } }),
+    prisma.gLAccount.findUniqueOrThrow({ where: { id: depositsLiabilityAccountId } }),
+  ]);
+  const amount = parsed.data.amount;
+  const journalLines = [
+    { accountId: depositsLiabilityAccountId, category: depositsLiabilityAccount.category, debit: amount, credit: 0 },
+    { accountId: cashAccountId, category: cashAccount.category, debit: 0, credit: amount },
+  ];
+  if (!isBalanced(journalLines)) {
+    return res.status(400).json({ error: "Withdrawal journal would not balance — check the withdrawal amount" });
+  }
+
+  // GAP-FIN-001 fix (kept from earlier today) — the real concurrency-safe
+  // part: updateMany's WHERE clause carries the sufficient-funds guard
+  // (balance >= amount) into the SAME atomic statement as the decrement
+  // itself. The database can only apply the decrement if the guard is
+  // still true at the moment the row is actually locked and written, so
+  // two concurrent withdrawals against insufficient combined funds can
+  // never both succeed — the second one's guard fails against the
+  // balance the first one already committed, count comes back 0, and
+  // it's rejected as insufficient funds rather than racing past a stale
+  // in-memory read.
   let updated, txn;
   try {
     [updated, txn] = await prisma.$transaction(async (tx: any) => {
       const guardedUpdate = await tx.savingsAccount.updateMany({
-        where: { id: account.id, balance: { gte: parsed.data.amount } },
-        data: { balance: { decrement: parsed.data.amount }, ledgerBalance: { decrement: parsed.data.amount } },
+        where: { id: account.id, balance: { gte: amount } },
+        data: { balance: { decrement: amount }, ledgerBalance: { decrement: amount } },
       });
       if (guardedUpdate.count === 0) {
         throw Object.assign(new Error("Insufficient balance"), { httpStatus: 400 });
@@ -284,11 +402,24 @@ savingsRouter.post("/:id/withdraw", requirePermission("savings.approve"), async 
         data: {
           accountId: account.id,
           type: "WITHDRAWAL",
-          amount: parsed.data.amount,
+          amount,
           balanceAfter: acct.balance,
           recordedById: req.auth!.userId,
         },
       });
+
+      const journal = await tx.journal.create({
+        data: {
+          institutionId: req.auth!.institutionId, journalNumber: generateJournalNumber(), type: "AUTOMATIC",
+          description: `Savings withdrawal — account ${account.accountNumber}`, status: "POSTED", postingDate, postedAt: new Date(), postedById: req.auth!.userId, createdById: req.auth!.userId,
+          lines: { create: journalLines.map((l) => ({ accountId: l.accountId, debit: l.debit, credit: l.credit })) },
+        },
+      });
+      for (const line of journalLines) {
+        const effect = balanceEffect(line.category as any, line.debit, line.credit);
+        await tx.gLAccount.update({ where: { id: line.accountId }, data: { balance: { increment: effect } } });
+      }
+
       return [acct, t];
     });
   } catch (err: any) {
