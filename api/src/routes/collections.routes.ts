@@ -6,6 +6,8 @@ import { requirePermission } from "../middleware/rbac";
 import { generateCollectionTransactionNumber } from "../lib/collectionTransactionNumber";
 import { assessDelinquencyRisk } from "../lib/delinquencyRisk";
 import { assessCollectorIntegrity } from "../lib/collectorIntegrity";
+import { applyLoanRepaymentInTx } from "../lib/loanRepayment";
+import { isBalanced, balanceEffect, findPostablePeriod, generateJournalNumber } from "../lib/generalLedger";
 
 // doc §78 Collections Management. §79 Collector Management + §80 Route
 // Management shipped first — everything else in this module (Daily
@@ -245,41 +247,141 @@ collectionsRouter.post("/transactions", requirePermission("collections.record"),
     return res.status(400).json({ error: "A matching collection was just recorded by this collector — if this is genuinely a second, separate payment, wait a few minutes and try again" });
   }
 
+  // GAP-GL-001 fix, final slice — Collections. This branch used to be a
+  // completely separate, divergent implementation from the direct
+  // /loans/:id/repayments and /savings/:id/deposit endpoints, with two
+  // real bugs: the savings path read account.balance outside any lock
+  // and wrote it non-atomically (the exact race condition already fixed
+  // for GAP-FIN-001 in savings.routes.ts, just never fixed HERE); the
+  // loan path created a bare LoanRepayment row and deliberately skipped
+  // installment allocation and loan-status updates, deferring them to
+  // an unspecified later recompute. Both now go through the exact same
+  // shared, atomic logic the direct endpoints use — applyLoanRepaymentInTx
+  // for loans, the same atomic increment for savings — plus a real GL
+  // posting neither branch had before: cash a field collector physically
+  // receives isn't at the bank yet ("Collector Cash Custody"), a
+  // genuinely different account from a branch/teller cash receipt.
+  const amount = parsed.data.amount;
+  const postingDate = new Date();
+  const glPeriod = await findPostablePeriod(prisma, req.auth!.institutionId, postingDate);
+  if (!glPeriod || glPeriod.status !== "OPEN") {
+    return res.status(400).json({ error: glPeriod ? `The financial period covering today is ${glPeriod.status}, not open` : "No financial period covers today's date" });
+  }
+
   const transactionNumber = generateCollectionTransactionNumber();
   let resultTxn: any;
+  let loanClosed: boolean | undefined;
 
   if (parsed.data.type === "SAVINGS_DEPOSIT") {
     const account = await prisma.savingsAccount.findFirst({ where: { id: parsed.data.targetId, institutionId: req.auth!.institutionId, customerId: parsed.data.customerId } });
     if (!account) return res.status(404).json({ error: "Savings account not found for this customer" });
-    const newBalance = Number(account.balance) + parsed.data.amount;
-    const [, txn] = await prisma.$transaction([
-      prisma.savingsAccount.update({ where: { id: account.id }, data: { balance: newBalance, ledgerBalance: newBalance } }),
-      prisma.savingsTransaction.create({ data: { accountId: account.id, type: "DEPOSIT", amount: parsed.data.amount, balanceAfter: newBalance, recordedById: req.auth!.userId } }),
+
+    const mappings = await prisma.savingsGLAccountMapping.findMany({ where: { institutionId: req.auth!.institutionId } });
+    const accountIdByPurpose: Record<string, string> = Object.fromEntries(mappings.map((m: any) => [m.purpose, m.glAccountId]));
+    const custodyAccountId = accountIdByPurpose["Collector Cash Custody"];
+    const depositsLiabilityAccountId = accountIdByPurpose["Customer Deposits Liability"];
+    if (!custodyAccountId || !depositsLiabilityAccountId) {
+      return res.status(400).json({ error: "Savings GL account mapping is not configured (\"Collector Cash Custody\" and \"Customer Deposits Liability\" both required) — configure this before recording field collections." });
+    }
+    const [custodyAccount, depositsLiabilityAccount] = await Promise.all([
+      prisma.gLAccount.findUniqueOrThrow({ where: { id: custodyAccountId } }),
+      prisma.gLAccount.findUniqueOrThrow({ where: { id: depositsLiabilityAccountId } }),
     ]);
+    const journalLines = [
+      { accountId: custodyAccountId, category: custodyAccount.category, debit: amount, credit: 0 },
+      { accountId: depositsLiabilityAccountId, category: depositsLiabilityAccount.category, debit: 0, credit: amount },
+    ];
+    if (!isBalanced(journalLines)) return res.status(400).json({ error: "Collection journal would not balance — check the amount" });
+
+    const [, txn] = await prisma.$transaction(async (tx: any) => {
+      // A field deposit only ever increases the balance — no
+      // insufficient-funds guard needed the way withdrawal has, but
+      // still an atomic increment, not a JS-computed absolute value.
+      const acct = await tx.savingsAccount.update({
+        where: { id: account.id },
+        data: { balance: { increment: amount }, ledgerBalance: { increment: amount } },
+      });
+      const t = await tx.savingsTransaction.create({
+        data: { accountId: account.id, type: "DEPOSIT", amount, balanceAfter: acct.balance, recordedById: req.auth!.userId },
+      });
+
+      const journal = await tx.journal.create({
+        data: {
+          institutionId: req.auth!.institutionId, journalNumber: generateJournalNumber(), type: "AUTOMATIC",
+          description: `Field-collected savings deposit — account ${account.accountNumber}`, status: "POSTED", postingDate, postedAt: new Date(), postedById: req.auth!.userId, createdById: req.auth!.userId,
+          lines: { create: journalLines.map((l) => ({ accountId: l.accountId, debit: l.debit, credit: l.credit })) },
+        },
+      });
+      for (const line of journalLines) {
+        const effect = balanceEffect(line.category as any, line.debit, line.credit);
+        await tx.gLAccount.update({ where: { id: line.accountId }, data: { balance: { increment: effect } } });
+      }
+
+      return [acct, t];
+    });
     resultTxn = txn;
   } else {
     const loan = await prisma.loan.findFirst({ where: { id: parsed.data.targetId, institutionId: req.auth!.institutionId, customerId: parsed.data.customerId } });
     if (!loan) return res.status(404).json({ error: "Loan not found for this customer" });
-    resultTxn = await prisma.loanRepayment.create({ data: { loanId: loan.id, amount: parsed.data.amount, recordedById: req.auth!.userId } });
-    // Installment allocation for field-collected repayments follows the
-    // same oldest-first, interest-before-principal rule as every other
-    // repayment — deliberately handled through the existing
-    // POST /loans/:id/repayments endpoint's own logic path is NOT called
-    // here to avoid a second write to the same repayment; instead this
-    // record is the single source of truth and allocation happens via
-    // the same shared allocateRepayment on the next installment view.
+
+    const mappings = await prisma.loanGLAccountMapping.findMany({ where: { institutionId: req.auth!.institutionId } });
+    const accountIdByPurpose: Record<string, string> = Object.fromEntries(mappings.map((m: any) => [m.purpose, m.glAccountId]));
+    const custodyAccountId = accountIdByPurpose["Collector Cash Custody"];
+    const receivableAccountId = accountIdByPurpose["Loan Receivable"];
+    if (!custodyAccountId || !receivableAccountId) {
+      return res.status(400).json({ error: "Loan GL account mapping is not configured (\"Collector Cash Custody\" and \"Loan Receivable\" both required) — configure this before recording field collections." });
+    }
+    const [custodyAccount, receivableAccount] = await Promise.all([
+      prisma.gLAccount.findUniqueOrThrow({ where: { id: custodyAccountId } }),
+      prisma.gLAccount.findUniqueOrThrow({ where: { id: receivableAccountId } }),
+    ]);
+    const journalLines = [
+      { accountId: custodyAccountId, category: custodyAccount.category, debit: amount, credit: 0 },
+      { accountId: receivableAccountId, category: receivableAccount.category, debit: 0, credit: amount },
+    ];
+    if (!isBalanced(journalLines)) return res.status(400).json({ error: "Collection journal would not balance — check the amount" });
+
+    try {
+      const [r, closed] = await prisma.$transaction(
+        async (tx: any) => {
+          const { repayment, loanClosed: closedInner } = await applyLoanRepaymentInTx(tx, loan.id, amount, req.auth!.userId);
+
+          const journal = await tx.journal.create({
+            data: {
+              institutionId: req.auth!.institutionId, journalNumber: generateJournalNumber(), type: "AUTOMATIC",
+              description: `Field-collected loan repayment — loan ${loan.id}`, status: "POSTED", postingDate, postedAt: new Date(), postedById: req.auth!.userId, createdById: req.auth!.userId,
+              lines: { create: journalLines.map((l) => ({ accountId: l.accountId, debit: l.debit, credit: l.credit })) },
+            },
+          });
+          for (const line of journalLines) {
+            const effect = balanceEffect(line.category as any, line.debit, line.credit);
+            await tx.gLAccount.update({ where: { id: line.accountId }, data: { balance: { increment: effect } } });
+          }
+
+          return [repayment, closedInner];
+        },
+        { isolationLevel: "Serializable" }
+      );
+      resultTxn = r;
+      loanClosed = closed;
+    } catch (err: any) {
+      if (err.code === "P2034" || err.meta?.code === "40001") {
+        return res.status(409).json({ error: "This loan was updated by another repayment at the same moment. Please retry." });
+      }
+      throw err;
+    }
   }
 
   const collection = await prisma.collectionTransaction.create({
     data: {
       institutionId: req.auth!.institutionId, transactionNumber, type: parsed.data.type as any,
       collectorId: collector.id, customerId: parsed.data.customerId, targetId: parsed.data.targetId,
-      amount: parsed.data.amount, recordedById: req.auth!.userId,
+      amount, recordedById: req.auth!.userId,
     },
   });
 
   await prisma.auditLog.create({
-    data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "collection.transaction_recorded", resource: "collection_transaction", resourceId: collection.id, metadata: { type: parsed.data.type, amount: parsed.data.amount, transactionNumber } },
+    data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "collection.transaction_recorded", resource: "collection_transaction", resourceId: collection.id, metadata: { type: parsed.data.type, amount, transactionNumber, loanClosed } },
   });
 
   res.status(201).json({ collection, transactionNumber });

@@ -31,7 +31,13 @@ savingsRouter.get("/", requirePermission("reports.view"), async (req: AuthedRequ
 // /:id treating "gl-mappings" as an id value (a real bug caught and
 // fixed the same way earlier today, in loan.routes.ts).
 // -----------------------------------------------------------------------
-const ALL_SAVINGS_GL_PURPOSES = ["Cash/Bank (Savings)", "Customer Deposits Liability"];
+// "Collector Cash Custody" reused from the loan side's same-named
+// purpose (LoanGLAccountMapping) conceptually, but savings and loans
+// keep separate mapping tables (established convention), so this
+// institution configures it once per domain — cash a field collector
+// has physically received for a savings deposit isn't at the bank yet,
+// same reasoning as the loan-repayment case.
+const ALL_SAVINGS_GL_PURPOSES = ["Cash/Bank (Savings)", "Customer Deposits Liability", "Collector Cash Custody"];
 
 savingsRouter.get("/gl-mappings", requirePermission("institution.configure"), async (req: AuthedRequest, res) => {
   const mappings = await prisma.savingsGLAccountMapping.findMany({ where: { institutionId: req.auth!.institutionId } });

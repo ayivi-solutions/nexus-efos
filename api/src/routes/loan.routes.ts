@@ -3,11 +3,12 @@ import { z } from "zod";
 import { prisma } from "../lib/prisma";
 import { requireAuth, AuthedRequest } from "../middleware/auth";
 import { requirePermission } from "../middleware/rbac";
-import { round2, generateSchedule, allocateRepayment } from "../lib/loanSchedule";
+import { round2, generateSchedule } from "../lib/loanSchedule";
 import { assessCredit } from "../lib/creditAssessment";
 import { matchRules, executeMatchedRules } from "../lib/businessRules";
 import { runArrearsCheck } from "../lib/scheduler";
 import { isBalanced, balanceEffect, findPostablePeriod, generateJournalNumber } from "../lib/generalLedger";
+import { applyLoanRepaymentInTx } from "../lib/loanRepayment";
 
 export const loanRouter = Router();
 loanRouter.use(requireAuth);
@@ -30,7 +31,12 @@ loanRouter.get("/", requirePermission("reports.view"), async (req: AuthedRequest
 // and a single-segment path like /gl-mappings would otherwise be
 // swallowed by /:id treating "gl-mappings" as an id value.
 // -----------------------------------------------------------------------
-const ALL_LOAN_GL_PURPOSES = ["Loan Receivable", "Cash/Bank (Disbursement)"];
+// "Cash/Bank (Disbursement)" is reused for repayment's cash side too —
+// in real accounting, disbursement and repayment through a branch/teller
+// both move through the same institutional bank account, just in
+// opposite directions. "Collector Cash Custody" is genuinely different:
+// cash a field collector has physically received isn't at the bank yet.
+const ALL_LOAN_GL_PURPOSES = ["Loan Receivable", "Cash/Bank (Disbursement)", "Collector Cash Custody"];
 
 loanRouter.get("/gl-mappings", requirePermission("institution.configure"), async (req: AuthedRequest, res) => {
   const mappings = await prisma.loanGLAccountMapping.findMany({ where: { institutionId: req.auth!.institutionId } });
@@ -439,51 +445,63 @@ loanRouter.post("/:id/repayments", requirePermission("collections.record"), asyn
   // serialization failure rather than let them both silently commit
   // against the same stale state — caught below and returned as a 409
   // so the caller knows to retry, not a generic 500.
+  //
+  // GAP-GL-001 fix: repayment never posted to GL at all before this —
+  // only disbursement did. Debit Cash/Bank, Credit Loan Receivable
+  // (the amount owed decreases), hard-blocked if unconfigured, same
+  // reasoning as disbursement.
   const loanExists = await prisma.loan.findFirst({
     where: { id: req.params.id, institutionId: req.auth!.institutionId },
     select: { id: true },
   });
   if (!loanExists) return res.status(404).json({ error: "Loan not found" });
 
+  const mappings = await prisma.loanGLAccountMapping.findMany({ where: { institutionId: req.auth!.institutionId } });
+  const accountIdByPurpose: Record<string, string> = Object.fromEntries(mappings.map((m: any) => [m.purpose, m.glAccountId]));
+  const receivableAccountId = accountIdByPurpose["Loan Receivable"];
+  const cashAccountId = accountIdByPurpose["Cash/Bank (Disbursement)"];
+  if (!receivableAccountId || !cashAccountId) {
+    return res.status(400).json({ error: "Loan disbursement GL account mapping is not configured (\"Loan Receivable\" and \"Cash/Bank (Disbursement)\" both required) — configure this before recording repayments, real cash cannot move without a real accounting effect." });
+  }
+
+  const postingDate = new Date();
+  const glPeriod = await findPostablePeriod(prisma, req.auth!.institutionId, postingDate);
+  if (!glPeriod || glPeriod.status !== "OPEN") {
+    return res.status(400).json({ error: glPeriod ? `The financial period covering today is ${glPeriod.status}, not open` : "No financial period covers today's date" });
+  }
+
+  const [receivableAccount, cashAccount] = await Promise.all([
+    prisma.gLAccount.findUniqueOrThrow({ where: { id: receivableAccountId } }),
+    prisma.gLAccount.findUniqueOrThrow({ where: { id: cashAccountId } }),
+  ]);
+  const amount = parsed.data.amount;
+  const journalLines = [
+    { accountId: cashAccountId, category: cashAccount.category, debit: amount, credit: 0 },
+    { accountId: receivableAccountId, category: receivableAccount.category, debit: 0, credit: amount },
+  ];
+  if (!isBalanced(journalLines)) {
+    return res.status(400).json({ error: "Repayment journal would not balance — check the repayment amount" });
+  }
+
   let repayment, allPaid;
   try {
     [repayment, allPaid] = await prisma.$transaction(
       async (tx: any) => {
-        const loan = await tx.loan.findUniqueOrThrow({
-          where: { id: loanExists.id },
-          include: { installments: { orderBy: { installmentNumber: "asc" } } },
-        });
+        const { repayment: r, loanClosed } = await applyLoanRepaymentInTx(tx, loanExists.id, amount, req.auth!.userId);
 
-        const r = await tx.loanRepayment.create({
-          data: { loanId: loan.id, amount: parsed.data.amount, recordedById: req.auth!.userId },
+        const journal = await tx.journal.create({
+          data: {
+            institutionId: req.auth!.institutionId, journalNumber: generateJournalNumber(), type: "AUTOMATIC",
+            description: `Loan repayment — loan ${loanExists.id}`, status: "POSTED", postingDate, postedAt: new Date(), postedById: req.auth!.userId, createdById: req.auth!.userId,
+            lines: { create: journalLines.map((l) => ({ accountId: l.accountId, debit: l.debit, credit: l.credit })) },
+          },
         });
-
-        const installmentStates = loan.installments.map((inst: any) => ({
-          id: inst.id,
-          interestDue: Number(inst.interestDue),
-          principalDue: Number(inst.principalDue),
-          interestPaid: Number(inst.interestPaid),
-          principalPaid: Number(inst.principalPaid),
-          status: inst.status,
-        }));
-        const updates = allocateRepayment(installmentStates, parsed.data.amount);
-        for (const u of updates) {
-          await tx.loanInstallment.update({
-            where: { id: u.id },
-            data: { interestPaid: u.newInterestPaid, principalPaid: u.newPrincipalPaid, status: u.newStatus },
-          });
+        for (const line of journalLines) {
+          const effect = balanceEffect(line.category as any, line.debit, line.credit);
+          await tx.gLAccount.update({ where: { id: line.accountId }, data: { balance: { increment: effect } } });
         }
 
-        const allInstallments = await tx.loanInstallment.findMany({ where: { loanId: loan.id } });
-        const closed = allInstallments.length > 0 && allInstallments.every((i: any) => i.status === "PAID");
-
-        if (closed) {
-          await tx.loan.update({ where: { id: loan.id }, data: { status: "CLOSED" } });
-        } else if (loan.status === "DISBURSED") {
-          await tx.loan.update({ where: { id: loan.id }, data: { status: "ACTIVE" } });
-        }
-
-        return [r, closed];
+        return [r, loanClosed];
       },
       { isolationLevel: "Serializable" }
     );
@@ -504,7 +522,7 @@ loanRouter.post("/:id/repayments", requirePermission("collections.record"), asyn
       action: "loan.repayment_recorded",
       resource: "loan",
       resourceId: loanExists.id,
-      metadata: { amount: parsed.data.amount, loanClosed: allPaid },
+      metadata: { amount, loanClosed: allPaid },
     },
   });
 
