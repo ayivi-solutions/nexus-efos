@@ -190,6 +190,28 @@ export default function DashboardPage() {
               </div>
             </Section>
 
+            {/* EAIS §148.2 dashboard narrative — templated from real
+                month-over-month numbers computed server-side, not a
+                generative-AI call (see lib/executiveNarrative.ts).
+                Ranked by magnitude of relative change, so what actually
+                moved most surfaces first. */}
+            {overview.narrative && overview.narrative.length > 0 && (
+              <Section delayMs={135}>
+                <h2 className="font-display font-semibold text-base text-ink-900 mb-3">What changed</h2>
+                <div className="card p-5 mb-8">
+                  <ul className="space-y-2">
+                    {overview.narrative.map((n: any) => (
+                      <li key={n.metric} className="flex items-start gap-2 text-[13px] text-text-700">
+                        <span className={`mt-1 w-1.5 h-1.5 rounded-full shrink-0 ${n.direction === "up" ? "bg-green-500" : n.direction === "down" ? "bg-rose-500" : "bg-text-muted"}`} aria-hidden="true" />
+                        <span>{n.sentence}</span>
+                      </li>
+                    ))}
+                  </ul>
+                  <p className="text-[11px] text-text-muted mt-3">Comparing the last two complete calendar months. Numbers only — nothing here is generated free text.</p>
+                </div>
+              </Section>
+            )}
+
             {/* Portfolio health + regulatory snapshot — reusing the same
                 Portfolio Analytics and Capital Adequacy endpoints those
                 pages already call, not a new aggregation layer. */}

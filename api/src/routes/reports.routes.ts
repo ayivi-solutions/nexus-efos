@@ -4,6 +4,7 @@ import { requireAuth, AuthedRequest } from "../middleware/auth";
 import { requirePermission } from "../middleware/rbac";
 import { outstandingLoansWithBalance, parRatio } from "../lib/portfolio";
 import { round2 } from "../lib/generalLedger";
+import { generateDashboardNarrative } from "../lib/executiveNarrative";
 
 export const reportsRouter = Router();
 reportsRouter.use(requireAuth);
@@ -46,10 +47,11 @@ reportsRouter.get("/overview", async (req: AuthedRequest, res) => {
   const institutionId = req.auth!.institutionId;
   const months = Math.min(Math.max(Number((req.query as any).months) || 6, 1), 24);
 
-  const [customers, loans, savingsAccounts] = await Promise.all([
+  const [customers, loans, savingsAccounts, complaints] = await Promise.all([
     prisma.customer.findMany({ where: { institutionId } }),
     prisma.loan.findMany({ where: { institutionId }, include: { repayments: true, installments: true } }),
     prisma.savingsAccount.findMany({ where: { institutionId }, include: { transactions: true } }),
+    prisma.customerComplaint.findMany({ where: { institutionId }, select: { createdAt: true } }),
   ]);
 
   const bySegment: Record<string, number> = {};
@@ -92,8 +94,8 @@ reportsRouter.get("/overview", async (req: AuthedRequest, res) => {
   }
 
   const monthList = lastNMonths(months);
-  const trend: Record<string, { disbursed: number; deposits: number; withdrawals: number }> = {};
-  for (const m of monthList) trend[m] = { disbursed: 0, deposits: 0, withdrawals: 0 };
+  const trend: Record<string, { disbursed: number; deposits: number; withdrawals: number; newCustomers: number; complaints: number }> = {};
+  for (const m of monthList) trend[m] = { disbursed: 0, deposits: 0, withdrawals: 0, newCustomers: 0, complaints: 0 };
   for (const l of loans) {
     if (l.disbursedAt) {
       const k = monthKey(new Date(l.disbursedAt));
@@ -108,12 +110,26 @@ reportsRouter.get("/overview", async (req: AuthedRequest, res) => {
       else trend[k].withdrawals += Number(t.amount);
     }
   }
+  for (const c of customers) {
+    const k = monthKey(new Date(c.createdAt));
+    if (trend[k]) trend[k].newCustomers += 1;
+  }
+  for (const cp of complaints) {
+    const k = monthKey(new Date(cp.createdAt));
+    if (trend[k]) trend[k].complaints += 1;
+  }
+
+  const trendArray = monthList.map((m) => ({ month: m, ...trend[m] }));
 
   res.json({
     customers: { total: customers.length, bySegment, byStage, byKyc },
     loans: { total: loans.length, byStatus, totalPrincipal, totalDisbursed, totalOutstanding },
     savings: { totalAccounts: savingsAccounts.length, totalBalance: totalSavingsBalance, totalDeposits, totalWithdrawals },
-    trend: monthList.map((m) => ({ month: m, ...trend[m] })),
+    trend: trendArray,
+    // EAIS §148.2 "dashboard narrative, trend and variance analysis" —
+    // see lib/executiveNarrative.ts for why this is templated from real
+    // numbers rather than a generative-AI call.
+    narrative: generateDashboardNarrative(trendArray),
   });
 });
 
