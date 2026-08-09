@@ -9,10 +9,13 @@ export default function CashVaultPage() {
   const toast = useToast();
   const [error, setError] = useState<string | null>(null);
   useErrorToast(error);
-  const [tab, setTab] = useState<"vaults" | "tellers" | "transfers" | "balancing">("vaults");
+  const [tab, setTab] = useState<"vaults" | "tellers" | "transfers" | "balancing" | "glmapping">("vaults");
 
   const [vaults, setVaults] = useState<any[]>([]);
   const [tellers, setTellers] = useState<any[]>([]);
+  const [glMappings, setGlMappings] = useState<any>({ mappings: [], purposes: [], accounts: [] });
+  const [mappingForm, setMappingForm] = useState({ purpose: "", glAccountId: "" });
+  const [mappingBusy, setMappingBusy] = useState(false);
   const [branches, setBranches] = useState<any[]>([]);
   const [employees, setEmployees] = useState<any[]>([]);
   const [ledgers, setLedgers] = useState<Record<string, any[]>>({});
@@ -33,6 +36,21 @@ export default function CashVaultPage() {
     api.listEmployees().then((r) => setEmployees(r.employees)).catch(() => {});
     api.listCashTransfers().then((r) => setTransfers(r.transfers)).catch(() => {});
     api.listCashBalancings().then((r) => setBalancings(r.balancings)).catch(() => {});
+    api.listCashVaultGLMappings().then(setGlMappings).catch(() => {});
+  }
+
+  async function handleSetMapping(e: React.FormEvent) {
+    e.preventDefault();
+    setMappingBusy(true);
+    try {
+      await api.setCashVaultGLMapping(mappingForm.purpose, mappingForm.glAccountId);
+      setMappingForm({ purpose: "", glAccountId: "" });
+      load();
+    } catch (err: any) {
+      setError(err.message || "Could not save mapping");
+    } finally {
+      setMappingBusy(false);
+    }
   }
 
   async function handleRecordBalancing(e: React.FormEvent) {
@@ -119,6 +137,7 @@ export default function CashVaultPage() {
           <button onClick={() => setTab("tellers")} className={`btn-text ${tab === "tellers" ? "text-gold-600 font-semibold" : "text-text-muted"}`}>Tellers</button>
           <button onClick={() => setTab("transfers")} className={`btn-text ${tab === "transfers" ? "text-gold-600 font-semibold" : "text-text-muted"}`}>Transfers</button>
           <button onClick={() => setTab("balancing")} className={`btn-text ${tab === "balancing" ? "text-gold-600 font-semibold" : "text-text-muted"}`}>Balancing</button>
+          <button onClick={() => setTab("glmapping")} className={`btn-text ${tab === "glmapping" ? "text-gold-600 font-semibold" : "text-text-muted"}`}>GL Mapping</button>
         </div>
 
         {tab === "vaults" && (
@@ -275,6 +294,34 @@ export default function CashVaultPage() {
                     </tr>
                   ))}
                   {balancings.length === 0 && <tr><td colSpan={6} className="text-center text-text-muted text-sm py-8">No balancing records yet.</td></tr>}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
+
+        {tab === "glmapping" && (
+          <>
+            <p className="text-[12.5px] text-text-muted mb-4">Real accounts a vault cash movement (RECEIPT/WITHDRAWAL, i.e. cash physically crossing between the institution&apos;s own bank account and vault custody) debits/credits. Both purposes must be mapped before vault cash movements can be recorded — GAP-GL-001: real cash cannot move without a real accounting effect. Internal transfers between custody points (vault-to-teller, teller-to-teller) don&apos;t need a separate mapping — a deliberate scope decision, not a gap: institutional total cash doesn&apos;t change, only which custody point holds it.</p>
+            <form onSubmit={handleSetMapping} className="card p-4 mb-6 flex flex-wrap items-end gap-3">
+              <select required className="input" value={mappingForm.purpose} onChange={(e) => setMappingForm((f) => ({ ...f, purpose: e.target.value }))}>
+                <option value="">Purpose…</option>
+                {glMappings.purposes.map((p: string) => (<option key={p} value={p}>{p}</option>))}
+              </select>
+              <select required className="input" value={mappingForm.glAccountId} onChange={(e) => setMappingForm((f) => ({ ...f, glAccountId: e.target.value }))}>
+                <option value="">GL Account…</option>
+                {glMappings.accounts.map((a: any) => (<option key={a.id} value={a.id}>{a.code} — {a.name}</option>))}
+              </select>
+              <button type="submit" disabled={mappingBusy} className="btn-primary">Save Mapping</button>
+            </form>
+            <div className="card overflow-x-auto">
+              <table className="w-full text-sm table-modern">
+                <thead><tr><th>Purpose</th><th>Mapped Account</th></tr></thead>
+                <tbody>
+                  {glMappings.purposes.map((p: string) => {
+                    const m = glMappings.mappings.find((x: any) => x.purpose === p);
+                    return (<tr key={p}><td className="text-text-900">{p}</td><td className="text-text-700">{m?.account ? `${m.account.code} — ${m.account.name}` : <span className="text-rose-600">Not mapped</span>}</td></tr>);
+                  })}
                 </tbody>
               </table>
             </div>

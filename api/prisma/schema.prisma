@@ -112,6 +112,7 @@ model Institution {
   notificationProviderConfigs NotificationProviderConfig[]
   loanGLAccountMappings        LoanGLAccountMapping[]
   savingsGLAccountMappings     SavingsGLAccountMapping[]
+  cashVaultGLAccountMappings   CashVaultGLAccountMapping[]
   demoLinkTokens                DemoLinkToken[]
   notifications                Notification[]
   glAccounts              GLAccount[]
@@ -4532,6 +4533,30 @@ model SavingsGLAccountMapping {
 
   @@unique([institutionId, purpose], map: "uq_savings_gl_mapping_institution_purpose")
   @@map("savings_gl_account_mapping")
+  @@schema("nexus")
+}
+
+// GAP-GL-001, second slice: Cash & Vault. Scoped deliberately to the
+// vault ledger entry (RECEIPT/WITHDRAWAL) — the genuine external-
+// boundary transaction (cash crossing between the institution's own
+// bank account and a vault). Internal transfers between custody points
+// (vault-to-teller, teller-to-teller) don't cross that boundary —
+// institutional total cash doesn't change, only which custody point
+// holds it — a real, disclosed simplification, not an oversight; many
+// real accounting systems track cash-in-transit at a sub-ledger level
+// without a GL posting for every internal reallocation.
+model CashVaultGLAccountMapping {
+  id            String      @id(map: "pk_cash_vault_gl_account_mapping") @default(uuid())
+  institution   Institution @relation(fields: [institutionId], references: [id], onDelete: Cascade, map: "fk_cash_vault_gl_account_mapping_institution")
+  institutionId String      @map("institution_id")
+
+  purpose     String // "Vault Cash" | "Bank Account (External)"
+  glAccountId String @map("gl_account_id")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@unique([institutionId, purpose], map: "uq_cash_vault_gl_mapping_institution_purpose")
+  @@map("cash_vault_gl_account_mapping")
   @@schema("nexus")
 }
 

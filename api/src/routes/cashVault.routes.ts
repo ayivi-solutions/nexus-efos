@@ -3,12 +3,45 @@ import { z } from "zod";
 import { prisma } from "../lib/prisma";
 import { requireAuth, AuthedRequest } from "../middleware/auth";
 import { requirePermission } from "../middleware/rbac";
+import { isBalanced, balanceEffect, findPostablePeriod, generateJournalNumber } from "../lib/generalLedger";
 
 // doc §111 Cash and Vault Management. §112 Vault Management + §113 Teller
 // Management shipped first — everything else in this module (Cash
 // Transfers §114, Balancing/Reconciliation §115) depends on both existing.
 export const cashVaultRouter = Router();
 cashVaultRouter.use(requireAuth);
+
+// -----------------------------------------------------------------------
+// GAP-GL-001 — configuration for the real GL accounts a vault cash
+// movement debits/credits. Same shape and pattern as Loan/Savings GL
+// mapping endpoints. "gl-mappings" is a top-level segment here (not
+// nested under /vaults/:id), so there's no route-ordering risk the way
+// there was for Loans/Savings' single-segment paths under a bare /:id.
+// -----------------------------------------------------------------------
+const ALL_CASH_VAULT_GL_PURPOSES = ["Vault Cash", "Bank Account (External)"];
+
+cashVaultRouter.get("/gl-mappings", requirePermission("institution.configure"), async (req: AuthedRequest, res) => {
+  const mappings = await prisma.cashVaultGLAccountMapping.findMany({ where: { institutionId: req.auth!.institutionId } });
+  const glAccounts = await prisma.gLAccount.findMany({ where: { institutionId: req.auth!.institutionId, status: "ACTIVE" }, select: { id: true, code: true, name: true } });
+  const accountById = new Map(glAccounts.map((a: any) => [a.id, a]));
+  res.json({ mappings: mappings.map((m: any) => ({ ...m, account: accountById.get(m.glAccountId) || null })), purposes: ALL_CASH_VAULT_GL_PURPOSES, accounts: glAccounts });
+});
+
+cashVaultRouter.post("/gl-mappings", requirePermission("institution.configure"), async (req: AuthedRequest, res) => {
+  const { purpose, glAccountId } = req.body as { purpose?: string; glAccountId?: string };
+  if (!purpose || !glAccountId) return res.status(400).json({ error: "purpose and glAccountId are required" });
+
+  const account = await prisma.gLAccount.findFirst({ where: { id: glAccountId, institutionId: req.auth!.institutionId } });
+  if (!account) return res.status(404).json({ error: "GL account not found" });
+
+  const mapping = await prisma.cashVaultGLAccountMapping.upsert({
+    where: { institutionId_purpose: { institutionId: req.auth!.institutionId, purpose } },
+    create: { institutionId: req.auth!.institutionId, purpose, glAccountId },
+    update: { glAccountId },
+  });
+  await prisma.auditLog.create({ data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "cash_vault_gl_mapping.set", resource: "cash_vault_gl_account_mapping", resourceId: mapping.id, metadata: { purpose, glAccountId } } });
+  res.status(201).json({ mapping });
+});
 
 // -------------------------------------------------------------------------
 // §112 Vault Management
@@ -78,16 +111,99 @@ cashVaultRouter.post("/vaults/:id/ledger", requirePermission("institution.config
   const vault = await prisma.vault.findFirst({ where: { id: req.params.id, institutionId: req.auth!.institutionId } });
   if (!vault) return res.status(404).json({ error: "Vault not found" });
   if (vault.status !== "OPEN") return res.status(400).json({ error: "Vault must be OPEN to record cash movements" });
-  if (parsed.data.type === "WITHDRAWAL" && Number(vault.balance) < parsed.data.amount) return res.status(400).json({ error: "Insufficient vault balance" });
 
-  const newBalance = parsed.data.type === "RECEIPT" ? Number(vault.balance) + parsed.data.amount : Number(vault.balance) - parsed.data.amount;
+  // GAP-GL-001 fix, second slice — Cash & Vault. This is a genuine
+  // external-boundary transaction: cash physically crossing between the
+  // institution's own bank account and vault custody (a bank withdrawal
+  // brought to the vault = RECEIPT; cash sent to the bank = WITHDRAWAL).
+  // Hard-blocks if unconfigured, same reasoning as Loans/Savings — no
+  // real cash movement without a real accounting effect bound to it.
+  const mappings = await prisma.cashVaultGLAccountMapping.findMany({ where: { institutionId: req.auth!.institutionId } });
+  const accountIdByPurpose: Record<string, string> = Object.fromEntries(mappings.map((m: any) => [m.purpose, m.glAccountId]));
+  const vaultCashAccountId = accountIdByPurpose["Vault Cash"];
+  const bankAccountId = accountIdByPurpose["Bank Account (External)"];
+  if (!vaultCashAccountId || !bankAccountId) {
+    return res.status(400).json({ error: "Cash & Vault GL account mapping is not configured (\"Vault Cash\" and \"Bank Account (External)\" both required) — configure this before recording vault cash movements, real cash cannot move without a real accounting effect." });
+  }
 
-  const [, entry] = await prisma.$transaction([
-    prisma.vault.update({ where: { id: vault.id }, data: { balance: newBalance } }),
-    prisma.cashLedgerEntry.create({ data: { institutionId: req.auth!.institutionId, holderType: "VAULT", holderId: vault.id, type: parsed.data.type as any, amount: parsed.data.amount, balanceAfter: newBalance, notes: parsed.data.notes, recordedById: req.auth!.userId } }),
+  const postingDate = new Date();
+  const glPeriod = await findPostablePeriod(prisma, req.auth!.institutionId, postingDate);
+  if (!glPeriod || glPeriod.status !== "OPEN") {
+    return res.status(400).json({ error: glPeriod ? `The financial period covering today is ${glPeriod.status}, not open` : "No financial period covers today's date" });
+  }
+
+  const [vaultCashAccount, bankAccount] = await Promise.all([
+    prisma.gLAccount.findUniqueOrThrow({ where: { id: vaultCashAccountId } }),
+    prisma.gLAccount.findUniqueOrThrow({ where: { id: bankAccountId } }),
   ]);
+  const amount = parsed.data.amount;
+  // RECEIPT: cash arrives at the vault from the bank — Debit Vault Cash,
+  // Credit Bank Account. WITHDRAWAL: cash leaves the vault for the bank
+  // — reversed.
+  const journalLines = parsed.data.type === "RECEIPT"
+    ? [
+        { accountId: vaultCashAccountId, category: vaultCashAccount.category, debit: amount, credit: 0 },
+        { accountId: bankAccountId, category: bankAccount.category, debit: 0, credit: amount },
+      ]
+    : [
+        { accountId: bankAccountId, category: bankAccount.category, debit: amount, credit: 0 },
+        { accountId: vaultCashAccountId, category: vaultCashAccount.category, debit: 0, credit: amount },
+      ];
+  if (!isBalanced(journalLines)) {
+    return res.status(400).json({ error: "Cash movement journal would not balance — check the amount" });
+  }
 
-  await prisma.auditLog.create({ data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "vault.cash_entry", resource: "vault", resourceId: vault.id, metadata: { type: parsed.data.type, amount: parsed.data.amount } } });
+  // GAP-FIN-001-class fix, applied here too: the previous version read
+  // vault.balance outside any lock, computed an absolute new value in
+  // JS, then wrote it via a non-atomic prisma.$transaction([...]) array
+  // — the exact same race as the savings bug fixed earlier today. Two
+  // concurrent WITHDRAWAL entries could both read the same starting
+  // balance and one would silently overwrite the other's effect, or a
+  // WITHDRAWAL could succeed against a balance check that was already
+  // stale by the time the write happened. Same atomic guarded pattern
+  // now: the sufficient-funds check lives in the same statement as the
+  // decrement itself for WITHDRAWAL.
+  let entry;
+  try {
+    [, entry] = await prisma.$transaction(async (tx: any) => {
+      let updatedVault;
+      if (parsed.data.type === "WITHDRAWAL") {
+        const guarded = await tx.vault.updateMany({
+          where: { id: vault.id, balance: { gte: amount } },
+          data: { balance: { decrement: amount } },
+        });
+        if (guarded.count === 0) {
+          throw Object.assign(new Error("Insufficient vault balance"), { httpStatus: 400 });
+        }
+        updatedVault = await tx.vault.findUniqueOrThrow({ where: { id: vault.id } });
+      } else {
+        updatedVault = await tx.vault.update({ where: { id: vault.id }, data: { balance: { increment: amount } } });
+      }
+
+      const e = await tx.cashLedgerEntry.create({
+        data: { institutionId: req.auth!.institutionId, holderType: "VAULT", holderId: vault.id, type: parsed.data.type as any, amount, balanceAfter: updatedVault.balance, notes: parsed.data.notes, recordedById: req.auth!.userId },
+      });
+
+      const journal = await tx.journal.create({
+        data: {
+          institutionId: req.auth!.institutionId, journalNumber: generateJournalNumber(), type: "AUTOMATIC",
+          description: `Vault ${parsed.data.type.toLowerCase()} — ${vault.name}`, status: "POSTED", postingDate, postedAt: new Date(), postedById: req.auth!.userId, createdById: req.auth!.userId,
+          lines: { create: journalLines.map((l) => ({ accountId: l.accountId, debit: l.debit, credit: l.credit })) },
+        },
+      });
+      for (const line of journalLines) {
+        const effect = balanceEffect(line.category as any, line.debit, line.credit);
+        await tx.gLAccount.update({ where: { id: line.accountId }, data: { balance: { increment: effect } } });
+      }
+
+      return [updatedVault, e];
+    });
+  } catch (err: any) {
+    if (err.httpStatus === 400) return res.status(400).json({ error: err.message });
+    throw err;
+  }
+
+  await prisma.auditLog.create({ data: { institutionId: req.auth!.institutionId, userId: req.auth!.userId, action: "vault.cash_entry", resource: "vault", resourceId: vault.id, metadata: { type: parsed.data.type, amount } } });
   res.status(201).json({ entry });
 });
 
