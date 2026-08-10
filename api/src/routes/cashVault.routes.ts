@@ -4,6 +4,7 @@ import { prisma } from "../lib/prisma";
 import { requireAuth, AuthedRequest } from "../middleware/auth";
 import { requirePermission } from "../middleware/rbac";
 import { isBalanced, balanceEffect, findPostablePeriod, generateJournalNumber } from "../lib/generalLedger";
+import { idempotent } from "../middleware/idempotency";
 
 // doc §111 Cash and Vault Management. §112 Vault Management + §113 Teller
 // Management shipped first — everything else in this module (Cash
@@ -105,7 +106,7 @@ cashVaultRouter.get("/vaults/:id/ledger", requirePermission("reports.view"), asy
   res.json({ entries });
 });
 
-cashVaultRouter.post("/vaults/:id/ledger", requirePermission("institution.configure"), async (req: AuthedRequest, res) => {
+cashVaultRouter.post("/vaults/:id/ledger", requirePermission("institution.configure"), idempotent, async (req: AuthedRequest, res) => {
   const parsed = cashEntrySchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
   const vault = await prisma.vault.findFirst({ where: { id: req.params.id, institutionId: req.auth!.institutionId } });

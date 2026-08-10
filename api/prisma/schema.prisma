@@ -113,6 +113,7 @@ model Institution {
   loanGLAccountMappings        LoanGLAccountMapping[]
   savingsGLAccountMappings     SavingsGLAccountMapping[]
   cashVaultGLAccountMappings   CashVaultGLAccountMapping[]
+  idempotencyKeys              IdempotencyKey[]
   demoLinkTokens                DemoLinkToken[]
   notifications                Notification[]
   glAccounts              GLAccount[]
@@ -4596,6 +4597,40 @@ model ScheduledJobRun {
   // already processes every institution in one batch per run.
   @@unique([jobType, runDate], map: "uq_scheduled_job_run_type_date")
   @@map("scheduled_job_run")
+  @@schema("nexus")
+}
+
+// GAP-API-001 (Implementation Requirements Traceability & Remediation
+// Register, 9 Aug 2026): "replayed idempotent mutation must return the
+// same authoritative outcome without duplicate effect." Directly
+// relevant to the same night's incident — a client whose request was
+// interrupted mid-crash-loop and retries it needs that retry to be safe
+// against double-executing a real financial transaction, not just
+// hopeful that it wasn't. Scoped deliberately to the highest-risk
+// financial mutation endpoints (loan disbursement/repayment, savings
+// deposit/withdrawal, vault cash entries, collections transactions) —
+// not applied globally. Claimed atomically via a unique constraint (the
+// same "guarded write, not check-then-act" discipline as every other
+// concurrency fix tonight): two concurrent requests with the same key
+// can't both proceed, only one wins the claim.
+model IdempotencyKey {
+  id            String      @id(map: "pk_idempotency_key") @default(uuid())
+  institution   Institution @relation(fields: [institutionId], references: [id], onDelete: Cascade, map: "fk_idempotency_key_institution")
+  institutionId String      @map("institution_id")
+  userId        String      @map("user_id")
+
+  endpoint    String // req.originalUrl — same key against a different endpoint is a different claim, not a collision
+  key         String // the client-supplied Idempotency-Key header value
+  requestHash String @map("request_hash") // sha256 of the request body — reusing a key with a genuinely different payload is a client bug, not a legitimate replay, and is rejected rather than silently returning a mismatched cached response
+
+  responseStatus Int?  @map("response_status") // null while the original request is still in flight
+  responseBody   Json? @map("response_body")
+
+  createdAt   DateTime  @default(now()) @map("created_at")
+  completedAt DateTime? @map("completed_at")
+
+  @@unique([institutionId, userId, endpoint, key], map: "uq_idempotency_key_institution_user_endpoint_key")
+  @@map("idempotency_key")
   @@schema("nexus")
 }
 

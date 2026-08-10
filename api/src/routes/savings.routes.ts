@@ -9,6 +9,7 @@ import { nextExecutionDate } from "../lib/standingInstructions";
 import { runStandingInstructions } from "../lib/scheduler";
 import { generateStatementPdf } from "../lib/savingsStatementPdf";
 import { isBalanced, balanceEffect, findPostablePeriod, generateJournalNumber } from "../lib/generalLedger";
+import { idempotent } from "../middleware/idempotency";
 
 export const savingsRouter = Router();
 savingsRouter.use(requireAuth);
@@ -244,7 +245,7 @@ async function checkRestriction(accountId: string, direction: "DEBIT" | "CREDIT"
   return null;
 }
 
-savingsRouter.post("/:id/deposit", requirePermission("savings.initiate"), async (req: AuthedRequest, res) => {
+savingsRouter.post("/:id/deposit", requirePermission("savings.initiate"), idempotent, async (req: AuthedRequest, res) => {
   const parsed = txnSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
@@ -339,7 +340,7 @@ savingsRouter.post("/:id/deposit", requirePermission("savings.initiate"), async 
   res.status(201).json({ account: updated, transaction: txn });
 });
 
-savingsRouter.post("/:id/withdraw", requirePermission("savings.approve"), async (req: AuthedRequest, res) => {
+savingsRouter.post("/:id/withdraw", requirePermission("savings.approve"), idempotent, async (req: AuthedRequest, res) => {
   const parsed = txnSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 

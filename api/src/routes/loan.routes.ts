@@ -9,6 +9,7 @@ import { matchRules, executeMatchedRules } from "../lib/businessRules";
 import { runArrearsCheck } from "../lib/scheduler";
 import { isBalanced, balanceEffect, findPostablePeriod, generateJournalNumber } from "../lib/generalLedger";
 import { applyLoanRepaymentInTx } from "../lib/loanRepayment";
+import { idempotent } from "../middleware/idempotency";
 
 export const loanRouter = Router();
 loanRouter.use(requireAuth);
@@ -271,7 +272,7 @@ loanRouter.post("/:id/reject", requirePermission("loans.reject"), async (req: Au
   res.json({ ok: true });
 });
 
-loanRouter.post("/:id/disburse", requirePermission("loans.approve"), async (req: AuthedRequest, res) => {
+loanRouter.post("/:id/disburse", requirePermission("loans.approve"), idempotent, async (req: AuthedRequest, res) => {
   const { vaultId } = req.body as { vaultId?: string };
   if (!vaultId) return res.status(400).json({ error: "vaultId is required — disbursement must draw from a real, identified cash source" });
 
@@ -425,7 +426,7 @@ loanRouter.post("/:id/disburse", requirePermission("loans.approve"), async (req:
 
 const repaymentSchema = z.object({ amount: z.number().positive() });
 
-loanRouter.post("/:id/repayments", requirePermission("collections.record"), async (req: AuthedRequest, res) => {
+loanRouter.post("/:id/repayments", requirePermission("collections.record"), idempotent, async (req: AuthedRequest, res) => {
   const parsed = repaymentSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 

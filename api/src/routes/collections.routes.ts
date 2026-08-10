@@ -8,6 +8,7 @@ import { assessDelinquencyRisk } from "../lib/delinquencyRisk";
 import { assessCollectorIntegrity } from "../lib/collectorIntegrity";
 import { applyLoanRepaymentInTx } from "../lib/loanRepayment";
 import { isBalanced, balanceEffect, findPostablePeriod, generateJournalNumber } from "../lib/generalLedger";
+import { idempotent } from "../middleware/idempotency";
 
 // doc §78 Collections Management. §79 Collector Management + §80 Route
 // Management shipped first — everything else in this module (Daily
@@ -235,7 +236,7 @@ async function isLikelyDuplicate(institutionId: string, collectorId: string, tar
   return !!recent;
 }
 
-collectionsRouter.post("/transactions", requirePermission("collections.record"), async (req: AuthedRequest, res) => {
+collectionsRouter.post("/transactions", requirePermission("collections.record"), idempotent, async (req: AuthedRequest, res) => {
   const parsed = recordCollectionSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
