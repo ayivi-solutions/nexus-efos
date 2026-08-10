@@ -1,0 +1,94 @@
+name: CI
+
+# GAP-CI-001 (Implementation Requirements Traceability & Remediation
+# Register, 9 Aug 2026): "Every promotable build shall execute required
+# tests/security checks and preserve versioned release evidence."
+#
+# Built the night of a real production incident (9 Aug 2026) caused by a
+# secret that passed a too-loose validation check and crashed the whole
+# API on first real use — something a typecheck alone wouldn't have
+# caught, but a CI gate that actually builds and tests against a real
+# database, on every push, is exactly the kind of safety net that class
+# of problem needs. This runs on every push to develop, matching how
+# this repo is actually worked (direct pushes, no PR-based flow today) —
+# it's a fast, automatic "did this break anything" signal, not yet a
+# hard merge gate. Turning it into one requires a branch protection rule
+# in GitHub's own repo settings requiring this workflow to pass, which
+# is configuration outside this file, not something a workflow YAML can
+# set for itself.
+"on":
+  push:
+    branches: [develop, main]
+  pull_request:
+    branches: [develop, main]
+
+jobs:
+  api:
+    runs-on: ubuntu-latest
+    # A real, throwaway Postgres for this run only — never touches
+    # production data, and prisma migrate deploy (unlike migrate dev)
+    # doesn't need a shadow database at all, sidestepping the exact
+    # shadow-database connection flakiness that caused a scare earlier
+    # the same night this workflow was written.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: nexus_ci
+          POSTGRES_PASSWORD: nexus_ci
+          POSTGRES_DB: nexus_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgresql://nexus_ci:nexus_ci@localhost:5432/nexus_ci?schema=nexus
+      DIRECT_URL: postgresql://nexus_ci:nexus_ci@localhost:5432/nexus_ci?schema=nexus
+      # Real writes here are fine — this is the fresh CI-only Postgres
+      # container above, never production. See tests/helpers.ts for the
+      # full reasoning behind this flag requiring an explicit opt-in.
+      ALLOW_TEST_DB_WRITES: "1"
+    defaults:
+      run:
+        working-directory: api
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: api/package-lock.json
+      - name: Install dependencies
+        run: npm ci
+      - name: Generate Prisma client
+        run: npx prisma generate
+      - name: Apply migrations to CI database
+        run: npx prisma migrate deploy
+      - name: Typecheck
+        run: npx tsc --noEmit
+      - name: Build
+        run: npm run build
+      - name: Test
+        run: npm test
+
+  web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: web/package-lock.json
+      - name: Install dependencies
+        run: npm ci
+      - name: Typecheck
+        run: npx tsc --noEmit
+      - name: Build
+        run: npm run build
