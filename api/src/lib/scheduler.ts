@@ -1,7 +1,9 @@
 import cron from "node-cron";
+import * as Sentry from "@sentry/node";
 import os from "os";
 import crypto from "crypto";
 import { prisma } from "./prisma";
+import { logger } from "./logger";
 import { calculateArrears } from "./arrears";
 import { nextExecutionDate } from "./standingInstructions";
 import { isBalanced, balanceEffect, generateJournalNumber, findPostablePeriod } from "./generalLedger";
@@ -35,6 +37,13 @@ async function claimAndRun(jobType: string, fn: () => Promise<void>) {
     await prisma.scheduledJobRun.update({ where: { id: claim.id }, data: { status: "COMPLETED", completedAt: new Date() } });
   } catch (err: any) {
     await prisma.scheduledJobRun.update({ where: { id: claim.id }, data: { status: "FAILED", completedAt: new Date(), error: String(err.message || err) } });
+    logger.error(`[scheduler] ${jobType} failed`, { runDate: runDate.toISOString().slice(0, 10), error: String(err.message || err) });
+    // GAP-OBS-001: scheduled jobs run outside any HTTP request, so
+    // Sentry's Express auto-instrumentation never sees them — without
+    // this, a failing arrears check or interest posting run would only
+    // ever surface in Railway's raw logs, not in the same place every
+    // other production error shows up.
+    Sentry.captureException(err, { tags: { jobType }, extra: { runDate: runDate.toISOString().slice(0, 10) } });
     throw err;
   }
 }

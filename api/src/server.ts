@@ -1,4 +1,8 @@
-import "dotenv/config";
+// GAP-OBS-001: must be the literal first import in this process — see
+// instrument.ts's own comment for why. This also loads dotenv/config
+// internally, so the separate dotenv import that used to be here isn't
+// needed anymore.
+import "./instrument";
 import { validateProductionSecrets } from "./lib/startupSecrets";
 
 // GAP-SEC-001: runs before anything else touches a secret, and before

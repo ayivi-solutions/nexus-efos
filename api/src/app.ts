@@ -1,4 +1,5 @@
 import express from "express";
+import * as Sentry from "@sentry/node";
 // Incident, 9 Aug 2026: a synchronous throw inside an async route
 // handler (encryptSecret failing on a malformed MFA_ENCRYPTION_KEY)
 // became an unhandled promise rejection, which Node 22 treats as fatal
@@ -14,6 +15,8 @@ import cors from "cors";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
 import { requestCorrelation } from "./middleware/requestCorrelation";
+import { prisma } from "./lib/prisma";
+import { logger } from "./lib/logger";
 import { authRouter } from "./routes/auth.routes";
 import { institutionRouter } from "./routes/institution.routes";
 import { roleRouter } from "./routes/role.routes";
@@ -122,7 +125,21 @@ app.use("/v1/auth/register-institution", authLimiter);
 app.use("/v1/auth/accept-invite", authLimiter);
 app.use("/v1/auth/change-password", authLimiter);
 
-app.get("/health", (_req, res) => res.json({ status: "ok", service: "nexus-efos-api" }));
+app.get("/health", async (_req, res) => {
+  // GAP-OBS-001 (Better Stack uptime monitoring): the original version
+  // only confirmed the Express process was alive — exactly the signal
+  // that would have looked "healthy" during the same night's incident
+  // right up until a request actually exercised the broken code path.
+  // A real uptime check needs to confirm the app can actually do its
+  // job, not just that the process didn't crash this millisecond —
+  // checking real DB connectivity is the minimum bar for that.
+  try {
+    await prisma.$queryRaw`SELECT 1`;
+    res.json({ status: "ok", service: "nexus-efos-api", database: "connected" });
+  } catch (err: any) {
+    res.status(503).json({ status: "degraded", service: "nexus-efos-api", database: "unreachable" });
+  }
+});
 
 app.use("/v1/auth", authRouter);
 app.use("/v1/institutions", institutionRouter);
@@ -156,6 +173,13 @@ app.use("/v1/analytics", analyticsRouter);
 app.use("/v1/payroll", payrollRouter);
 app.use("/v1/assets", assetRouter);
 
+// GAP-OBS-001: must be registered after all routes and before any other
+// error-handling middleware — this is what actually sends an error to
+// Sentry. The existing custom handler right after it still runs
+// afterward (Sentry's handler calls next() internally) and is still
+// what decides the actual HTTP response the client sees.
+Sentry.setupExpressErrorHandler(app);
+
 // Now actually reachable for async-handler throws too, once
 // express-async-errors is patched in above — before tonight's incident,
 // those crashed the whole process before ever getting here. Includes
@@ -164,6 +188,6 @@ app.use("/v1/assets", assetRouter);
 // that ties directly to the exact server-side log entry, instead of
 // guessing which of many log lines was theirs.
 app.use((err: any, req: express.Request, res: express.Response, _next: express.NextFunction) => {
-  console.error(`[${req.requestId || "no-request-id"}]`, err);
+  logger.error(`[${req.requestId || "no-request-id"}]`, { error: err?.message || String(err), stack: err?.stack, path: req.originalUrl });
   res.status(500).json({ error: "Internal server error", requestId: req.requestId });
 });
